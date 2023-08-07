@@ -1,13 +1,11 @@
 import os
 import re
 
-import polars as _pl
+import polars as pl
 import pyarrow as pa
 import pyarrow.csv as pc
-import pyarrow.dataset as pds
 import pyarrow.feather as pf
 import pyarrow.fs as pfs
-import pyarrow.ipc as pic
 import pyarrow.parquet as pq
 import tqdm
 from fsspec import AbstractFileSystem
@@ -15,65 +13,66 @@ from fsspec import filesystem as fsspec_filesystem
 from joblib import Parallel, delayed
 
 
-def unnest_all(self: _pl.DataFrame, seperator="_", fields: list[str] | None = None):
-    def _unnest_all(struct_columns):
+def get_timedelta_str(timedelta: str, to: str = "polars") -> str:
+    polars_timedelta_units = [
+        "ns",
+        "us",
+        "ms",
+        "s",
+        "m",
+        "h",
+        "d",
+        "w",
+        "mo",
+        "y",
+    ]
+    duckdb_timedelta_units = [
+        "nanosecond",
+        "microsecond",
+        "millisecond",
+        "second",
+        "minute",
+        "hour",
+        "day",
+        "week",
+        "month",
+        "year",
+    ]
+
+    unit = re.sub("[0-9]", "", timedelta).strip()
+    val = timedelta.replace(unit, "").strip()
+    if to == "polars":
         return (
-            self.with_columns(
-                [
-                    _pl.col(col).struct.rename_fields(
-                        [
-                            f"{col}{seperator}{field_name}"
-                            for field_name in self[col].struct.fields
-                        ]
-                    )
-                    for col in struct_columns
-                ]
-            )
-            .unnest(struct_columns)
-            .select(
-                list(set(self.columns) - set(struct_columns))
-                + sorted(
-                    [
-                        f"{col}{seperator}{field_name}"
-                        for field_name in fields
-                        for col in struct_columns
-                    ]
-                )
-            )
+            timedelta
+            if unit in polars_timedelta_units
+            else val
+            + dict(zip(duckdb_timedelta_units, polars_timedelta_units))[
+                re.sub("s$", "", unit)
+            ]
         )
 
-    struct_columns = [col for col in self.columns if self[col].dtype == _pl.Struct()]
-    while len(struct_columns):
-        self = _unnest_all(struct_columns=struct_columns)
-        struct_columns = [
-            col for col in self.columns if self[col].dtype == _pl.Struct()
+    if unit in polars_timedelta_units:
+        return (
+            f"{val} " + dict(zip(polars_timedelta_units, duckdb_timedelta_units))[unit]
+        )
+
+    return f"{val} " + re.sub("s$", "", unit)
+
+
+def get_timestamp_column(df: pl.DataFrame) -> str | list[str]:
+    return [
+        col.name
+        for col in df.to_arrow().schema
+        if col.type
+        in [
+            pa.timestamp("s"),
+            pa.timestamp("ms"),
+            pa.timestamp("us"),
+            pa.timestamp("ns"),
+            pa.date32(),
+            pa.date64(),
         ]
-    return self
-
-
-def opt_dtype(s: _pl.Series) -> _pl.Series:
-    if s.str.contains("^[0-9,\.-]{1,}$").all():
-        s = s.str.replace_all(",", ".").str.replace_all(".0$", "")
-        if s.str.contains("\.").any():
-            s = s.cast(pl.Float64()).shrink_dtype()
-        else:
-            if (s.str.lengths() > 0).all():
-                s = s.cast(pl.Int64()).shrink_dtype()
-    elif s.str.contains("^[T,t]rue|[F,f]alse$").all():
-        s = s.str.contains("^[T,t]rue$")
-
-    return s
-
-
-def explode_all(self: _pl.DataFrame):
-    list_columns = [col for col in self.columns if self[col].dtype == _pl.List()]
-    for col in list_columns:
-        self = self.explode(col)
-    return self
-
-
-_pl.DataFrame.unnest_all = unnest_all
-_pl.DataFrame.explode_all = explode_all
+    ]
 
 
 def run_parallel(
@@ -88,14 +87,14 @@ def run_parallel(
     """Runs a function for a list of parameters in parallel.
 
     Args:
-        func (Callable): function to run in parallel.
-        func_params (list | List[List] | List[Tuple]): parameters for the function
+        func (Callable): function to run in Parallelallel.
+        func_params (list[any]): parameters for the function
         n_jobs (int, optional): Number of joblib workers. Defaults to -1.
         backend (str, optional): joblib backend. Valid options are
         `loky`,`threading`, `mutliprocessing` or `sequential`.  Defaults to "threading".
 
     Returns:
-        List[Any]: Function output.
+        list[any]: Function output.
     """
     if verbose:
         return Parallel(n_jobs=n_jobs, backend=backend)(
@@ -364,7 +363,9 @@ def collect_metadata(
     return {key: value for d in metadata for key, value in d.items()}
 
 
-def get_partitions_from_path(path: str, partitioning: str | list[str] | None = None)->list[tuple]:
+def get_partitions_from_path(
+    path: str, partitioning: str | list[str] | None = None
+) -> list[tuple]:
     """Get the dataset partitions from the file path.
 
     Args:
@@ -494,3 +495,275 @@ def write_table(
             pf.write_feather(
                 f, compression=compression, chunksize=row_group_size, **kwargs
             )
+
+
+# Polars utils
+
+
+def unnest_all(df: pl.DataFrame, seperator="_", fields: list[str] | None = None):
+    def _unnest_all(struct_columns):
+        return (
+            df.with_columns(
+                [
+                    pl.col(col).struct.rename_fields(
+                        [
+                            f"{col}{seperator}{field_name}"
+                            for field_name in df[col].struct.fields
+                        ]
+                    )
+                    for col in struct_columns
+                ]
+            )
+            .unnest(struct_columns)
+            .select(
+                list(set(df.columns) - set(struct_columns))
+                + sorted(
+                    [
+                        f"{col}{seperator}{field_name}"
+                        for field_name in fields
+                        for col in struct_columns
+                    ]
+                )
+            )
+        )
+
+    struct_columns = [
+        col for col in df.columns if df[col].dtype == pl.Struct()
+    ]  # noqa: F821
+    while len(struct_columns):
+        df = _unnest_all(struct_columns=struct_columns)
+        struct_columns = [col for col in df.columns if df[col].dtype == pl.Struct()]
+    return df
+
+
+def _opt_dtype(s: pl.Series) -> pl.Series:
+    if (s.str.contains("^[0-9,\.-]{1,}$") | s.is_null()).all():
+        s = s.str.replace_all(",", ".").str.replace_all(".0$", "")
+        if s.str.contains("\.").any():
+            s = s.cast(pl.Float64()).shrink_dtype()
+        else:
+            if (s.str.lengths() > 0).all():
+                s = s.cast(pl.Int64()).shrink_dtype()
+    elif s.str.contains("^[T,t]rue|[F,f]alse$").all():
+        s = s.str.contains("^[T,t]rue$")
+
+    return s
+
+
+def opt_dtype(df: pl.DataFrame) -> pl.DataFrame:
+    return df.with_columns(pl.all().map(_opt_dtype))
+
+
+def explode_all(df: pl.DataFrame | pl.LazyFrame):
+    list_columns = [col for col in df.columns if df[col].dtype == pl.List()]
+    for col in list_columns:
+        df = df.explode(col)
+    return df
+
+
+pl.DataFrame.unnest_all = unnest_all
+pl.DataFrame.explode_all = explode_all
+
+
+def with_strftime_columns(
+    df: pl.DataFrame | pl.LazyFrame,
+    timestamp_column: str,
+    strftime: str | list[str],
+    column_names: str | list[str] | None = None,
+):
+    if isinstance(strftime, str):
+        strftime = [strftime]
+    if isinstance(column_names, str):
+        column_names = [column_names]
+
+    if column_names is None:
+        column_names = [
+            f"_strftime_{strftime_.replace('%', '').replace('-', '_')}_"
+            for strftime_ in strftime
+        ]
+    return df.with_columns(
+        [
+            pl.col(timestamp_column).dt.strftime(strftime_).alias(column_name)
+            for strftime_, column_name in zip(strftime, column_names)
+        ]
+    )
+
+
+def with_duration_columns(
+    df: pl.DataFrame | pl.LazyFrame,
+    timestamp_column: str,
+    timedelta: str | list[str],
+    column_names: str | list[str] | None = None,
+):
+    if isinstance(timedelta, str):
+        timedelta = [timedelta]
+
+    if isinstance(column_names, str):
+        column_names = [column_names]
+
+    if column_names is None:
+        column_names = [
+            f"_timebucket_{timedelta_.replace(' ', '_')}_" for timedelta_ in timedelta
+        ]
+
+    timedelta = [get_timedelta_str(timedelta_, to="polars") for timedelta_ in timedelta]
+    return df.with_columns(
+        [
+            pl.col(timestamp_column).dt.truncate(timedelta_).alias(column_name)
+            for timedelta_, column_name in zip(timedelta, column_names)
+        ]
+    )
+
+
+def with_datepart_columns(
+    df: pl.DataFrame | pl.LazyFrame,
+    timestamp_column: str | None = None,
+    year: bool = False,
+    month: bool = False,
+    week: bool = False,
+    yearday: bool = False,
+    monthday: bool = False,
+    weekday: bool = False,
+    strftime: str | None = None,
+):
+    if not timestamp_column:
+        timestamp_column = get_timestamp_column(table)
+
+    if strftime:
+        if isinstance(strftime, str):
+            strftime = [strftime]
+        column_names = [
+            f"_strftime_{strftime_.replace('%', '').replace('-', '_')}_"
+            for strftime_ in strftime
+        ]
+    else:
+        strftime = []
+        column_names = []
+
+    if year:
+        strftime.append("%Y")
+        column_names.append("year")
+    if month:
+        strftime.append("%m")
+        column_names.append("month")
+    if week:
+        strftime.append("%W")
+        column_names.append("week")
+    if yearday:
+        strftime.append("%j")
+        column_names.append("year_day")
+    if monthday:
+        strftime.append("%d")
+        column_names.append("month_day")
+    if weekday:
+        strftime.append("%a")
+        column_names.append("week_day")
+
+    return with_strftime_column(
+        table=df,
+        timestamp_column=timestamp_column,
+        strftime=strftime,
+        column_names=column_names,
+    )
+
+
+def with_row_count(
+    df: pl.DataFrame | pl.LazyFrame,
+    over: str | list[str] | None = None,
+):
+    if over:
+        if len(over) == 0:
+            over = None
+
+    if isinstance(over, str):
+        over = [over]
+
+    if over:
+        return df.with_columns(pl.lit(1).alias("row_nr")).with_columns(
+            pl.col("row_nr").cumsum().over(over)
+        )
+    else:
+        return df.with_columns(pl.lit(1).alias("row_nr")).with_columns(
+            pl.col("row_nr").cumsum()
+        )
+
+
+pl.DataFrame.unnest_all = unnest_all
+pl.DataFrame.explode_all = explode_all
+pl.DataFrame.opt_dtype = opt_dtype
+pl.DataFrame.with_row_count_ext = with_row_count
+pl.DataFrame.with_datepart_columns = with_datepart_columns
+pl.DataFrame.with_duration_columns = with_duration_columns
+pl.DataFrame.with_striftime_columns = with_strftime_columns
+
+pl.LazyFrame.unnest_all = unnest_all
+pl.LazyFrame.explode_all = explode_all
+pl.LazyFrame.opt_dtype = opt_dtype
+pl.LazyFrame.with_row_count_ext = with_row_count
+pl.LazyFrame.with_datepart_columns = with_datepart_columns
+pl.LazyFrame.with_duration_columns = with_duration_columns
+pl.LazyFrame.with_striftime_columns = with_strftime_columns
+
+
+def partition_by(
+    df: pl.DataFrame | pl.LazyFrame,
+    timestamp_column: str | None = None,
+    columns: str | list[str] | None = None,
+    strftime: str | list[str] | None = None,
+    timedelta: str | list[str] | None = None,
+    num_rows: int | None = None,
+):
+    drop_columns = columns.copy()
+
+    if timestamp_column is None:
+        timestamp_column = get_timestamp_column(df)[0]
+
+    if columns is not None:
+        if isinstance(columns, str):
+            columns = [columns]
+
+    else:
+        columns = []
+
+    if strftime is not None:
+        if isinstance(strftime, str):
+            strftime = [strftime]
+
+        df = df.with_striftime_columns(
+            timestamp_column=timestamp_column, strftime=strftime
+        )
+        strftime_columns = [
+            f"_strftime_{strftime_.replaace('%', '')}_" for strftime_ in strftime
+        ]
+        columns += strftime_columns
+        drop_columns += strftime_columns
+
+    if timedelta:
+        if isinstance(timedelta, str):
+            timedelta = [timedelta]
+
+        df = df.with_duration_columns(
+            timestamp_column=timestamp_column, timedelta=timedelta
+        )
+        timedelta_columns = [f"_timedelta_{timedelta_}_" for timedelta_ in timedelta]
+        columns += timedelta_columns
+        drop_columns += timedelta_columns
+
+    datetime_columns = {
+        col: col in [col.lower() for col in columns]
+        for col in [
+            "year",
+            "month",
+            "week",
+            "yearday",
+            "monthday",
+            "weekday",
+            "strftime",
+        ]
+        if col not in [table_col.lower() for table_col in df.columns]
+    }
+    if len(datetime_columns):
+        df.with_datepart_columns(timestamp_column=timestamp_column, **datetime_columns)
+
+    if num_rows:
+        df = df.with_row_count(over=volumns)

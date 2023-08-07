@@ -23,6 +23,32 @@ from .utils import (
 
 
 class ParquetDataset:
+    """
+    Poor man´s data lake.
+
+    PyDala is a python library to manage parquet datasets using parquet´s own header
+    information (metadata and schema). Using fsspec as the underlying filesystem
+    library allows to use PyDala with several (remote) filesystems like s3, adlfs, r2
+    or gcs.
+
+    This class is a wrapper around pyarrow.parquet and pyarrow.dataset.
+
+    Usage:
+
+    ```
+    from pydala.dataset import ParquetDataset
+    import s3fs
+
+    fs = s3fs.S3FileSystem()
+
+    ds = ParquetDataset("dataset", bucket="myDataLake", filesystem=fs)
+    ds.load()
+
+    ds.scan("time>'2023-01-02'")
+    ddb_rel = ds.to_duckdb()
+
+    """
+
     def __init__(
         self,
         path: str,
@@ -98,30 +124,28 @@ class ParquetDataset:
     ):
         files = files or self._files
 
-        if update and hasattr(self, "_file_schema"):
-            files = [f for f in files if f not in self._file_schema]
+        if update:
+            files = list(set(files) - set(self.files_in_metadata))
+            if hasattr(self, "_file_schema"):
+                files = list(set(files) - set(self._file_schema.keys()))
 
-        file_schema = collect_file_schemas(
+        file_schemas = collect_file_schemas(
             files=files, filesystem=self._filesystem, **kwargs
         )
 
-        if hasattr(self, "_file_schema"):
-            self._file_schema.update(file_schema)
-        else:
-            self._file_schema = file_schema
+        if len(file_schemas):
+            if hasattr(self, "_file_schemas"):
+                self._file_schemas.update(file_schemas)
+            else:
+                self._file_schemas = file_schemas
 
-    @property
-    def files_in_metadata(self):
-        return list(
-            set(
-                [
-                    os.path.join(
-                        self._path, self._metadata.row_group(i).column(0).file_path
-                    )
-                    for i in range(self._metadata.num_row_groups)
-                ]
+            self._unified_file_schema, self._file_schemas_equal = unify_schemas(
+                list(self._file_schemas.values())
             )
-        )
+
+        else:
+            self._unified_file_schema = None
+            self._file_schemas_equal = True
 
     def collect_file_metadata(
         self, files: str | None = None, update: bool = True, **kwargs
@@ -129,14 +153,12 @@ class ParquetDataset:
         files = files or self._files
 
         if update:
-            if self.has_metadata_file:
-                files = set(files) - set(self.files_in_metadata)
+            files = set(files) - set(self.files_in_metadata)
 
-        if len(files):
-            file_metadata = collect_metadata(
-                files=files, filesystem=self._filesystem, **kwargs
-            )
-
+        file_metadata = collect_metadata(
+            files=files, filesystem=self._filesystem, **kwargs
+        )
+        if len(file_metadata):
             for f in file_metadata:
                 file_metadata[f].set_file_path(f.split(self._path)[-1].lstrip("/"))
 
@@ -144,14 +166,20 @@ class ParquetDataset:
                 self._file_metadata.update(file_metadata)
             else:
                 self._file_metadata = file_metadata
-
-            file_schema = {
+            file_schemas = {
                 f: file_metadata[f].schema.to_arrow_schema() for f in file_metadata
             }
-            if hasattr(self, "_file_schema"):
-                self._file_schema.update(file_schema)
+            if hasattr(self, "_file_schemas"):
+                self._file_schemas.update(file_schemas)
             else:
-                self._file_schema = file_schema
+                self._file_schemas = file_schemas
+
+            self._unified_file_schema, self._file_schemas_equal = unify_schemas(
+                list(self._file_schemas.values())
+            )
+        else:
+            self._unified_file_schema = None
+            self._file_schemas_equal = True
 
     def update_metadata(self, init: bool = False):
         if init:
@@ -161,31 +189,25 @@ class ParquetDataset:
 
         self.collect_file_metadata(update=True)
 
-        if hasattr(self, "_file_metadata"):
-            if len(self._file_metadata):
-                self.repair_schema(files=list(self._file_metadata.keys()), sort=True)
+        if hasattr(self, "_file_metadata") and len(self._file_metadata):
+            self.repair_schema(files=list(self._file_metadata.keys()), sort=True)
 
-                if not self.has_metadata_file:
-                    self._metadata = self._file_metadata[
-                        list(self._file_metadata.keys())[0]
-                    ]
-                    for f in list(self._file_metadata.keys())[1:]:
-                        self._metadata.append_row_groups(self._file_metadata[f])
-                else:
-                    files = list(
-                        set(self._file_metadata.keys()) - set(self.files_in_metadata)
-                    )
-                    for f in files:
-                        self._metadata.append_row_groups(self._file_metadata[f])
+            if not self.has_metadata_file:
+                self._metadata = self._file_metadata[
+                    list(self._file_metadata.keys())[0]
+                ]
+                for f in list(self._file_metadata.keys())[1:]:
+                    self._metadata.append_row_groups(self._file_metadata[f])
+            else:
+                files = list(
+                    set(self._file_metadata.keys()) - set(self.files_in_metadata)
+                )
+                for f in files:
+                    self._metadata.append_row_groups(self._file_metadata[f])
 
-                self.write_metadata_file()
+            self.write_metadata_file()
 
-    def unify_schema(self, repair: bool = True, **kwargs):
-        self.collect_file_schemas(update=True, **kwargs)
-
-        self._schema, self._file_schemas_equal = unify_schemas(
-            schemas=list(self._file_schema.values())
-        )
+        self._file_schema = self._metadata.schema.to_arrow_schema()
 
     def repair_schema(
         self,
@@ -201,17 +223,18 @@ class ParquetDataset:
 
         files_to_repair = []
 
-        if not hasattr(self, "_file_schema"):
-            self.collect_file_schemas()
-        if sort:
-            files_to_repair += [f for f in files if self._file_schema[f] != self.schema]
-
-        else:
-            files_to_repair += [
-                f
-                for f in files
-                if sort_schema(self._file_schema[f]) != sort_schema(self.schema)
-            ]
+        if not self.file_schemas_equal:
+            if sort:
+                files_to_repair += [
+                    f for f in files if self._file_schemas[f] != self.file_schema
+                ]
+            else:
+                files_to_repair += [
+                    f
+                    for f in files
+                    if sort_schema(self._file_schemas[f])
+                    != sort_schema(self.file_schema)
+                ]
 
         if hasattr(self, "_file_metadata"):
             files_to_repair += [
@@ -231,6 +254,22 @@ class ParquetDataset:
                 **kwargs,
             )
             self.collect_file_metadata(files=files_to_repair, update=False)
+
+    @property
+    def files_in_metadata(self) -> list:
+        if hasattr(self, "_metadata"):
+            return list(
+                set(
+                    [
+                        os.path.join(
+                            self._path, self._metadata.row_group(i).column(0).file_path
+                        )
+                        for i in range(self._metadata.num_row_groups)
+                    ]
+                )
+            )
+        else:
+            return []
 
     @property
     def columns(self) -> list:
@@ -261,21 +300,24 @@ class ParquetDataset:
         return self._metadata
 
     @property
-    def schema(self) -> pa.Schema:
-        if not hasattr(self, "_schema"):
-            self.unify_schema()
-        return self._schema
+    def file_schema(self) -> pa.Schema:
+        if not hasattr(self, "_file_schema"):
+            if hasattr(self, "_metadata"):
+                self.update_metadata()
+            else:
+                self._file_schema = self.unified_file_schema
+        return self._flle_schema
 
     @property
-    def file_schema(self) -> dict:
+    def unified_file_schema(self) -> dict:
         if not hasattr(self, "_file_schema"):
             self.collect_file_schemas()
-        return self._file_schema
+        return self._unified_file_schema
 
     @property
     def file_schemas_equal(self):
         if not hasattr(self, "_file_schemas_equal"):
-            self.unify_schema()
+            self.collect_file_schemas()
         return self._file_schemas_equal
 
     def gen_file_catalog(self):
@@ -421,9 +463,9 @@ class ParquetDataset:
     ) -> duckdb.DuckDBPyRelation:
         self.scan(filter_expr=filter_expr, lazy=lazy)
         if lazy and not hasattr(self, "_scantable"):
-            return duckdb.from_arrow(self.dataset)
+            return duckdb.from_arrow(self._scands)
         else:
-            return duckdb.from_arrow(self.table)
+            return duckdb.from_arrow(self._scantable)
 
     @property
     def ddb(self) -> duckdb.DuckDBPyRelation:
@@ -434,9 +476,9 @@ class ParquetDataset:
     ) -> _pl.DataFrame:
         self.scan(filter_expr=filter_expr, lazy=lazy)
         if lazy and not hasattr(self, "_scantable"):
-            return _pl.scan_pyarrow_dataset(self.dataset)
+            return _pl.scan_pyarrow_dataset(self._scands)
         else:
-            return _pl.from_arrow(self.table)
+            return _pl.from_arrow(self._scantable)
 
     @property
     def pl(self) -> _pl.DataFrame:
@@ -456,3 +498,8 @@ class ParquetDataset:
         if not hasattr(self, "_file_catalog"):
             self.gen_file_catalog()
         return self._file_catalog
+
+
+class ParquetWriter:
+    def __init__(self, path: str):
+        self._path = path

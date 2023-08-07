@@ -1,31 +1,21 @@
-[tool.poetry]
-name = "pydala2"
+[project]
+name = "pydala"
 version = "0.1.0"
-description = ""
-authors = ["Volker Lorrmann <ligno.blades@gmail.com>"]
+description = "poor man´s datalake"
+authors = [
+    {name = "Volker Lorrmann", email = "ligno.blades@gmail.com"},
+]
+dependencies = [
+    "pyarrow>=12.0.1",
+    "s3fs>=2023.6.0",
+    "polars>=0.18.11",
+    "duckdb>=0.8.1",
+    "tqdm>=4.65.0",
+]
+requires-python = ">=3.10"
 readme = "README.md"
-packages = [{include = "pydala", from = "src"}]
-
-[tool.poetry.dependencies]
-python = "^3.10"
-pyarrow = "^12.0.1"
-polars = "^0.18.8"
-duckdb = "^0.8.1"
-fsspec = "^2023.6.0"
-
-
-[tool.poetry.group.dev.dependencies]
-ipython = "^8.14.0"
-black = "^23.7.0"
-isort = "^5.12.0"
-minio = "^7.1.15"
-ruff-lsp = "^0.0.35"
-ruff = "^0.0.280"
-pylama = "^8.4.1"
-pip = "^23.2.1"
-python-lsp-ruff = "^1.5.1"
-python-lsp-server = "^1.7.4"
+license = {text = "MIT"}
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
