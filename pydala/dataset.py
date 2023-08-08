@@ -33,7 +33,7 @@ def get_filesystem(
 
     if cached:
         fs = cachedfs.SimpleCacheFileSystem(
-            cache_storage="~/.tmp",
+            cache_storage=os.path.expanduser("~/.tmp"),
             check_files=True,
             cache_check=100,
             expire_time=24 * 60 * 60,
@@ -172,7 +172,7 @@ class ParquetDatasetMetadata:
                     update=False, reload=False, format_version=format_version
                 )
             else:
-                e.message += f"Run `{self}.unify_metadata_schema()` or set `auto_repair_schema=True` and try again."
+                # e.message += f"Run `{self}.unify_metadata_schema()` or set `auto_repair_schema=True` and try again."
                 raise
 
     def write_metadata_file(self):
@@ -190,6 +190,12 @@ class ParquetDatasetMetadata:
         return self._metadata
 
     @property
+    def schema(self):
+        if not hasattr(self, "_schema"):
+            self._schema = self.metadata.schema.to_arrow_schema()
+        return self._schema
+
+    @property
     def metadata_file(self):
         if not hasattr(self, "_metadata_file"):
             self._metadata_file = os.path.join(self._path, "_metadata")
@@ -205,7 +211,7 @@ class ParquetDatasetMetadata:
 
     @property
     def files_in_metadata(self) -> list:
-        if self.has_metadata_file:
+        if self.has_metadata:
             return list(
                 set(
                     [
@@ -220,7 +226,7 @@ class ParquetDatasetMetadata:
             return []
 
 
-class ParquetDataset:
+class ParquetDataset(ParquetDatasetMetadata):
     """
     Poor man´s data lake.
 
@@ -253,198 +259,33 @@ class ParquetDataset:
         filesystem: AbstractFileSystem | None = None,
         bucket: str | None = None,
         partitioning: str | None = None,
+        cached: bool = False,
     ):
-        self._path = path
-        self._base_filesystem = filesystem or fsspec_filesystem("file")
-        self.set_bucket(bucket)
-
-        self._files = self._filesystem.glob(os.path.join(path, "**.parquet"))
-        self._scanfiles = self._files.copy()
+        super().__init__(path=path, filesystem=filesystem, bucket=bucket, cached=cached)
         if partitioning is None and "=" in self._files[0]:
             partitioning = "hive"
         self._partitioning = partitioning
 
-        self._metadata_file = os.path.join(path, "_metadata")
+    def load(self, auto_repair_schema: bool = False, **kwargs):
         if self.has_metadata_file:
-            if self._filesystem.du(self._metadata_file) == 0:
-                self._filesystem.rm(self._metadata_file)
-
-        if self.has_metadata_file:
-            self._filesystem.invalidate_cache()
-            self._metadata = pq.read_metadata(
-                self._metadata_file, filesystem=self._filesystem
-            )
-
-        # self.load()
-
-    def load(self):
-        self.update_metadata()
-        self._filesystem.invalidate_cache()
-        self._ds = self._ds = pds.parquet_dataset(
-            self._metadata_file,
-            filesystem=self._filesystem,
-            partitioning=self._partitioning,
-        )
-
-    @property
-    def has_metadata_file(self):
-        return self._filesystem.exists(self._metadata_file)
-
-    @property
-    def has_parquet_files(self):
-        return len(self._files) > 0
-
-    def write_metadata_file(self):
-        with self._filesystem.open(os.path.join(self._path, "_metadata"), "wb") as f:
-            self._metadata.write_metadata_file(f)
-
-        self._filesystem.invalidate_cache()
-        self._ds = self._ds = pds.parquet_dataset(
-            self._metadata_file,
-            filesystem=self._filesystem,
-            partitioning=self._partitioning,
-        )
-
-    def collect_file_schemas(
-        self, files: str | None = None, update: bool = True, **kwargs
-    ):
-        files = files or self._files
-
-        if update:
-            files = list(set(files) - set(self.files_in_metadata))
-            if hasattr(self, "_file_schema"):
-                files = list(set(files) - set(self._file_schema.keys()))
-
-        file_schemas = collect_file_schemas(
-            files=files, filesystem=self._filesystem, **kwargs
-        )
-
-        if len(file_schemas):
-            if hasattr(self, "_file_schemas"):
-                self._file_schemas.update(file_schemas)
-            else:
-                self._file_schemas = file_schemas
-
-            self._unified_file_schema, self._file_schemas_equal = unify_schemas(
-                list(self._file_schemas.values())
-            )
-
+            if len(self.files_in_metadata) <= len(self._files):
+                self.to_metadata(auto_repair_schema=auto_repair_schema, **kwargs)
+                self.write_metadata_file()
         else:
-            self._unified_file_schema = None
-            self._file_schemas_equal = True
-
-    def collect_file_metadata(
-        self, files: str | None = None, update: bool = True, **kwargs
-    ):
-        files = files or self._files
-
-        if update:
-            files = set(files) - set(self.files_in_metadata)
-
-        file_metadata = collect_metadata(
-            files=files, filesystem=self._filesystem, **kwargs
-        )
-        if len(file_metadata):
-            for f in file_metadata:
-                file_metadata[f].set_file_path(f.split(self._path)[-1].lstrip("/"))
-
-            if hasattr(self, "_file_metadata"):
-                self._file_metadata.update(file_metadata)
-            else:
-                self._file_metadata = file_metadata
-            file_schemas = {
-                f: file_metadata[f].schema.to_arrow_schema() for f in file_metadata
-            }
-            if hasattr(self, "_file_schemas"):
-                self._file_schemas.update(file_schemas)
-            else:
-                self._file_schemas = file_schemas
-
-            self._unified_file_schema, self._file_schemas_equal = unify_schemas(
-                list(self._file_schemas.values())
-            )
-        else:
-            self._unified_file_schema = None
-            self._file_schemas_equal = True
-
-    def update_metadata(self, init: bool = False):
-        if init:
-            if self.has_metadata_file:
-                self._filesystem.rm(self._metadata_file)
-                del self._metadata
-
-        self.collect_file_metadata(update=True)
-
-        if hasattr(self, "_file_metadata") and len(self._file_metadata):
-            self.repair_schema(files=list(self._file_metadata.keys()), sort=True)
-
-            if not self.has_metadata_file:
-                self._metadata = self._file_metadata[
-                    list(self._file_metadata.keys())[0]
-                ]
-                for f in list(self._file_metadata.keys())[1:]:
-                    self._metadata.append_row_groups(self._file_metadata[f])
-            else:
-                files = list(
-                    set(self._file_metadata.keys()) - set(self.files_in_metadata)
-                )
-                for f in files:
-                    self._metadata.append_row_groups(self._file_metadata[f])
-
+            self.to_metadata(auto_repair_schema=auto_repair_schema, **kwargs)
             self.write_metadata_file()
 
-        self._file_schema = self._metadata.schema.to_arrow_schema()
-
-    def repair_schema(
-        self,
-        files: str | None = None,
-        sort: bool = False,
-        format_version: str = "1.0",
-        **kwargs,
-    ):
-        if self.has_metadata_file:
-            format_version = self.metadata.format_version
-
-        files = files or self._files
-
-        files_to_repair = []
-
-        if not self.file_schemas_equal:
-            if sort:
-                files_to_repair += [
-                    f for f in files if self._file_schemas[f] != self.file_schema
-                ]
-            else:
-                files_to_repair += [
-                    f
-                    for f in files
-                    if sort_schema(self._file_schemas[f])
-                    != sort_schema(self.file_schema)
-                ]
-
-        if hasattr(self, "_file_metadata"):
-            files_to_repair += [
-                f
-                for f in files
-                if self._file_metadata[f].format_version != format_version
-            ]
-
-        files_to_repair = list(set(files_to_repair))
-
-        if len(files_to_repair):
-            repair_schema(
-                files=files_to_repair,
-                schema=self._schema,
-                filesystem=self._filesystem,
-                version=format_version,
-                **kwargs,
-            )
-            self.collect_file_metadata(files=files_to_repair, update=False)
+        self._ds = pds.parquet_dataset(
+            self.metadata_file,
+            schema=self.schema,
+            partitioning=self._partitioning,
+            filesystem=self._filesystem,
+        )
 
     @property
     def columns(self) -> list:
         if not hasattr(self, "_columns"):
-            self._columns = self.schema.names
+            self._columns = self.schema.names + partitioning_names
         return self._columns
 
     @property
@@ -462,33 +303,6 @@ class ParquetDataset:
         if not hasattr(self, "_partitioning_names"):
             self._partitioning_names = self.partitioning_schema.names
         return self._partitioning_names
-
-    @property
-    def metadata(self) -> pq.FileMetaData:
-        if not hasattr(self, "_metadata"):
-            self.update_metadata()
-        return self._metadata
-
-    @property
-    def file_schema(self) -> pa.Schema:
-        if not hasattr(self, "_file_schema"):
-            if hasattr(self, "_metadata"):
-                self.update_metadata()
-            else:
-                self._file_schema = self.unified_file_schema
-        return self._flle_schema
-
-    @property
-    def unified_file_schema(self) -> dict:
-        if not hasattr(self, "_file_schema"):
-            self.collect_file_schemas()
-        return self._unified_file_schema
-
-    @property
-    def file_schemas_equal(self):
-        if not hasattr(self, "_file_schemas_equal"):
-            self.collect_file_schemas()
-        return self._file_schemas_equal
 
     def gen_file_catalog(self):
         def _get_row_group_stats(rg, partitioning: None | str | list[str] = None):
@@ -676,3 +490,29 @@ class ParquetWriter:
 
 
 # %%
+import pyarrow.dataset as pds
+import s3fs
+from fsspec.implementations.dirfs import DirFileSystem
+import duckdb
+
+con = duckdb.connect()
+
+path = "traces"
+bucket = "myBucket" 
+
+fs = DirFileSystem(path=bucket, fs=s3fs.S3FileSystem())
+
+#%%time
+ds1 = pds.parquet_dataset(path+"/_metadata", filesystem=fs)
+res = con.sql("FROM ds1").filter("time>'2022-07-01' AND time<'2022-07-02'").df()
+
+#CPU times: user 9.09 s, sys: 900 ms, total: 9.99 s
+#Wall time: 7.08 s
+
+
+#%%time
+ds2= pds.dataset(path, filesystem=fs)
+res = con.sql("FROM ds2").filter("time>'2022-07-01' AND time<'2022-07-02'").df()
+
+#CPU times: user 3min 32s, sys: 13.7 s, total: 3min 46s
+#Wall time: 10min 27s
