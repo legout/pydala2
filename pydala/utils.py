@@ -8,9 +8,9 @@ import pyarrow.feather as pf
 import pyarrow.fs as pfs
 import pyarrow.parquet as pq
 import tqdm
-from fsspec import AbstractFileSystem
-from fsspec import filesystem as fsspec_filesystem
 from joblib import Parallel, delayed
+from fsspec.implementations import dirfs, cached as cachedfs
+from fsspec import filesystem as fsspec_filesystem, AbstractFileSystem
 
 
 def get_timedelta_str(timedelta: str, to: str = "polars") -> str:
@@ -273,7 +273,7 @@ def repair_schema(
             backend=backend,
             verbose=verbose,
         )
-        schema = get_unified_schema(schemas=schemas)
+        schema, schemas_equal = unify_schemas(schemas=schemas)
 
     def _repair_schema(f, schema, filesystem):
         filesystem.invalidate_cache()
@@ -497,6 +497,27 @@ def write_table(
             )
 
 
+def get_filesystem(
+    bucket: str | None = None, fs=AbstractFileSystem | None, cached: bool = False
+):
+    if fs is None:
+        fs = fsspec_filesystem("file")
+
+    if bucket is not None:
+        fs = dirfs.DirFileSystem(path=bucket, fs=fs)
+
+    if cached:
+        fs = cachedfs.SimpleCacheFileSystem(
+            cache_storage=os.path.expanduser("~/.tmp"),
+            check_files=True,
+            cache_check=100,
+            expire_time=24 * 60 * 60,
+            fs=fs,
+            same_names=True,
+        )
+    return fs
+
+
 # Polars utils
 
 
@@ -627,7 +648,7 @@ def with_datepart_columns(
     strftime: str | None = None,
 ):
     if not timestamp_column:
-        timestamp_column = get_timestamp_column(table)
+        timestamp_column = get_timestamp_column(df)
 
     if strftime:
         if isinstance(strftime, str):
@@ -659,8 +680,8 @@ def with_datepart_columns(
         strftime.append("%a")
         column_names.append("week_day")
 
-    return with_strftime_column(
-        table=df,
+    return with_strftime_columns(
+        df=df,
         timestamp_column=timestamp_column,
         strftime=strftime,
         column_names=column_names,
@@ -763,7 +784,15 @@ def partition_by(
         if col not in [table_col.lower() for table_col in df.columns]
     }
     if len(datetime_columns):
-        df.with_datepart_columns(timestamp_column=timestamp_column, **datetime_columns)
+        df = df.with_datepart_columns(
+            timestamp_column=timestamp_column, **datetime_columns
+        )
 
     if num_rows:
-        df = df.with_row_count(over=volumns)
+        df = df.with_row_count_ext(over=columns).with_columns(
+            pl.col("row_nr") // (num_rows + 1)
+        )
+        columns += ["row_nr"]
+        drop_columns = ["row_nr"]
+
+    return df, columns, drop_columns

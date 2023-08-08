@@ -7,40 +7,22 @@ import pyarrow as pa
 import pyarrow.dataset as pds
 import pyarrow.fs as pfs
 import pyarrow.parquet as pq
-from fsspec import AbstractFileSystem, filesystem as fsspec_filesystem
-from fsspec.implementations import dirfs, cached as cachedfs
+
+from fsspec import AbstractFileSystem
+
+# from fsspec.implementations import dirfs, cached as cachedfs
 
 from .utils import (
-    collect_file_schemas,
+    # collect_file_schemas,
     collect_metadata,
     get_partitions_from_path,
     read_table,
     repair_schema,
     run_parallel,
-    sort_schema,
+    # sort_schema,
     unify_schemas,
+    get_filesystem,
 )
-
-
-def get_filesystem(
-    bucket: str | None = None, fs=AbstractFileSystem | None, cached: bool = False
-):
-    if fs is None:
-        fs = fsspec_filesystem("file")
-
-    if bucket is not None:
-        fs = dirfs.DirFileSystem(path=bucket, fs=fs)
-
-    if cached:
-        fs = cachedfs.SimpleCacheFileSystem(
-            cache_storage=os.path.expanduser("~/.tmp"),
-            check_files=True,
-            cache_check=100,
-            expire_time=24 * 60 * 60,
-            fs=fs,
-            same_names=True,
-        )
-    return fs
 
 
 class ParquetDatasetMetadata:
@@ -112,24 +94,23 @@ class ParquetDatasetMetadata:
         if update:
             self.update(**kwargs)
 
-        schemas = [
-            self.file_metadata[f].schema.to_arrow_schema() for f in self.file_metadata
-        ]
-
+        schemas = {
+            f: self.file_metadata[f].schema.to_arrow_schema()
+            for f in self.file_metadata
+        }
+        schemas_v = list(schemas.values())
         if self.has_metadata:
             metadata_schema = self._metadata.schema.to_arrow_schema()
-            schemas.append(metadata_schema)
+            schemas_v.append(metadata_schema)
             format_version = self._metadata.format_version
 
-        unified_schema, schemas_equal = unify_schemas(schemas)
+        unified_schema, schemas_equal = unify_schemas(schemas_v)
 
         files = []
         if not schemas_equal:
-            files += [
-                f for f in self._files if self._file_schemas[f] != self.file_schema
-            ]
+            files += [f for f in self._files if schemas[f] != unified_schema]
         files += [
-            f for f in files if self._file_metadata[f].format_version != format_version
+            f for f in files if self.file_metadata[f].format_version != format_version
         ]
 
         if len(files):
@@ -155,25 +136,28 @@ class ParquetDatasetMetadata:
         if update:
             self.update(**kwargs)
 
-        try:
-            if not self.has_metadata:
-                self._metadata = self.file_metadata[list(self.file_metadata.keys())[0]]
-                for f in list(self.file_metadata.keys())[1:]:
-                    self._metadata.append_row_groups(self.file_metadata[f])
-            else:
-                files = list(
-                    set(self.file_metadata.keys()) - set(self.files_in_metadata)
-                )
-                for f in files:
-                    self._metadata.append_row_groups(self.file_metadata[f])
-        except Exception as e:
-            if auto_repair_schema:
-                self.unify_metadata_schema(
-                    update=False, reload=False, format_version=format_version
-                )
-            else:
-                # e.message += f"Run `{self}.unify_metadata_schema()` or set `auto_repair_schema=True` and try again."
-                raise
+        if hasattr(self, "file_metadata"):
+            try:
+                if not self.has_metadata:
+                    self._metadata = self.file_metadata[
+                        list(self.file_metadata.keys())[0]
+                    ]
+                    for f in list(self.file_metadata.keys())[1:]:
+                        self._metadata.append_row_groups(self.file_metadata[f])
+                else:
+                    files = list(
+                        set(self.file_metadata.keys()) - set(self.files_in_metadata)
+                    )
+                    for f in files:
+                        self._metadata.append_row_groups(self.file_metadata[f])
+            except Exception as e:
+                if auto_repair_schema:
+                    self.unify_metadata_schema(
+                        update=False, reload=False, format_version=format_version
+                    )
+                else:
+                    # e.message += f"Run `{self}.unify_metadata_schema()` or set `auto_repair_schema=True` and try again."
+                    raise e
 
     def write_metadata_file(self):
         with self._filesystem.open(os.path.join(self._path, "_metadata"), "wb") as f:
@@ -277,7 +261,7 @@ class ParquetDataset(ParquetDatasetMetadata):
 
         self._ds = pds.parquet_dataset(
             self.metadata_file,
-            schema=self.schema,
+            # schema=self.schema,
             partitioning=self._partitioning,
             filesystem=self._filesystem,
         )
@@ -285,7 +269,7 @@ class ParquetDataset(ParquetDatasetMetadata):
     @property
     def columns(self) -> list:
         if not hasattr(self, "_columns"):
-            self._columns = self.schema.names + partitioning_names
+            self._columns = self.schema.names + self.partitioning_names
         return self._columns
 
     @property
@@ -487,32 +471,3 @@ class ParquetDataset(ParquetDatasetMetadata):
 class ParquetWriter:
     def __init__(self, path: str):
         self._path = path
-
-
-# %%
-import pyarrow.dataset as pds
-import s3fs
-from fsspec.implementations.dirfs import DirFileSystem
-import duckdb
-
-con = duckdb.connect()
-
-path = "traces"
-bucket = "myBucket" 
-
-fs = DirFileSystem(path=bucket, fs=s3fs.S3FileSystem())
-
-#%%time
-ds1 = pds.parquet_dataset(path+"/_metadata", filesystem=fs)
-res = con.sql("FROM ds1").filter("time>'2022-07-01' AND time<'2022-07-02'").df()
-
-#CPU times: user 9.09 s, sys: 900 ms, total: 9.99 s
-#Wall time: 7.08 s
-
-
-#%%time
-ds2= pds.dataset(path, filesystem=fs)
-res = con.sql("FROM ds2").filter("time>'2022-07-01' AND time<'2022-07-02'").df()
-
-#CPU times: user 3min 32s, sys: 13.7 s, total: 3min 46s
-#Wall time: 10min 27s
