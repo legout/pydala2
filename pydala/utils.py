@@ -106,34 +106,6 @@ def run_parallel(
             delayed(func)(fp, *args, **kwargs) for fp in func_params
         )
 
-
-def set_timezone(
-    schema: pa.Schema, timestamp_fields: str | list[str] | None = None, tz: None = None
-) -> pa.Schema:
-    """Set timezone for every timestamp in a pyarrow schema.
-
-    Args:
-        schema (pa.Schema): Pyarrow schema.
-        timestamp_fields (str | list[str] | None, optional): timestamp fields. Defaults to None.
-        tz (None, optional): timezone. Defaults to None.
-
-    Returns:
-        pa.Schema: Pyarrow schema with give timezone.
-    """
-    if isinstance(timestamp_fields, str):
-        timestamp_fields = [timestamp_fields]
-
-    for timestamp_field in timestamp_fields:
-        timestamp_field_idx = schema.get_field_index(timestamp_field)
-        unit = schema.field(timestamp_field).type.unit
-        schema = schema.remove(timestamp_field_idx).insert(
-            timestamp_field_idx,
-            pa.field(timestamp_field, pa.timestamp(unit=unit, tz=tz)),
-        )
-
-    return schema
-
-
 def sort_schema(schema: pa.Schema) -> pa.Schema:
     """Sort fields of a pyarrow schema in alphabetical order.
 
@@ -149,23 +121,80 @@ def sort_schema(schema: pa.Schema) -> pa.Schema:
             for name, type_ in sorted(zip(schema.names, schema.types))
         ]
     )
+    
+def shrink_large_string(schema: pa.Schema)->pa.Schema:
+    """Convert all large_string types to string in a pyarrow.schema.
+
+    Args:
+        schema (pa.Schema): pyarrow schema
+
+    Returns:
+        pa.Schema: converted pyarrow.schema
+    """
+    return pa.schema(
+        [
+            (n, pa.utf8()) if t == pa.large_string() else (n, t)
+            for n, t in list(zip(schema.names, schema.types))
+        ]
+    )
+    
+
+    
+
+def convert_timestamp(
+    schema: pa.Schema, timestamp_fields: str | list[str] | None = None, unit:str|None="us",  tz: str | None = None, remove_tz:bool=False
+) -> pa.Schema:
+    """Convert timestamp based on given unit and timezone.
+
+    Args:
+        schema (pa.Schema): Pyarrow schema.
+        timestamp_fields (str | list[str] | None, optional): timestamp fields. Defaults to None.
+        unit (str | None): timestamp unit. Defaults to "us".
+        tz (None, optional): timezone. Defaults to None.
+        remove_tz (str | None): Wheter to remove the timezone from the timestamp or not. Defaults to False.
+
+    Returns:
+        pa.Schema: Pyarrow schema with converted timestamp(s).
+    """
+    if timestamp_fields is None:
+        timestamp_fields = [f for f in schema.names if isinstance(schema.field(f).type, pa.TimestampType)]
+        
+    if isinstance(timestamp_fields, str):
+        timestamp_fields = [timestamp_fields]
+        
+    for timestamp_field in timestamp_fields:
+        timestamp_field_idx = schema.get_field_index(timestamp_field)
+        unit = unit or schema.field(timestamp_field).type.unit
+        tz = tz or schema.field(timestamp_field).type.tz
+        if remove_tz:
+            tz=None
+        schema = schema.remove(timestamp_field_idx).insert(
+            timestamp_field_idx,
+            pa.field(timestamp_field, pa.timestamp(unit=unit, tz=tz)),
+        )
+
+    return schema
+
+
 
 
 def _unify_schemas(
-    schema1: pa.Schema, schema2: pa.Schema, tz: str | None = "UTC"
+    schema1: pa.Schema, schema2: pa.Schema, ts_unit:str|None="us", tz: str | None = "UTC", shrink_large_string:bool=True
 ) -> tuple[dict, bool]:
     """Returns a unified pyarrow schema.
 
     Args:
         schema1 (pa.Schema): Pyarrow schema 1.
         schema2 (pa.Schema): Pyarrow schema 2.
-        tz (str): timezone for timestamp fields. Defaults to "UTC".
+        ts_unit (str|None): timestamp unit.
+        tz (str|None): timezone for timestamp fields. Defaults to "UTC".
+        shrink_large_string (bool): Convert pyarrow.large_string() to pyarrow.string(). Defaults to True.
 
     Returns:
         Tuple[dict, bool]: Unified pyarrow schema, bool value if schemas were equal.
     """
 
-    dtype_rank = [
+    numeric_rank = [
         pa.null(),
         pa.int8(),
         pa.int16(),
@@ -177,21 +206,25 @@ def _unify_schemas(
         pa.string(),
     ]
     timestamp_rank = ["ns", "us", "ms", "s"]
+    string_rank = [pa.string(), pa.utf8(), pa.large_string(), pa.large_utf8()]
 
     # check for equal columns and column order
     if schema1.names == schema2.names:
-        if schema1.types == schema2.types:
-            return schema1, True
+        #if schema1.types == schema2.types:
+        #    return schema1, True
 
         all_names = schema1.names
+        file_schemas_equal = True
 
     elif sorted(schema1.names) == sorted(schema2.names):
         all_names = sorted(schema1.names)
+        file_schemas_equal = False
 
     else:
         all_names = sorted(set(schema1.names + schema2.names))
+        file_schemas_equal = False
 
-    file_schemas_equal = True
+
     schema = []
     for name in all_names:
         if name in schema1.names:
@@ -202,34 +235,43 @@ def _unify_schemas(
             type2 = schema2.field(name).type
         else:
             type2 = schema1.field(name).type
-
+            
         if type1 != type2:
-            file_schemas_equal = False
-
-            if isinstance(type1, pa.TimestampType):
-                rank1 = timestamp_rank.index(type1.unit)
-                rank2 = timestamp_rank.index(type2.unit)
-                if type1.tz != tz:
-                    type1 = pa.timestamp(type1.unit, tz=tz)
-                if type2.tz != tz:
-                    type2 = pa.timestamp(type2.unit, tz=tz)
-            else:
-                rank1 = dtype_rank.index(type1) if type1 in dtype_rank else 0
-                rank2 = dtype_rank.index(type2) if type2 in dtype_rank else 0
-
+            
+            if type1 in numeric_rank:
+                rank1 = numeric_rank.index(type1) if type1 in numeric_rank else 0
+                rank2 = numeric_rank.index(type2) if type2 in numeric_rank else 0
+            
+            if type1 in string_rank:
+                rank1 = string_rank.index(type1) if type1 in string_rank else 0
+                rank2 = string_rank.index(type2) if type2 in string_rank else 0
+                
             schema.append(pa.field(name, type1 if rank1 > rank2 else type2))
 
         else:
             schema.append(pa.field(name, type1))
+    
+    schema = pa.schema(schema)
+    
+    if ts_unit is not None or tz is not None:
+        schema = convert_timestamp(schema, unit=ts_unit, tz=tz)
+        
+    if shrink_large_string:
+        schema = shrink_large_string(schema)
 
-    return pa.schema(schema), file_schemas_equal
+    if schema!=schema1 or schema!=schema2:
+            file_schemas_equal=False
+            
+    return schema, file_schemas_equal
 
 
-def unify_schemas(schemas: list[pa.Schema]) -> tuple[pa.Schema, bool]:
+def unify_schemas(schemas: list[pa.Schema], ts_unit:str|None="us", tz:str|None="UTC") -> tuple[pa.Schema, bool]:
     """Get the unified pyarrow schema for a list of schemas.
 
     Args:
         schemas (list[pa.Schema]): Pyarrow schemas.
+        ts_unit (str|None): timestamp unit.
+        tz (str|None): timezone for timestamp fields. Defaults to "UTC".
 
     Returns:
         tuple[pa.Schema, bool]: Unified pyarrow schema.
@@ -238,7 +280,7 @@ def unify_schemas(schemas: list[pa.Schema]) -> tuple[pa.Schema, bool]:
     schemas_equal = True
     unified_schema = schemas[0]
     for schema in schemas[1:]:
-        unified_schema, schemas_equal_ = _unify_schemas(unified_schema, schema)
+        unified_schema, schemas_equal_ = _unify_schemas(unified_schema, schema, ts_unit=ts_unit, tz=tz)
 
         schemas_equal *= schemas_equal_
 
@@ -560,18 +602,18 @@ def unnest_all(df: pl.DataFrame, seperator="_", fields: list[str] | None = None)
 def _opt_dtype(s: pl.Series) -> pl.Series:
     if (s.str.contains("^[0-9,\.-]{1,}$") | s.is_null()).all():
         s = s.str.replace_all(",", ".").str.replace_all(".0$", "")
-        if s.str.contains("\.").any():
-            s = s.cast(pl.Float64()).shrink_dtype()
+        if s.str.contains("\.").any() | s.is_null().any() | s.str.contains("^$").any():
+            s = s.str.replace("^$",pl.lit("NaN")).cast(pl.Float64(), strict=True).shrink_dtype()
         else:
             if (s.str.lengths() > 0).all():
-                s = s.cast(pl.Int64()).shrink_dtype()
+                s = s.cast(pl.Int64(), strict=True).shrink_dtype()
     elif s.str.contains("^[T,t]rue|[F,f]alse$").all():
-        s = s.str.contains("^[T,t]rue$")
+        s = s.str.contains("^[T,t]rue$", strict=True)
 
     return s
 
 
-def opt_dtype(df: pl.DataFrame) -> pl.DataFrame:
+def opt_dtype(df: pl.DataFrame, exclude=None) -> pl.DataFrame:
     return df.with_columns(pl.all().map(_opt_dtype))
 
 
@@ -796,3 +838,4 @@ def partition_by(
         drop_columns = ["row_nr"]
 
     return df, columns, drop_columns
+

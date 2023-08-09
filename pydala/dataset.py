@@ -69,6 +69,8 @@ class ParquetDatasetMetadata:
             self._filesystem.glob(os.path.join(self._path, "**.parquet"))
         )
         self.collect(files=self._files, **kwargs)
+        if self.has_metadata_file:
+            self._filesystem.rm(self._metadata_file)
 
     def update(self, **kwargs):
         self._files = sorted(
@@ -259,9 +261,10 @@ class ParquetDataset(ParquetDatasetMetadata):
             self.to_metadata(auto_repair_schema=auto_repair_schema, **kwargs)
             self.write_metadata_file()
 
+        self._filesystem.invalidate_cache()
         self._ds = pds.parquet_dataset(
             self.metadata_file,
-            # schema=self.schema,
+            #schema=self.schema,
             partitioning=self._partitioning,
             filesystem=self._filesystem,
         )
