@@ -2,27 +2,18 @@
 import os
 
 import duckdb
-import polars as _pl
 import pyarrow as pa
 import pyarrow.dataset as pds
 import pyarrow.fs as pfs
 import pyarrow.parquet as pq
-
 from fsspec import AbstractFileSystem
 
+from .helpers import (collect_metadata, get_filesystem, get_row_group_stats,
+                      run_parallel)
 # from fsspec.implementations import dirfs, cached as cachedfs
-
-from .utils import (
-    # collect_file_schemas,
-    collect_metadata,
-    get_partitions_from_path,
-    read_table,
-    repair_schema,
-    run_parallel,
-    # sort_schema,
-    unify_schemas,
-    get_filesystem,
-)
+from .io import read_table
+from .polars_ext import pl as _pl
+from .schema import repair_schema, unify_schemas
 
 
 class ParquetDatasetMetadata:
@@ -152,6 +143,9 @@ class ParquetDatasetMetadata:
                     )
                     for f in files:
                         self._metadata.append_row_groups(self.file_metadata[f])
+                
+                self.write_metadata_file()
+                
             except Exception as e:
                 if auto_repair_schema:
                     self.unify_metadata_schema(
@@ -252,22 +246,28 @@ class ParquetDataset(ParquetDatasetMetadata):
             partitioning = "hive"
         self._partitioning = partitioning
 
+        # self.load()
+
     def load(self, auto_repair_schema: bool = False, **kwargs):
         if self.has_metadata_file:
             if len(self.files_in_metadata) <= len(self._files):
                 self.to_metadata(auto_repair_schema=auto_repair_schema, **kwargs)
-                self.write_metadata_file()
+               # self.write_metadata_file()
         else:
             self.to_metadata(auto_repair_schema=auto_repair_schema, **kwargs)
-            self.write_metadata_file()
+            #self.write_metadata_file()
 
         self._filesystem.invalidate_cache()
-        self._ds = pds.parquet_dataset(
+        self._base_dataset = pds.parquet_dataset(
             self.metadata_file,
-            #schema=self.schema,
+            # schema=self.schema,
             partitioning=self._partitioning,
             filesystem=self._filesystem,
         )
+
+    @property
+    def is_loaded(self):
+        return hasattr(self, "_base_dataset")
 
     @property
     def columns(self) -> list:
@@ -277,68 +277,43 @@ class ParquetDataset(ParquetDatasetMetadata):
 
     @property
     def count_rows(self) -> int:
-        return self._ds.count_rows
+        if self.is_loaded:
+            return self._base_dataset.count_rows
+        else:
+            print(f"No dataset loaded yet. Run {self}.load()")
+            return 0
 
     @property
     def partitioning_schema(self) -> pa.Schema:
         if not hasattr(self, "_partitioning_schema"):
-            self._partitioning_schema = self._ds.partitioning.schema
+            if self.is_loaded:
+                self._partitioning_schema = self._base_dataset.partitioning.schema
+            else:
+                print(f"No dataset loaded yet. Run {self}.load()")
+                return pa.schema()
         return self._partitioning_schema
 
     @property
     def partitioning_names(self) -> list:
         if not hasattr(self, "_partitioning_names"):
-            self._partitioning_names = self.partitioning_schema.names
+            if self.is_loaded:
+                self._partitioning_names = self.partitioning_schema.names
+            else:
+                print(f"No dataset loaded yet. Run {self}.load()")
+                return []
         return self._partitioning_names
 
     def gen_file_catalog(self):
-        def _get_row_group_stats(rg, partitioning: None | str | list[str] = None):
-            stats = {}
-            file_path = rg.column(0).file_path
-            stats["file_path"] = file_path
-            if "=" in file_path:
-                partitioning = partitioning or "hive"
-            if partitioning is not None:
-                partitions = get_partitions_from_path(
-                    file_path, partitioning=partitioning
-                )
-                stats.update(dict(partitions))
-
-            stats["num_columns"] = rg.num_columns
-            stats["num_rows"] = rg.num_rows
-            stats["total_byte_size"] = rg.total_byte_size
-            stats["compression"] = rg.column(0).compression
-
-            for i in range(rg.num_columns):
-                name = rg.column(i).path_in_schema
-                stats[name + "_total_compressed_size"] = rg.column(
-                    i
-                ).total_compressed_size
-                stats[name + "_total_uncompressed_size"] = rg.column(
-                    i
-                ).total_uncompressed_size
-
-                stats[name + "_physical_type"] = rg.column(i).physical_type
-                if rg.column(i).is_stats_set:
-                    stats[name + "_min"] = rg.column(i).statistics.min
-                    stats[name + "_max"] = rg.column(i).statistics.max
-                    stats[name + "_null_count"] = rg.column(i).statistics.null_count
-                    stats[name + "_distinct_count"]: rg.column(
-                        i
-                    ).statistics.distinct_count
-
-            return stats
-
         self._file_catalog = _pl.DataFrame(
             [
-                _get_row_group_stats(
+                get_row_group_stats(
                     self.metadata.row_group(i), partitioning=self._partitioning
                 )
                 for i in range(self.metadata.num_row_groups)
             ]
         )
 
-    def scan(self, filter_expr: str | None = None, lazy: bool = True, **kwargs):
+    def scan(self, filter_expr: str | None = None, lazy: bool = True):
         if filter_expr is not None:
             filter_expr = [fe.strip() for fe in filter_expr.split("AND")]
 
@@ -359,7 +334,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                     f"{part_name}_max", part_name
                 ).replace(f"{part_name}_min", part_name)
 
-            self._scanfiles = [
+            self._scan_files = [
                 os.path.join(self._path, sf)
                 for sf in duckdb.from_arrow(self.file_catalog.to_arrow())
                 .filter(filter_expr_mod)
@@ -367,63 +342,85 @@ class ParquetDataset(ParquetDatasetMetadata):
                 .to_list()
             ]
 
-            self._filesystem.invalidate_cache()
-            self._scands = pds.dataset(
-                self._scanfiles,
-                filesystem=self._filesystem,
-                partitioning=self._partitioning,
-                schema=self.schema,
-            )
+        #     self._filesystem.invalidate_cache()
+        #     self._scands = pds.dataset(
+        #         self._scanfiles,
+        #         filesystem=self._filesystem,
+        #         partitioning=self._partitioning,
+        #         schema=self.schema,
+        #     )
 
-            if not lazy:
-                self._scantable = pa.concat_tables(
-                    run_parallel(
-                        read_table,
-                        self._scanfiles,
-                        schema=self.schema,
-                        format="parquet",
-                        filesystem=self._filesystem,
-                        partitioning=self._partitioning,
-                        **kwargs,
-                    )
-                )
-        else:
-            if not hasattr(self, "_scands"):
-                self._filesystem.invalidate_cache()
-                self._scands = pds.dataset(
-                    self._scanfiles,
-                    filesystem=self._filesystem,
-                    partitioning=self._partitioning,
-                    schema=self.schema,
-                )
-            if not lazy and not hasattr(self, "_scantable"):
-                self._scantable = pa.concat_tables(
-                    run_parallel(
-                        read_table,
-                        self._scanfiles,
-                        schema=self.schema,
-                        format="parquet",
-                        filesystem=self._filesystem,
-                        partitioning=self._partitioning,
-                        **kwargs,
-                    )
-                )
+        #     if not lazy:
+        #         self._scantable = pa.concat_tables(
+        #             run_parallel(
+        #                 read_table,
+        #                 self._scanfiles,
+        #                 schema=self.schema,
+        #                 format="parquet",
+        #                 filesystem=self._filesystem,
+        #                 partitioning=self._partitioning,
+        #                 **kwargs,
+        #             )
+        #         )
+        # else:
+        #     if not hasattr(self, "_scands"):
+        #         self._filesystem.invalidate_cache()
+        #         self._scands = pds.dataset(
+        #             self._scanfiles,
+        #             filesystem=self._filesystem,
+        #             partitioning=self._partitioning,
+        #             schema=self.schema,
+        #         )
+        #     if not lazy and not hasattr(self, "_scantable"):
+        #         self._scantable = pa.concat_tables(
+        #             run_parallel(
+        #                 read_table,
+        #                 self._scanfiles,
+        #                 schema=self.schema,
+        #                 format="parquet",
+        #                 filesystem=self._filesystem,
+        #                 partitioning=self._partitioning,
+        #                 **kwargs,
+        #             )
+        #         )
 
         return self
 
     def to_dataset(self, filter_expr: str | None = None) -> pds.Dataset:
         self.scan(filter_expr=filter_expr, lazy=True)
-
-        return self._scands
+        if hasattr(self, "_dataset"):
+            if sorted(self._dataset.files) == sorted(self._scan_files):
+                return self._dataset
+        self._dataset = pds.dataset(
+            self._scan_files,
+            partitioning=self._partitioning,
+            filesystem=self._filesystem,
+        )
+        return self._dataset
 
     @property
     def dataset(self) -> pds.Dataset:
         return self.to_dataset()
 
-    def to_table(self, filter_expr: str | None = None) -> pa.Table:
+    def to_table(self, filter_expr: str | None = None, **kwargs) -> pa.Table:
         self.scan(filter_expr=filter_expr, lazy=False)
+        if hasattr(self, "_table"):
+            if sorted(self._table_files) == sorted(self._scan_files):
+                return self._table
 
-        return self._scantable
+        self._table_files = self._scan_files.copy()
+        self._table = pa.concat_tables(
+            run_parallel(
+                read_table,
+                self._scanfiles,
+                schema=self.schema,
+                format="parquet",
+                filesystem=self._filesystem,
+                partitioning=self._partitioning,
+                **kwargs,
+            )
+        )
+        return self._table
 
     @property
     def table(self) -> pa.Table:
@@ -432,11 +429,12 @@ class ParquetDataset(ParquetDatasetMetadata):
     def to_duckdb(
         self, filter_expr: str | None = None, lazy: bool = True
     ) -> duckdb.DuckDBPyRelation:
-        self.scan(filter_expr=filter_expr, lazy=lazy)
-        if lazy and not hasattr(self, "_scantable"):
-            return duckdb.from_arrow(self._scands)
+        if lazy:
+            self.to_dataset(filter_expr=filter_expr)
+            return duckdb.from_arrow(self._dataset)
         else:
-            return duckdb.from_arrow(self._scantable)
+            self.to_table(filter_expr=filter_expr)
+            return duckdb.from_arrow(self._table)
 
     @property
     def ddb(self) -> duckdb.DuckDBPyRelation:
@@ -445,11 +443,12 @@ class ParquetDataset(ParquetDatasetMetadata):
     def to_polars(
         self, filter_expr: str | None = None, lazy: bool = True
     ) -> _pl.DataFrame:
-        self.scan(filter_expr=filter_expr, lazy=lazy)
-        if lazy and not hasattr(self, "_scantable"):
-            return _pl.scan_pyarrow_dataset(self._scands)
+        if lazy:
+            self.to_dataset(filter_expr=filter_expr)
+            return _pl.scan_pyarrow_dataset(self._dataset)
         else:
-            return _pl.from_arrow(self._scantable)
+            self.to_table(filter_expr=filter_expr)
+            return _pl.from_arrow(self._table)
 
     @property
     def pl(self) -> _pl.DataFrame:
