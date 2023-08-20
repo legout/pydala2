@@ -1,19 +1,27 @@
 # %%
 import os
+import uuid
 
 import duckdb
+import pandas as pd
 import pyarrow as pa
 import pyarrow.dataset as pds
 import pyarrow.fs as pfs
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 
-from .helpers import (collect_metadata, get_filesystem, get_row_group_stats,
-                      run_parallel)
+from .helpers import (
+    collect_metadata,
+    get_filesystem,
+    get_row_group_stats,
+    partition_by,
+    run_parallel,
+)
+
 # from fsspec.implementations import dirfs, cached as cachedfs
-from .io import read_table
+from .io import read_table, write_table
 from .polars_ext import pl as _pl
-from .schema import repair_schema, unify_schemas
+from .schema import convert_timestamp, repair_schema, shrink_large_string, unify_schemas
 
 
 class ParquetDatasetMetadata:
@@ -31,10 +39,10 @@ class ParquetDatasetMetadata:
 
         self._files = sorted(self._filesystem.glob(os.path.join(path, "**.parquet")))
 
-        self.file = os.path.join(path, "_metadata")
+        self._file = os.path.join(path, "_metadata")
         if self.has_metadata_file:
             self._metadata = pq.read_metadata(
-                self._metadata_file, filesystem=self._filesystem
+                self.metadata_file, filesystem=self._filesystem
             )
 
     def collect(self, files: list[str] | None = None, **kwargs):
@@ -61,7 +69,7 @@ class ParquetDatasetMetadata:
         )
         self.collect(files=self._files, **kwargs)
         if self.has_metadata_file:
-            self._filesystem.rm(self._metadata_file)
+            self._filesystem.rm(self.metadata_file)
 
     def update(self, **kwargs):
         self._files = sorted(
@@ -143,16 +151,17 @@ class ParquetDatasetMetadata:
                     )
                     for f in files:
                         self._metadata.append_row_groups(self.file_metadata[f])
-                
+
                 self.write_metadata_file()
-                
+
             except Exception as e:
                 if auto_repair_schema:
                     self.unify_metadata_schema(
                         update=False, reload=False, format_version=format_version
                     )
                 else:
-                    # e.message += f"Run `{self}.unify_metadata_schema()` or set `auto_repair_schema=True` and try again."
+                    # e.message += f"Run `{self}.unify_metadata_schema()
+                    # or set `auto_repair_schema=True` and try again.
                     raise e
 
     def write_metadata_file(self):
@@ -178,8 +187,8 @@ class ParquetDatasetMetadata:
     @property
     def metadata_file(self):
         if not hasattr(self, "_metadata_file"):
-            self._metadata_file = os.path.join(self._path, "_metadata")
-        return self._metadata_file
+            self._file = os.path.join(self._path, "_metadata")
+        return self._file
 
     @property
     def has_metadata_file(self):
@@ -242,9 +251,13 @@ class ParquetDataset(ParquetDatasetMetadata):
         cached: bool = False,
     ):
         super().__init__(path=path, filesystem=filesystem, bucket=bucket, cached=cached)
-        if partitioning is None and "=" in self._files[0]:
+
+        if partitioning == "ignore":
+            self._partitioning = None
+        elif partitioning is None and "=" in self._files[0]:
             partitioning = "hive"
-        self._partitioning = partitioning
+        else:
+            self._partitioning = partitioning
 
         # self.load()
 
@@ -252,10 +265,10 @@ class ParquetDataset(ParquetDatasetMetadata):
         if self.has_metadata_file:
             if len(self.files_in_metadata) <= len(self._files):
                 self.to_metadata(auto_repair_schema=auto_repair_schema, **kwargs)
-               # self.write_metadata_file()
+                # self.write_metadata_file()
         else:
             self.to_metadata(auto_repair_schema=auto_repair_schema, **kwargs)
-            #self.write_metadata_file()
+            # self.write_metadata_file()
 
         self._filesystem.invalidate_cache()
         self._base_dataset = pds.parquet_dataset(
@@ -290,8 +303,23 @@ class ParquetDataset(ParquetDatasetMetadata):
                 self._partitioning_schema = self._base_dataset.partitioning.schema
             else:
                 print(f"No dataset loaded yet. Run {self}.load()")
-                return pa.schema()
+                return pa.schema([])
         return self._partitioning_schema
+
+    @property
+    def schema(self):
+        if not hasattr(self, "_schema"):
+            # if self._partitioning is not None and self._partitioning!="ignore":
+            self._schema = pa.unify_schemas(
+                [self.file_schema, self.partitioning_schema]
+            )
+        return self._schema
+
+    @property
+    def file_schema(self):
+        if not hasattr(self, "_file_schema"):
+            self._file_schema = self.metadata.schema.to_arrow_schema()
+        return self._file_schema
 
     @property
     def partitioning_names(self) -> list:
@@ -320,19 +348,29 @@ class ParquetDataset(ParquetDatasetMetadata):
             filter_expr_mod = []
             for fe in filter_expr:
                 if ">" in fe:
-                    filter_expr_mod.append(fe.replace(">", "_max>"))
+                    if not fe.split(">")[0].lstrip("(") in self.partitioning_names:
+                        filter_expr_mod.append(fe.replacelace(">", "_max>"))
+                    else:
+                        filter_expr_mod.append(fe)
                 elif "<" in fe:
-                    filter_expr_mod.append(fe.replace("<", "_min<"))
+                    if not fe.split("<")[0].lstrip("(") in self.partitioning_names:
+                        filter_expr_mod.append(fe.replacelace("<", "_min<"))
+                    else:
+                        filter_expr_mod.append(fe)
                 elif "=" in fe:
-                    filter_expr_mod.append(fe.replace("=", "_min<="))
-                    filter_expr_mod.append(fe.replace("=", "_max>="))
+                    if not fe.split("=")[0].lstrip("(") in self.partitioning_names:
+                        filter_expr_mod.append(fe.replacelace("=", "_min<="))
+                        filter_expr_mod.append(fe.replace("=", "_max>="))
+                    else:
+                        filter_expr_mod.append(fe)
 
             filter_expr_mod = " AND ".join(filter_expr_mod)
+            # filter_expr_mod = filter_expr.replace(">", "_max>").replace("<", "_min<")
 
-            for part_name in self.partitioning_names:
-                filter_expr_mod = filter_expr_mod.replace(
-                    f"{part_name}_max", part_name
-                ).replace(f"{part_name}_min", part_name)
+            # for part_name in self.partitioning_names:
+            #     filter_expr_mod = filter_expr_mod.replace(
+            #         f"{part_name}_max", part_name
+            #     ).replace(f"{part_name}_min", part_name)
 
             self._scan_files = [
                 os.path.join(self._path, sf)
@@ -341,48 +379,6 @@ class ParquetDataset(ParquetDatasetMetadata):
                 .pl()["file_path"]
                 .to_list()
             ]
-
-        #     self._filesystem.invalidate_cache()
-        #     self._scands = pds.dataset(
-        #         self._scanfiles,
-        #         filesystem=self._filesystem,
-        #         partitioning=self._partitioning,
-        #         schema=self.schema,
-        #     )
-
-        #     if not lazy:
-        #         self._scantable = pa.concat_tables(
-        #             run_parallel(
-        #                 read_table,
-        #                 self._scanfiles,
-        #                 schema=self.schema,
-        #                 format="parquet",
-        #                 filesystem=self._filesystem,
-        #                 partitioning=self._partitioning,
-        #                 **kwargs,
-        #             )
-        #         )
-        # else:
-        #     if not hasattr(self, "_scands"):
-        #         self._filesystem.invalidate_cache()
-        #         self._scands = pds.dataset(
-        #             self._scanfiles,
-        #             filesystem=self._filesystem,
-        #             partitioning=self._partitioning,
-        #             schema=self.schema,
-        #         )
-        #     if not lazy and not hasattr(self, "_scantable"):
-        #         self._scantable = pa.concat_tables(
-        #             run_parallel(
-        #                 read_table,
-        #                 self._scanfiles,
-        #                 schema=self.schema,
-        #                 format="parquet",
-        #                 filesystem=self._filesystem,
-        #                 partitioning=self._partitioning,
-        #                 **kwargs,
-        #             )
-        #         )
 
         return self
 
@@ -412,7 +408,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         self._table = pa.concat_tables(
             run_parallel(
                 read_table,
-                self._scanfiles,
+                self._scan_files,
                 schema=self.schema,
                 format="parquet",
                 filesystem=self._filesystem,
@@ -469,7 +465,46 @@ class ParquetDataset(ParquetDatasetMetadata):
             self.gen_file_catalog()
         return self._file_catalog
 
+    def write_to_dataset(
+        self,
+        df: _pl.DataFrame
+        | _pl.LazyFrame
+        | pa.Table
+        | pd.DataFrame
+        | duckdb.DuckDBPyConnection,
+        mode: str = "append",
+        num_rows: int | None = None,
+        row_group_size: int | None = None,
+        compression: str = "zstd",
+        **kwrags,
+    ):
+        if isinstance(df, pd.DataFrame):
+            df = _pl.from_pandas(df)
+        elif isinstance(df, pa.Table):
+            df = _pl.from_arrow(df)
+        elif isinstance(df, duckdb.DuckDBPyRelation):
+            df = df.pl()
 
-class ParquetWriter:
-    def __init__(self, path: str):
-        self._path = path
+        _partitions = partition_by(
+            df=df, columns=self.partitioning_names, num_rows=num_rows
+        )
+        paths = [
+            os.path.join(
+                "/".join(
+                    (
+                        "=".join([k, str(v).lstrip("0")])
+                        for k, v in partition[0].items()
+                        if k != "row_nr"
+                    )
+                ),
+                f"data-{partition[0].get('row_nr', 0)}-{uuid.uuid4().hex}.parquet",
+            )
+            for partition in _partitions
+        ]
+
+        partitions = [partition[1] for partition in _partitions]
+
+        # run_parllel(write_table, partitions, path, schema=self.file_schema, filesystem=self._filesystem,
+        #             row_group_size=row_group_size, compression=compression, backend="threading", n_jobs=-1, **kwargs)
+
+        return _partitions, paths

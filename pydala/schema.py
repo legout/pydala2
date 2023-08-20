@@ -1,9 +1,11 @@
 import pyarrow as pa
 import pyarrow.fs as pfs
+import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 
 from .helpers import collect_file_schemas, run_parallel
-from .io import read_table, write_table
+
+# from .io import read_table, write_table
 
 
 def sort_schema(schema: pa.Schema) -> pa.Schema:
@@ -152,8 +154,8 @@ def _unify_schemas(
             elif type1 in string_rank:
                 rank1 = string_rank.index(type1) if type1 in string_rank else 0
                 rank2 = string_rank.index(type2) if type2 in string_rank else 0
-            
-            elif isinstance(type1, pa.TimestampType): 
+
+            elif isinstance(type1, pa.TimestampType):
                 rank1 = string_rank.index(type1.unit) if type1 in string_rank else 0
                 rank2 = string_rank.index(type2.unit) if type2 in string_rank else 0
             else:
@@ -248,8 +250,8 @@ def repair_schema(
         filesystem.invalidate_cache()
         # file_schema = pq.read_metadata(f, filesystem=filesystem)
         # if file_schema!=schema:
-        table = read_table(f, schema, filesystem=filesystem)
-        write_table(table, f, filesystem=filesystem, **kwargs)
+        table = pq.read_table(f, schema, filesystem=filesystem)
+        pq.write_table(table, f, filesystem=filesystem, **kwargs)
 
     _ = run_parallel(
         _repair_schema,

@@ -12,6 +12,9 @@ from fsspec.implementations import cached as cachedfs
 from fsspec.implementations import dirfs
 from joblib import Parallel, delayed
 
+# from .schema import shrink_large_string, convert_timestamp
+# from .polars_ext import pl
+
 
 def get_timedelta_str(timedelta: str, to: str = "polars") -> str:
     polars_timedelta_units = [
@@ -60,18 +63,23 @@ def get_timedelta_str(timedelta: str, to: str = "polars") -> str:
 
 
 def get_timestamp_column(df: pl.DataFrame) -> str | list[str]:
+    # return [
+    #    col.name
+    #    for col in df.to_arrow().schema
+    #    if col.type
+    #    in [
+    #        pa.timestamp("s"),
+    #        pa.timestamp("ms"),
+    #        pa.timestamp("us"),
+    #        pa.timestamp("ns"),
+    #        pa.date32(),
+    #        pa.date64(),
+    #    ]
+    # ]
     return [
-        col.name
-        for col in df.to_arrow().schema
-        if col.type
-        in [
-            pa.timestamp("s"),
-            pa.timestamp("ms"),
-            pa.timestamp("us"),
-            pa.timestamp("ns"),
-            pa.date32(),
-            pa.date64(),
-        ]
+        name
+        for name, type_ in df.schema.items()
+        if type_ in [pl.Time(), pl.Datetime(), pl.Date()]
     ]
 
 
@@ -281,8 +289,6 @@ def partition_by(
     timedelta: str | list[str] | None = None,
     num_rows: int | None = None,
 ):
-    drop_columns = columns.copy()
-
     if timestamp_column is None:
         timestamp_column = get_timestamp_column(df)[0]
 
@@ -292,6 +298,8 @@ def partition_by(
 
     else:
         columns = []
+
+    drop_columns = columns.copy()
 
     if strftime is not None:
         if isinstance(strftime, str):
@@ -337,9 +345,17 @@ def partition_by(
 
     if num_rows:
         df = df.with_row_count_ext(over=columns).with_columns(
-            pl.col("row_nr") // (num_rows + 1)
+            (pl.col("row_nr") - 1) // num_rows
         )
         columns += ["row_nr"]
-        drop_columns = ["row_nr"]
+        drop_columns += ["row_nr"]
 
-    return df, columns, drop_columns
+    if isinstance(df, pl.LazyFrame):
+        df = df.collect()
+
+    partitions = [
+        (p.select(columns).unique().to_dicts()[0], p.drop(drop_columns))
+        for p in df.partition_by(by=columns, as_dict=False)
+    ]
+
+    return partitions

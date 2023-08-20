@@ -41,8 +41,17 @@ def unnest_all(df: pl.DataFrame, seperator="_", fields: list[str] | None = None)
 
 def _opt_dtype(s: pl.Series) -> pl.Series:
     if (s.str.contains("^[0-9,\.-]{1,}$") | s.is_null()).all():
-        s = s.str.replace_all(",", ".").str.replace_all(".0$", "").str.replace_all("^-$", "NaN")
-        if s.str.contains("\.").any() | s.is_null().any() | s.str.contains("^$").any() | s.str.contains("NaN").any():
+        s = (
+            s.str.replace_all(",", ".")
+            .str.replace_all(".0$", "")
+            .str.replace_all("^-$", "NaN")
+        )
+        if (
+            s.str.contains("\.").any()
+            | s.is_null().any()
+            | s.str.contains("^$").any()
+            | s.str.contains("NaN").any()
+        ):
             s = (
                 s.str.replace("^$", pl.lit("NaN"))
                 .cast(pl.Float64(), strict=True)
@@ -195,6 +204,12 @@ def with_row_count(
         )
 
 
+def delta(df1, df2, columns):
+    return pl.concat([df1.with_row_count(), df2.with_row_count()]).filter(
+        pl.count().over(df.columns) == 1
+    )
+
+
 pl.DataFrame.unnest_all = unnest_all
 pl.DataFrame.explode_all = explode_all
 pl.DataFrame.opt_dtype = opt_dtype
@@ -202,6 +217,7 @@ pl.DataFrame.with_row_count_ext = with_row_count
 pl.DataFrame.with_datepart_columns = with_datepart_columns
 pl.DataFrame.with_duration_columns = with_duration_columns
 pl.DataFrame.with_striftime_columns = with_strftime_columns
+pl.DataFrame.delta = delta
 
 pl.LazyFrame.unnest_all = unnest_all
 pl.LazyFrame.explode_all = explode_all
@@ -210,3 +226,4 @@ pl.LazyFrame.with_row_count_ext = with_row_count
 pl.LazyFrame.with_datepart_columns = with_datepart_columns
 pl.LazyFrame.with_duration_columns = with_duration_columns
 pl.LazyFrame.with_striftime_columns = with_strftime_columns
+pl.LazyFrame.delta = delta
