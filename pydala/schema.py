@@ -250,7 +250,7 @@ def repair_schema(
         filesystem.invalidate_cache()
         # file_schema = pq.read_metadata(f, filesystem=filesystem)
         # if file_schema!=schema:
-        table = pq.read_table(f, schema, filesystem=filesystem)
+        table = pq.read_table(f, schema=schema, filesystem=filesystem)
         pq.write_table(table, f, filesystem=filesystem, **kwargs)
 
     _ = run_parallel(
