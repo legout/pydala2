@@ -20,7 +20,7 @@ from .helpers import (
 # from fsspec.implementations import dirfs, cached as cachedfs
 from .io import read_table, write_table
 from .polars_ext import pl as _pl
-from .schema import convert_timestamp, repair_schema, shrink_large_string, unify_schemas
+from .schema import repair_schema, unify_schemas
 
 
 class ParquetDatasetMetadata:
