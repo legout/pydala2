@@ -7,9 +7,6 @@ import pyarrow.fs as pfs
 import pyarrow.parquet as pq
 import tqdm
 from fsspec import AbstractFileSystem
-from fsspec import filesystem as fsspec_filesystem
-from fsspec.implementations import cached as cachedfs
-from fsspec.implementations import dirfs
 from joblib import Parallel, delayed
 
 # from .schema import shrink_large_string, convert_timestamp
@@ -136,7 +133,6 @@ def collect_file_schemas(
     """
 
     def get_schema(f, filesystem):
-        filesystem.invalidate_cache()
         return {f: pq.read_schema(f, filesystem=filesystem)}
 
     schemas = run_parallel(
@@ -171,7 +167,6 @@ def collect_metadata(
     """
 
     def get_metadata(f, filesystem):
-        filesystem.invalidate_cache()
         return {f: pq.read_metadata(f, filesystem=filesystem)}
 
     metadata = run_parallel(
@@ -212,35 +207,6 @@ def get_partitions_from_path(
             ]
     else:
         return list(zip(partitioning, parts[-len(partitioning) :]))
-
-
-def get_filesystem(
-    bucket: str | None = None,
-    fs=AbstractFileSystem | None,
-    cached: bool = False,
-    check_files: bool = True,
-    cache_check: int = 300,
-    expire_time: int = 24 * 60 * 60,
-    same_names: bool = False,
-    **kwargs,
-):
-    if fs is None:
-        fs = fsspec_filesystem("file")
-
-    if bucket is not None:
-        fs = dirfs.DirFileSystem(path=bucket, fs=fs)
-
-    if cached:
-        fs = cachedfs.SimpleCacheFileSystem(
-            cache_storage=os.path.expanduser("~/.tmp"),
-            check_files=check_files,
-            cache_check=cache_check,
-            expire_time=expire_time,
-            fs=fs,
-            same_names=same_names,
-            **kwargs,
-        )
-    return fs
 
 
 def get_row_group_stats(

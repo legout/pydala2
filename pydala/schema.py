@@ -8,7 +8,7 @@ from .helpers import collect_file_schemas, run_parallel
 # from .io import read_table, write_table
 
 
-def sort_schema(schema: pa.Schema, names:list[str]|None=None) -> pa.Schema:
+def sort_schema(schema: pa.Schema, names: list[str] | None = None) -> pa.Schema:
     """Sort fields of a pyarrow schema in alphabetical order.
 
     Args:
@@ -22,12 +22,9 @@ def sort_schema(schema: pa.Schema, names:list[str]|None=None) -> pa.Schema:
         names = [name for name in names if name in schema.names]
     else:
         names = schema.names
-        
+
     return pa.schema(
-        [
-            pa.field(name, type_)
-            for name, type_ in sorted(zip(names, schema.types))
-        ]
+        [pa.field(name, type_) for name, type_ in sorted(zip(names, schema.types))]
     )
 
 
@@ -151,7 +148,7 @@ def _unify_schemas(
         elif isinstance(sort, list[str]):
             sort = [name for name in sort if name in all_names]
             all_names = sort + [name for name in all_names if name not in sort]
-            
+
     schema = []
     for name in all_names:
         if name in schema1.names:
@@ -193,7 +190,6 @@ def _unify_schemas(
 
     if schema != schema1 or schema != schema2:
         file_schemas_equal = False
-        
 
     return schema, file_schemas_equal
 
@@ -287,7 +283,7 @@ def repair_schema(
         )
 
         files = [f for f in files if schemas[f] != schema]
-        
+
     if ts_unit is not None or tz is not None:
         schema = convert_timestamp(schema, unit=ts_unit, tz=tz)
 
@@ -295,7 +291,7 @@ def repair_schema(
         schema = shrink_large_string(schema)
 
     def _repair_schema(f, schema, filesystem):
-        filesystem.invalidate_cache()
+        # filesystem.invalidate_cache()
         # file_schema = pq.read_metadata(f, filesystem=filesystem)
         # if file_schema!=schema:
         table = pq.read_table(f, schema=schema, filesystem=filesystem)
