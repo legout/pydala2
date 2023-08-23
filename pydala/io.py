@@ -16,7 +16,7 @@ from .schema import convert_timestamp, shrink_large_string
 def read_table(
     path: str,
     schema: pa.Schema | None = None,
-    format: str | None = None,
+    # format: str | None = None,
     filesystem: AbstractFileSystem | None = None,
     partitioning: str | list[str] | None = None,
 ) -> pa.Table:
@@ -25,8 +25,6 @@ def read_table(
     Args:
         path (str): File path.
         schema (pa.Schema | None, optional): Pyarrow schema. Defaults to None.
-        format (str | None, optional): Format of the file. Could be 'parquet', 'csv' or 'arrow/feather/ipc'.
-            Defaults to None.
         filesystem (AbstractFileSystem | None, optional): Filesystem. Defaults to None.
         partitioning (str | list[str] | None, optional): Partitioning of the file. Could be 'hive' for
             hive style partitioning or a list of column names. Defaults to None.
@@ -40,21 +38,19 @@ def read_table(
 
     filesystem.invalidate_cache()
 
-    format = format or os.path.splitext(path)[-1]
+    # format = format or os.path.splitext(path)[-1]
 
-    if re.sub("\.", "", format) == "parquet":
-        table = pq.read_table(
-            pa.BufferReader(filesystem.read_bytes(path)), schema=schema
-        )
+    # if re.sub("\.", "", format) == "parquet":
+    table = pq.read_table(pa.BufferReader(filesystem.read_bytes(path)), schema=schema)
 
-    elif re.sub("\.", "", format) == "csv":
-        table = pc.read_csv(pa.BufferReader(filesystem.read_bytes(path)), schema=schema)
+    # elif re.sub("\.", "", format) == "csv":
+    #     table = pc.read_csv(pa.BufferReader(filesystem.read_bytes(path)), schema=schema)
 
-    elif re.sub("\.", "", format) in ["arrow", "ipc", "feather"]:
-        table = pf.read_table(
-            pa.BufferReader(filesystem.read_bytes(path))
-        )  # , schema=schema
-        # )
+    # elif re.sub("\.", "", format) in ["arrow", "ipc", "feather"]:
+    #     table = pf.read_table(
+    #         pa.BufferReader(filesystem.read_bytes(path))
+    #     )  # , schema=schema
+    #     # )
 
     if partitioning is not None:
         partitions = get_partitions_from_path(path, partitioning=partitioning)
@@ -73,22 +69,20 @@ def write_table(
     df: pl.DataFrame,
     path: str,
     schema: pa.Schema | None = None,
-    format: str | None = None,
+    # format: str | None = None,
     filesystem: AbstractFileSystem | None = None,
     row_group_size: int | None = None,
     compression: str = "zstd",
     sort_by: str | list[str] | list[tuple[str, str]] | None = None,
     distinct: bool | str | list[str] = False,
     **kwargs,
-):
+) -> tuple[str, pq.FileMetaData]:
     """Write pyarrow table to the given file path.
 
     Args:
         df (pl.DataFrame): Polars DataFrame.
         path (str): File path.
         schema (pa.Schema | None, optional): Pyarrow schwma. Defaults to None.
-        format (str | None, optional): Format of the file. Could be 'parquet', 'csv' or
-            'arrow/feather/ipc'. Defaults to None.
         filesystem (AbstractFileSystem | None, optional): _description_. Defaults to None.
         row_group_size (int | None, optional): Row group size of the parquet or arrow
             file. Defaults to None.
@@ -106,7 +100,7 @@ def write_table(
         filesystem = fsspec_filesystem("file")
 
     filesystem.invalidate_cache()
-    format = format or os.path.splitext(path)[-1]
+    # format = format or os.path.splitext(path)[-1]
 
     if distinct:
         if isinstance(distinct, str | list[str]):
@@ -114,31 +108,38 @@ def write_table(
         else:
             df = pl.from_arrow(df).unique().to_arrow()
 
-    table = convert_timestamp(shrink_large_string(df.to_arrow()))
+    table = df.to_arrow()
 
-    schema = kwargs.pop(schema, None) or schema or table.schema
+    schema = schema or table.schema
+    schema = convert_timestamp(shrink_large_string(schema=schema))
+
+    table = table.cast(schema)
 
     if sort_by is not None:
         table = table.sort_by(sorting=sort_by)
 
-    if re.sub("\.", "", format) == "parquet":
-        pq.write_table(
-            table,
-            path,
-            filesystem=filesystem,
-            row_group_size=row_group_size,
-            compression=compression,
-            **kwargs,
-        )
+    # if re.sub("\.", "", format) == "parquet":
+    metadata = []
+    pq.write_table(
+        table,
+        path,
+        filesystem=filesystem,
+        row_group_size=row_group_size,
+        compression=compression,
+        metadata_collector=metadata,
+        **kwargs,
+    )
+    metadata = metadata[0]
+    # metadata.set_file_path(path)
+    return path, metadata
+    # elif re.sub("\.", "", format) == "csv":
+    #     with filesystem.open_output_stream(path) as f:
+    #         table = pa.table.from_batches(table.to_batches(), schema=schema)
+    #         pc.write_csv(table, f, **kwargs)
 
-    elif re.sub("\.", "", format) == "csv":
-        with filesystem.open_output_stream(path) as f:
-            table = pa.table.from_batches(table.to_batches(), schema=schema)
-            pc.write_csv(table, f, **kwargs)
-
-    elif re.sub("\.", "", format) in ["arrow", "ipc", "feather"]:
-        with filesystem.open_output_scream(path) as f:
-            table = pa.table.from_batches(table.to_batches(), schema=schema)
-            pf.write_feather(
-                f, compression=compression, chunksize=row_group_size, **kwargs
-            )
+    # elif re.sub("\.", "", format) in ["arrow", "ipc", "feather"]:
+    #     with filesystem.open_output_scream(path) as f:
+    #         table = pa.table.from_batches(table.to_batches(), schema=schema)
+    #         pf.write_feather(
+    #             f, compression=compression, chunksize=row_group_size, **kwargs
+    #         )
