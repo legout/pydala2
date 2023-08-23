@@ -1,4 +1,3 @@
-# %%
 import os
 import uuid
 
@@ -482,7 +481,8 @@ class ParquetDataset(ParquetDatasetMetadata):
         num_rows: int | None = None,
         row_group_size: int | None = None,
         compression: str = "zstd",
-        **kwrags,
+        sort_by: str | list[str] | list[tuple[str, str]] | None = None,
+        **kwargs,
     ):
         if isinstance(df, pd.DataFrame):
             df = _pl.from_pandas(df)
@@ -509,8 +509,41 @@ class ParquetDataset(ParquetDatasetMetadata):
         ]
 
         partitions = [partition[1] for partition in _partitions]
+        file_metadata = []
+        for partition, path in zip(partitions, paths):
+            metadata = write_table(
+                df=partition,
+                path=path,
+                schema=self.file_schema,
+                filesystem=self._filesystem,
+                row_group_size=row_group_size,
+                compression=compression,
+                sort_by=sort_by,
+            )
+            file_metadata.append(metadata)
+        # file_metadata = run_parallel(
+        #     write_table,
+        #     partitions,
+        #     paths,
+        #     schema=self.file_schema,
+        #     filesystem=self._filesystem,
+        #     row_group_size=row_group_size,
+        #     compression=compression,
+        #     backend="threading",
+        #     n_jobs=-1,
+        #     **kwargs,
+        # )
 
-        # run_parllel(write_table, partitions, path, schema=self.file_schema, filesystem=self._filesystem,
-        #             row_group_size=row_group_size, compression=compression, backend="threading", n_jobs=-1, **kwargs)
+        if len(file_metadata):
+            file_metadata = dict(file_metadata)
+            for f in file_metadata:
+                file_metadata[f].set_file_path(f.split(self._path)[-1].lstrip("/"))
 
-        return _partitions, paths
+            if hasattr(self, "file_metadata"):
+                self.file_metadata.update(file_metadata)
+            else:
+                self.file_metadata = file_metadata
+
+        self.to_metadata(update=False, reload=False)
+
+        return partitions, paths, file_metadata
