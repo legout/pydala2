@@ -8,7 +8,7 @@ from .helpers import collect_file_schemas, run_parallel
 # from .io import read_table, write_table
 
 
-def sort_schema(schema: pa.Schema) -> pa.Schema:
+def sort_schema(schema: pa.Schema, names:list[str]|None=None) -> pa.Schema:
     """Sort fields of a pyarrow schema in alphabetical order.
 
     Args:
@@ -17,10 +17,16 @@ def sort_schema(schema: pa.Schema) -> pa.Schema:
     Returns:
         pa.Schema: Sorted pyarrow schema.
     """
+    if names is not None:
+        names = names + [name for name in schema.names if name not in names]
+        names = [name for name in names if name in schema.names]
+    else:
+        names = schema.names
+        
     return pa.schema(
         [
             pa.field(name, type_)
-            for name, type_ in sorted(zip(schema.names, schema.types))
+            for name, type_ in sorted(zip(names, schema.types))
         ]
     )
 
@@ -91,6 +97,7 @@ def _unify_schemas(
     ts_unit: str | None = "us",
     tz: str | None = "UTC",
     use_large_string: bool = False,
+    sort: bool | list[str] = True,
 ) -> tuple[dict, bool]:
     """Returns a unified pyarrow schema.
 
@@ -99,8 +106,12 @@ def _unify_schemas(
         schema2 (pa.Schema): Pyarrow schema 2.
         ts_unit (str|None): timestamp unit.
         tz (str|None): timezone for timestamp fields. Defaults to "UTC".
-        use_large_string (bool): Convert pyarrow.large_string() to pyarrow.string(). Defaults to False.
-
+        use_large_string (bool): Convert pyarrow.large_string() to pyarrow.string().
+            Defaults to False.
+        sort (bool | list[str]): Use this, to define the field(column) order. If it is
+            True, the fields are sorted alphanumerically, if it is False, the field
+            order of firt schema is used. Otherwise, the order if the given field names is
+            applied.
     Returns:
         Tuple[dict, bool]: Unified pyarrow schema, bool value if schemas were equal.
     """
@@ -128,13 +139,19 @@ def _unify_schemas(
         file_schemas_equal = True
 
     elif sorted(schema1.names) == sorted(schema2.names):
-        all_names = sorted(schema1.names)
+        all_names = schema1.names
         file_schemas_equal = False
 
     else:
-        all_names = sorted(set(schema1.names + schema2.names))
+        all_names = list(set(schema1.names + schema2.names))
         file_schemas_equal = False
-
+    if sort:
+        if isinstance(sort, bool):
+            all_names = sorted(all_names)
+        elif isinstance(sort, list[str]):
+            sort = [name for name in sort if name in all_names]
+            all_names = sort + [name for name in all_names if name not in sort]
+            
     schema = []
     for name in all_names:
         if name in schema1.names:
@@ -176,6 +193,7 @@ def _unify_schemas(
 
     if schema != schema1 or schema != schema2:
         file_schemas_equal = False
+        
 
     return schema, file_schemas_equal
 
@@ -185,6 +203,7 @@ def unify_schemas(
     ts_unit: str | None = "us",
     tz: str | None = "UTC",
     use_large_string: bool = False,
+    sort: bool | list[str] = True,
 ) -> tuple[pa.Schema, bool]:
     """Get the unified pyarrow schema for a list of schemas.
 
@@ -192,8 +211,12 @@ def unify_schemas(
         schemas (list[pa.Schema]): Pyarrow schemas.
         ts_unit (str|None): timestamp unit.
         tz (str|None): timezone for timestamp fields. Defaults to "UTC".
-        use_large_string (bool): Convert pyarrow.large_string() to pyarrow.string(). Defaults to False.
-
+        use_large_string (bool): Convert pyarrow.large_string() to pyarrow.string().
+            Defaults to False.
+        sort (bool | list[str]): Use this, to define the field(column) order. If it is
+            True, the fields are sorted alphanumerically, if it is False, the field
+            order of firt schema is used. Otherwise, the order if the given field names is
+            applied.
     Returns:
         tuple[pa.Schema, bool]: Unified pyarrow schema.
     """
@@ -207,6 +230,7 @@ def unify_schemas(
             ts_unit=ts_unit,
             tz=tz,
             use_large_string=use_large_string,
+            sort=sort,
         )
 
         schemas_equal *= schemas_equal_
@@ -221,6 +245,10 @@ def repair_schema(
     n_jobs: int = -1,
     backend: str = "threading",
     verbose: bool = True,
+    ts_unit: str | None = "us",
+    tz: str | None = "UTC",
+    use_large_string: bool = False,
+    sort: bool | list[str] = True,
     **kwargs,
 ):
     """Repairs the pyarrow schema of a parquet or arrow dataset
@@ -233,6 +261,14 @@ def repair_schema(
         n_jobs (int, optional): n_jobs parameter of joblib.Parallel. Defaults to -1.
         backend (str, optional): backend parameter of joblib.Parallel. Defaults to "threading".
         verbose (bool, optional): Wheter to show the task progress using tqdm or not. Defaults to True.
+        ts_unit (str|None): timestamp unit.
+        tz (str|None): timezone for timestamp fields. Defaults to "UTC".
+        use_large_string (bool): Convert pyarrow.large_string() to pyarrow.string().
+            Defaults to False.
+        sort (bool | list[str]): Use this, to define the field(column) order. If it is
+            True, the fields are sorted alphanumerically, if it is False, the field
+            order of firt schema is used. Otherwise, the order if the given field names is
+            applied.
     """
     if schema is None:
         schemas = collect_file_schemas(
@@ -242,9 +278,21 @@ def repair_schema(
             backend=backend,
             verbose=verbose,
         )
-        schema, schemas_equal = unify_schemas(schemas=list(schemas.values()))
+        schema, schemas_equal = unify_schemas(
+            schemas=list(schemas.values()),
+            ts_unit=ts_unit,
+            tz=tz,
+            use_large_string=use_large_string,
+            sort=sort,
+        )
 
         files = [f for f in files if schemas[f] != schema]
+        
+    if ts_unit is not None or tz is not None:
+        schema = convert_timestamp(schema, unit=ts_unit, tz=tz)
+
+    if not use_large_string:
+        schema = shrink_large_string(schema)
 
     def _repair_schema(f, schema, filesystem):
         filesystem.invalidate_cache()

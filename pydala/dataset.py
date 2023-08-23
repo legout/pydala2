@@ -252,7 +252,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         cached: bool = False,
     ):
         super().__init__(path=path, filesystem=filesystem, bucket=bucket, cached=cached)
-        #self.metadata = ParquetDatasetMetadata(path=path, filesystem=filesystem, bucket=bucket, )
+        # self.metadata = ParquetDatasetMetadata(path=path, filesystem=filesystem, bucket=bucket, )
         if self.has_files:
             if partitioning == "ignore":
                 self._partitioning = None
@@ -260,7 +260,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                 partitioning = "hive"
             else:
                 self._partitioning = partitioning
-        
+
         self._ddb = duckdb.connect()
         # self.load()
 
@@ -277,7 +277,6 @@ class ParquetDataset(ParquetDatasetMetadata):
             self._filesystem.invalidate_cache()
             self.metadata_file
             if self.has_files:
-                
                 self._base_dataset = pds.parquet_dataset(
                     self.metadata_file,
                     # schema=self.schema,
