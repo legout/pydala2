@@ -204,10 +204,37 @@ def with_row_count(
         )
 
 
-def delta(df1, df2, columns):
-    return pl.concat([df1.with_row_count(), df2.with_row_count()]).filter(
-        pl.count().over(df.columns) == 1
+def delta(
+    df1: pl.DataFrame | pl.LazyFrame,
+    df2: pl.DataFrame | pl.LazyFrame,
+    subset: str | list[str] | None = None,
+    eager: bool = False,
+) -> pl.LazyFrame:
+    if subset is None:
+        subset = df1.columns
+    if isinstance(subset, str):
+        subset = [subset]
+
+    if isinstance(df1, pl.LazyFrame) and isinstance(df2, pl.DataFrame):
+        df2 = df2.lazy()
+
+    elif isinstance(df1, pl.DataFrame) and isinstance(df2, pl.LazyFrame):
+        df1 = df1.lazy()
+
+    df = (
+        pl.concat(
+            [
+                df1.with_columns(pl.lit(1).alias("df")).with_row_count(),
+                df2.with_columns(pl.lit(2).alias("df")).with_row_count(),
+            ]
+        )
+        .filter((pl.count().over(subset) == 1) & (pl.col("df") == 1))
+        .select(pl.exclude(["df", "row_nr"]))
     )
+
+    if eager:
+        return df.collect()
+    return df
 
 
 pl.DataFrame.unnest_all = unnest_all

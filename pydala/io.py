@@ -10,7 +10,7 @@ from fsspec import AbstractFileSystem
 from fsspec import filesystem as fsspec_filesystem
 
 from .helpers import get_partitions_from_path
-from .schema import convert_timestamp, shrink_large_string
+from .schema import convert_timestamp, shrink_large_string, unify_schemas
 
 
 def read_table(
@@ -75,6 +75,9 @@ def write_table(
     compression: str = "zstd",
     sort_by: str | list[str] | list[tuple[str, str]] | None = None,
     distinct: bool | str | list[str] = False,
+    tz: str = "UTC",
+    ts_unit: str = "us",
+    use_large_string: bool = False,
     **kwargs,
 ) -> tuple[str, pq.FileMetaData]:
     """Write pyarrow table to the given file path.
@@ -103,19 +106,32 @@ def write_table(
     # format = format or os.path.splitext(path)[-1]
 
     if distinct:
-        if isinstance(distinct, str | list[str]):
-            df = pl.from_arrow(df).unique(distinct)
+        if isinstance(distinct, str | list):
+            df = df.unique(distinct)
         else:
-            df = pl.from_arrow(df).unique().to_arrow()
+            df = df.unique()
 
     table = df.to_arrow()
+    for col in schema.names:
+        if col not in table.column_names:
+            print(col)
+            table = table.append_column(col, pa.nulls(table.shape[0]))
+    table = table.select(schema.names)
 
-    schema = schema or table.schema
-    schema = convert_timestamp(shrink_large_string(schema=schema))
+    if schema is not None:
+        schema, _ = unify_schemas(
+            [schema, table.schema],
+            use_large_string=use_large_string,
+            ts_unit=ts_unit,
+            tz=tz,
+        )
 
     table = table.cast(schema)
 
     if sort_by is not None:
+        if isinstance(sort_by, list):
+            if isinstance(sort_by[0], str):
+                sort_by = [(c, "descending") for c in sort_by]
         table = table.sort_by(sorting=sort_by)
 
     # if re.sub("\.", "", format) == "parquet":

@@ -113,7 +113,7 @@ def _unify_schemas(
         Tuple[dict, bool]: Unified pyarrow schema, bool value if schemas were equal.
     """
 
-    numeric_rank = [
+    dtypes = [
         pa.null(),
         pa.int8(),
         pa.int16(),
@@ -123,9 +123,12 @@ def _unify_schemas(
         pa.float32(),
         pa.float64(),
         pa.string(),
+        pa.utf8(),
+        pa.large_string(),
+        pa.large_utf8(),
     ]
-    timestamp_rank = ["ns", "us", "ms", "s"]
-    string_rank = [pa.string(), pa.utf8(), pa.large_string(), pa.large_utf8()]
+    timestamp_units = ["ns", "us", "ms", "s"]
+    string_dtypes = [pa.string(), pa.utf8(), pa.large_string(), pa.large_utf8()]
 
     # check for equal columns and column order
     if schema1.names == schema2.names:
@@ -161,21 +164,50 @@ def _unify_schemas(
             type2 = schema1.field(name).type
 
         if type1 != type2:
-            if type1 in numeric_rank:
-                rank1 = numeric_rank.index(type1) if type1 in numeric_rank else 0
-                rank2 = numeric_rank.index(type2) if type2 in numeric_rank else 0
+            if type1 in dtypes:
+                rank1 = dtypes.index(type1) if type1 in dtypes else 0
+                rank2 = dtypes.index(type2) if type2 in dtypes else 0
 
-            elif type1 in string_rank:
-                rank1 = string_rank.index(type1) if type1 in string_rank else 0
-                rank2 = string_rank.index(type2) if type2 in string_rank else 0
+                if type1.num_buffers == 2 and type2.num_buffers == 2:
+                    bit_width1 = type1.bit_width
+                    bit_width2 = type2.bit_width
+                    if bit_width1 > bit_width2:
+                        if rank1 > rank2:
+                            type_ = type1
+                        else:
+                            type_ = pa.float64()
+                        # (
+                        #     pa.float16()
+                        #     if bit_width1 == 16
+                        #     else pa.float32()
+                        #     if bit_width1 == 32
+                        #     else pa.float64()
+                        # )
+                    else:
+                        if rank2 > rank1:
+                            type_ = type2
+                        else:
+                            type_ = pa.float64()
+                else:
+                    type_ = type1 if rank1 > rank2 else type2
 
             elif isinstance(type1, pa.TimestampType):
-                rank1 = string_rank.index(type1.unit) if type1 in string_rank else 0
-                rank2 = string_rank.index(type2.unit) if type2 in string_rank else 0
+                rank1 = (
+                    timestamp_units.index(type1.unit)
+                    if isinstance(type1, pa.TimestampType)
+                    else 0
+                )
+                rank2 = (
+                    timestamp_units.index(type2.unit)
+                    if isinstance(type1, pa.TimestampType)
+                    else 0
+                )
+                type_ = type1 if rank1 > rank2 else type2
             else:
                 rank1 = 1
                 rank2 = 0
-            schema.append(pa.field(name, type1 if rank1 > rank2 else type2))
+                type_ = type1 if rank1 > rank2 else type2
+            schema.append(pa.field(name, type_))
 
         else:
             schema.append(pa.field(name, type1))

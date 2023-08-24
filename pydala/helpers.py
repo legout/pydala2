@@ -254,7 +254,7 @@ def partition_by(
     strftime: str | list[str] | None = None,
     timedelta: str | list[str] | None = None,
     num_rows: int | None = None,
-):
+) -> list[pl.DataFrame | pl.LazyFrame]:
     if timestamp_column is None:
         timestamp_column = get_timestamp_column(df)[0]
 
@@ -263,9 +263,9 @@ def partition_by(
             columns = [columns]
 
     else:
-        columns = []
-
-    drop_columns = columns.copy()
+        columns_ = []
+    columns_ = columns.copy()
+    drop_columns = columns_.copy()
 
     if strftime is not None:
         if isinstance(strftime, str):
@@ -277,7 +277,7 @@ def partition_by(
         strftime_columns = [
             f"_strftime_{strftime_.replaace('%', '')}_" for strftime_ in strftime
         ]
-        columns += strftime_columns
+        columns_ += strftime_columns
         drop_columns += strftime_columns
 
     if timedelta:
@@ -288,7 +288,7 @@ def partition_by(
             timestamp_column=timestamp_column, timedelta=timedelta
         )
         timedelta_columns = [f"_timedelta_{timedelta_}_" for timedelta_ in timedelta]
-        columns += timedelta_columns
+        columns_ += timedelta_columns
         drop_columns += timedelta_columns
 
     datetime_columns = {
@@ -313,15 +313,53 @@ def partition_by(
         df = df.with_row_count_ext(over=columns).with_columns(
             (pl.col("row_nr") - 1) // num_rows
         )
-        columns += ["row_nr"]
+        columns_ += ["row_nr"]
         drop_columns += ["row_nr"]
 
     if isinstance(df, pl.LazyFrame):
         df = df.collect()
 
     partitions = [
-        (p.select(columns).unique().to_dicts()[0], p.drop(drop_columns))
-        for p in df.partition_by(by=columns, as_dict=False)
+        (p.select(columns_).unique().to_dicts()[0], p.drop(drop_columns))
+        for p in df.partition_by(
+            by=columns_,
+            as_dict=False,
+            maintain_order=True,
+        )
     ]
 
     return partitions
+
+
+def humanize_size(size: int, unit="MB") -> float:
+    "Human-readable size"
+    if unit.lower() == "b":
+        return round(size, 1)
+    elif unit.lower() == "kb":
+        return round(size / 1024, 1)
+    elif unit.lower() == "mb":
+        return round(size / 1024**2, 1)
+    elif unit.lower() == "gb":
+        return round(size / 1024**3, 1)
+    elif unit.lower() == "tb":
+        return round(size / 1024**4, 1)
+    elif unit.lower() == "pb":
+        return round(size / 1024**5, 1)
+
+
+def humanized_size_to_bytes(size: str) -> float:
+    "Human-readable size t bytes"
+    unit = re.sub("[0-9 ]", "", size).lower()
+    size = float(re.sub("[a-zA-Z ]", "", size))
+    if unit == "b":
+        return int(size)
+    elif unit == "kb":
+        return int(size * 1024)
+    elif unit == "mb":
+        return int(size * 1024**2)
+    elif unit == "gb":
+        return int(size * 1024**3)
+    elif unit == "tb":
+        return int(size * 1024**4)
+    elif unit == "pb":
+        return int(size * 1024**5)

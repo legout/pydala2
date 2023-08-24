@@ -44,3 +44,6 @@ def clear_cache(fs: AbstractFileSystem):
         fs.clear_cache()
     fs.invalidate_cache()
     fs.clear_instance_cache()
+    if hasattr(fs, "fs"):
+        fs.invalidate_cache()
+        fs.clear_instance_cache()
