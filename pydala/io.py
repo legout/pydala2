@@ -61,8 +61,10 @@ def read_table(
             table = table.append_column(
                 field_=key, column=pa.array([values] * len(table))
             )
-
-    return table.cast(schema)
+    if schema is not None:
+        return table.cast(schema)
+    
+    return table
 
 
 def write_table(
