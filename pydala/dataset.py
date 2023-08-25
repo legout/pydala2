@@ -91,6 +91,7 @@ class ParquetDatasetMetadata:
         format_version: str = "1.0",
         update_file_metadata: bool = True,
         # reload: bool = False,
+        unify_schema_args:dict= {},
         **kwargs,
     ):
         # if reload:
@@ -112,7 +113,7 @@ class ParquetDatasetMetadata:
                 schemas_v.append(metadata_schema)
                 format_version = self._metadata.format_version
 
-            unified_schema, schemas_equal = unify_schemas(schemas_v)
+            unified_schema, schemas_equal = unify_schemas(schemas_v, **unify_schema_args)
 
             files = []
             if not schemas_equal:
@@ -142,6 +143,7 @@ class ParquetDatasetMetadata:
         update: bool = True,
         format_version: str = "1.0",
         # delete_metadata_file:bool=False,
+        unify_schema_args:dict={},
         **kwargs,
     ):
         if reload:
@@ -162,7 +164,7 @@ class ParquetDatasetMetadata:
             self.collect_file_metadata(files=self._files, **kwargs)
 
         self.unify_metadata_schema(
-            update_file_metadata=update, format_version=format_version, **kwargs
+            update_file_metadata=update, format_version=format_version, unify_schema_args=unify_schema_args,**kwargs
         )
 
         if not hasattr(self, "file_metadata"):

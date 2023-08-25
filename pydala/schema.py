@@ -94,7 +94,7 @@ def _unify_schemas(
     ts_unit: str | None = "us",
     tz: str | None = "UTC",
     use_large_string: bool = False,
-    sort: bool | list[str] = True,
+    sort: bool | list[str] | str = True,
 ) -> tuple[dict, bool]:
     """Returns a unified pyarrow schema.
 
@@ -145,6 +145,7 @@ def _unify_schemas(
     else:
         all_names = list(set(schema1.names + schema2.names))
         file_schemas_equal = False
+        
     if sort:
         if isinstance(sort, bool):
             all_names = sorted(all_names)
