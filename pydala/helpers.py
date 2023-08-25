@@ -324,7 +324,7 @@ def partition_by(
         for p in df.partition_by(
             by=columns_,
             as_dict=False,
-            maintain_order=True,
+        maintain_order=True,
         )
     ]
 
