@@ -849,6 +849,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                 allow_smaller=allow_smaller,
                 **kwargs,
             )
+        elif target_num_rows is not None:
             self._optimize_num_rows(
                 target_num_rows=target_num_rows,
                 strict=strict,

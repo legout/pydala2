@@ -77,6 +77,7 @@ def write_table(
     distinct: bool | str | list[str] = False,
     tz: str = "UTC",
     ts_unit: str = "us",
+    sort_schema:bool|list[str]=False,
     use_large_string: bool = False,
     **kwargs,
 ) -> tuple[str, pq.FileMetaData]:
@@ -124,6 +125,7 @@ def write_table(
             use_large_string=use_large_string,
             ts_unit=ts_unit,
             tz=tz,
+            sort=sort_schema
         )
 
     table = table.cast(schema)

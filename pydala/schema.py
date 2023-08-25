@@ -94,7 +94,7 @@ def _unify_schemas(
     ts_unit: str | None = "us",
     tz: str | None = "UTC",
     use_large_string: bool = False,
-    sort: bool | list[str] | str = True,
+    sort: bool | list[str] | str = False,
 ) -> tuple[dict, bool]:
     """Returns a unified pyarrow schema.
 
@@ -232,7 +232,7 @@ def unify_schemas(
     ts_unit: str | None = "us",
     tz: str | None = "UTC",
     use_large_string: bool = False,
-    sort: bool | list[str] = True,
+    sort: bool | list[str] = False,
 ) -> tuple[pa.Schema, bool]:
     """Get the unified pyarrow schema for a list of schemas.
 
