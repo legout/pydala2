@@ -565,6 +565,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
         distinct: bool = False,
         delta_subset: str | list[str] | None = None,
+        partitioning_columns: str | list[str] | None = None,
         **kwargs,
     ):
         if isinstance(df, pd.DataFrame):
@@ -577,8 +578,11 @@ class ParquetDataset(ParquetDatasetMetadata):
         if mode == "overwrite":
             del_files = self._files.copy()
 
+        if self.partitioning_names:
+            partitioning_columns = self.partitioning_names.copy()
+        
         _partitions = partition_by(
-            df=df, columns=self.partitioning_names.copy(), num_rows=num_rows
+            df=df, columns=partitioning_columns, num_rows=num_rows
         )
         paths = [
             os.path.join(
