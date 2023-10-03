@@ -617,6 +617,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                 df0 = self.pl
 
                 _df = _df.delta(df0, subset=delta_subset, eager=True)
+                
             if _df.shape[0]:
                 metadata = write_table(
                     df=_df,
