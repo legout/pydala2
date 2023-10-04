@@ -298,10 +298,10 @@ def partition_by(
     if columns is not None:
         if isinstance(columns, str):
             columns = [columns]
-
+         columns_ = columns.copy()
     else:
         columns_ = []
-    columns_ = columns.copy()
+   
     drop_columns = columns_.copy()
 
     if strftime is not None:
