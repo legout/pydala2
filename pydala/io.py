@@ -117,7 +117,7 @@ def write_table(
     table = df.to_arrow()
     for col in schema.names:
         if col not in table.column_names:
-            print(col)
+            #print(col)
             table = table.append_column(col, pa.nulls(table.shape[0]))
     table = table.select(schema.names)
 
