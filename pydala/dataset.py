@@ -75,6 +75,7 @@ class ParquetDatasetMetadata:
         self._files = sorted(
             self._filesystem.glob(os.path.join(self._path, "**.parquet"))
         )
+        
 
     def update_file_metadata(self, **kwargs):
         self.reload_files()
@@ -146,6 +147,7 @@ class ParquetDatasetMetadata:
         unify_schema_args:dict={},
         **kwargs,
     ):
+        
         if reload:
             update = False
             self.reload_files()
@@ -390,6 +392,8 @@ class ParquetDataset(ParquetDatasetMetadata):
 
     def _reset_scan_files(self):
         self._is_scanned = False
+        #self.reload_files()
+        #self.gen_file_catalog()
         self._scan_files = self._files.copy()
 
     def scan(self, filter_expr: str | None = None, lazy: bool = True):
@@ -439,7 +443,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         return self._filter_expr
 
     def to_dataset(
-        self, filter_expr: str | None = None, from_="scan_files"
+        self, filter_expr: str | None = None, from_:str="scan_files"
     ) -> pds.Dataset:
         self.scan(filter_expr=filter_expr, lazy=True)
         if filter_expr is not None:
@@ -464,7 +468,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         return self.to_dataset()
 
     def to_table(
-        self, filter_expr: str | None = None, from_="scan_files", **kwargs
+        self, filter_expr: str | None = None, from_:str="scan_files", **kwargs
     ) -> pa.Table:
         self.scan(filter_expr=filter_expr, lazy=False)
         if filter_expr is not None:
@@ -653,7 +657,8 @@ class ParquetDataset(ParquetDatasetMetadata):
         if mode == "overwrite":
             self.delete_files(del_files)
 
-        self.reload_files()
+        self.load_metadata(update=True)
+        self.gen_file_catalog()
         self.clear_cache()
 
     def _optimize_by_file_size(

@@ -209,9 +209,60 @@ def get_partitions_from_path(
         return list(zip(partitioning, parts[-len(partitioning) :]))
 
 
+# def get_row_group_stats(
+#     row_group: pq.RowGroupMetaData, partitioning: None | str | list[str] = None
+# ):
+#     stats = {}
+#     file_path = row_group.column(0).file_path
+#     stats["file_path"] = file_path
+#     if "=" in file_path:
+#         partitioning = partitioning or "hive"
+#     if partitioning is not None:
+#         partitions = get_partitions_from_path(file_path, partitioning=partitioning)
+#         stats.update(dict(partitions))
+
+#     stats["num_columns"] = row_group.num_columns
+#     stats["num_rows"] = row_group.num_rows
+#     stats["total_byte_size"] = row_group.total_byte_size
+#     stats["compression"] = row_group.column(0).compression
+
+#     for i in range(row_group.num_columns):
+#         name = row_group.column(i).path_in_schema
+#         stats[name + "_total_compressed_size"] = row_group.column(
+#             i
+#         ).total_compressed_size
+#         stats[name + "_total_uncompressed_size"] = row_group.column(
+#             i
+#         ).total_uncompressed_size
+
+#         stats[name + "_physical_type"] = row_group.column(i).physical_type
+#         if row_group.column(i).is_stats_set:
+#             stats[name + "_min"] = row_group.column(i).statistics.min
+#             stats[name + "_max"] = row_group.column(i).statistics.max
+#             stats[name + "_null_count"] = row_group.column(i).statistics.null_count
+#             stats[name + "_distinct_count"]: row_group.column(
+#                 i
+#             ).statistics.distinct_count
+
+#     return stats
+
 def get_row_group_stats(
-    row_group: pq.RowGroupMetaData, partitioning: None | str | list[str] = None
+    row_group: pq.RowGroupMetaData, partitioning: None | str | list[str] = None, backend:str="loky"
 ):
+    def get_column_stats(row_group_column):
+        name = row_group_column.path_in_schema
+        column_stats = {}
+        column_stats[name + "_total_compressed_size"] = row_group_column.total_compressed_size
+        column_stats[name + "_total_uncompressed_size"] = row_group_column.total_uncompressed_size
+
+        column_stats[name + "_physical_type"] = row_group_column.physical_type
+        if row_group_column.is_stats_set:
+            column_stats[name + "_min"] = row_group_column.statistics.min
+            column_stats[name + "_max"] = row_group_column.statistics.max
+            column_stats[name + "_null_count"] = row_group_column.statistics.null_count
+            column_stats[name + "_distinct_count"]: row_group_column.statistics.distinct_count
+        return column_stats
+    
     stats = {}
     file_path = row_group.column(0).file_path
     stats["file_path"] = file_path
@@ -225,25 +276,11 @@ def get_row_group_stats(
     stats["num_rows"] = row_group.num_rows
     stats["total_byte_size"] = row_group.total_byte_size
     stats["compression"] = row_group.column(0).compression
-
-    for i in range(row_group.num_columns):
-        name = row_group.column(i).path_in_schema
-        stats[name + "_total_compressed_size"] = row_group.column(
-            i
-        ).total_compressed_size
-        stats[name + "_total_uncompressed_size"] = row_group.column(
-            i
-        ).total_uncompressed_size
-
-        stats[name + "_physical_type"] = row_group.column(i).physical_type
-        if row_group.column(i).is_stats_set:
-            stats[name + "_min"] = row_group.column(i).statistics.min
-            stats[name + "_max"] = row_group.column(i).statistics.max
-            stats[name + "_null_count"] = row_group.column(i).statistics.null_count
-            stats[name + "_distinct_count"]: row_group.column(
-                i
-            ).statistics.distinct_count
-
+    
+    column_stats = Parallel(n_jobs=-1, backend=backend)(delayed(get_column_stats)(row_group.column(i)) for i in range(row_group.num_columns))
+    #column_stats = [await task for task in tasks]
+    
+    [stats.update(cs) for cs in column_stats]
     return stats
 
 
