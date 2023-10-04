@@ -277,7 +277,7 @@ def get_row_group_stats(
     stats["total_byte_size"] = row_group.total_byte_size
     stats["compression"] = row_group.column(0).compression
     
-    column_stats = Parallel(n_jobs=-1, backend=backend)(delayed(get_column_stats)(row_group.column(i)) for i in range(row_group.num_columns))
+    column_stats = [get_column_stats(row_group.column(i)) for i in range(row_group.num_columns)]
     #column_stats = [await task for task in tasks]
     
     [stats.update(cs) for cs in column_stats]
