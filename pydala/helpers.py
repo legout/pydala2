@@ -298,7 +298,7 @@ def partition_by(
     if columns is not None:
         if isinstance(columns, str):
             columns = [columns]
-         columns_ = columns.copy()
+        columns_ = columns.copy()
     else:
         columns_ = []
    
