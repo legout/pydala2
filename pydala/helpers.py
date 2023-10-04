@@ -293,7 +293,10 @@ def partition_by(
     num_rows: int | None = None,
 ) -> list[pl.DataFrame | pl.LazyFrame]:
     if timestamp_column is None:
-        timestamp_column = get_timestamp_column(df)[0]
+        timestamp_column = get_timestamp_column(df)
+        if len(timestamp_column):
+            timestamp_column = timestamp_column[0]
+        
 
     if columns is not None:
         if isinstance(columns, str):
@@ -328,20 +331,23 @@ def partition_by(
         columns_ += timedelta_columns
         drop_columns += timedelta_columns
 
-    datetime_columns = {
-        col: col in [col.lower() for col in columns]
-        for col in [
-            "year",
-            "month",
-            "week",
-            "yearday",
-            "monthday",
-            "weekday",
-            "strftime",
-        ]
-        if col not in [table_col.lower() for table_col in df.columns]
-    }
-    if len(datetime_columns):
+    if columns:
+        datetime_columns = {
+            col: col in [col.lower() for col in columns]
+            for col in [
+                "year",
+                "month",
+                "week",
+                "yearday",
+                "monthday",
+                "weekday",
+                "strftime",
+            ]
+            if col not in [table_col.lower() for table_col in df.columns]
+        }
+    else:
+        datetime_columns = {}
+    if len(datetime_columns) and timestamp_column:
         df = df.with_datepart_columns(
             timestamp_column=timestamp_column, **datetime_columns
         )
@@ -356,6 +362,8 @@ def partition_by(
     if isinstance(df, pl.LazyFrame):
         df = df.collect()
 
+    columns = [col for col in columns if col in df.columns]
+    
     partitions = [
         (p.select(columns_).unique().to_dicts()[0], p.drop(drop_columns))
         for p in df.partition_by(
