@@ -340,7 +340,7 @@ def partition_by(
     
     if columns_:
         datetime_columns = {
-            col: col in [col.lower() for col in columns]
+            col: col in [col.lower() for col in columns_]
             for col in [
                 "year",
                 "month",
