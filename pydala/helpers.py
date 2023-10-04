@@ -291,7 +291,7 @@ def partition_by(
     strftime: str | list[str] | None = None,
     timedelta: str | list[str] | None = None,
     num_rows: int | None = None,
-) -> list[pl.DataFrame | pl.LazyFrame]:
+) -> list[tuple[dict, pl.DataFrame|pl.LazyFrame]]:
     if timestamp_column is None:
         timestamp_column = get_timestamp_column(df)
         if len(timestamp_column):
@@ -331,6 +331,13 @@ def partition_by(
         columns_ += timedelta_columns
         drop_columns += timedelta_columns
 
+    if num_rows:
+        df = df.with_row_count_ext(over=columns).with_columns(
+            (pl.col("row_nr") - 1) // num_rows
+        )
+        columns_ += ["row_nr"]
+        drop_columns += ["row_nr"]
+    
     if columns:
         datetime_columns = {
             col: col in [col.lower() for col in columns]
@@ -345,35 +352,29 @@ def partition_by(
             ]
             if col not in [table_col.lower() for table_col in df.columns]
         }
-    else:
-        datetime_columns = {}
-    if len(datetime_columns) and timestamp_column:
-        df = df.with_datepart_columns(
-            timestamp_column=timestamp_column, **datetime_columns
-        )
+        if len(datetime_columns) and timestamp_column:
+            df = df.with_datepart_columns(
+                timestamp_column=timestamp_column, **datetime_columns
+            )   
 
-    if num_rows:
-        df = df.with_row_count_ext(over=columns).with_columns(
-            (pl.col("row_nr") - 1) // num_rows
-        )
-        columns_ += ["row_nr"]
-        drop_columns += ["row_nr"]
 
-    if isinstance(df, pl.LazyFrame):
-        df = df.collect()
+        if isinstance(df, pl.LazyFrame):
+            df = df.collect()
 
-    columns = [col for col in columns if col in df.columns]
+        columns = [col for col in columns if col in df.columns]
+        
+        partitions = [
+            (p.select(columns_).unique().to_dicts()[0], p.drop(drop_columns))
+            for p in df.partition_by(
+                by=columns_,
+                as_dict=False,
+            maintain_order=True,
+            )
+        ]
+
+        return partitions
     
-    partitions = [
-        (p.select(columns_).unique().to_dicts()[0], p.drop(drop_columns))
-        for p in df.partition_by(
-            by=columns_,
-            as_dict=False,
-        maintain_order=True,
-        )
-    ]
-
-    return partitions
+    return [({}, df)]
 
 
 def humanize_size(size: int, unit="MB") -> float:
