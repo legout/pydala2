@@ -338,7 +338,7 @@ def partition_by(
         columns_ += ["row_nr"]
         drop_columns += ["row_nr"]
     
-    if columns:
+    if columns_:
         datetime_columns = {
             col: col in [col.lower() for col in columns]
             for col in [
@@ -361,7 +361,7 @@ def partition_by(
         if isinstance(df, pl.LazyFrame):
             df = df.collect()
 
-        columns = [col for col in columns if col in df.columns]
+        columns_ = [col for col in columns_ if col in df.columns]
         
         partitions = [
             (p.select(columns_).unique().to_dicts()[0], p.drop(drop_columns))
