@@ -410,6 +410,25 @@ class ParquetDataset(ParquetDatasetMetadata):
             None
         """
 
+        super().__init__(
+            path=path,
+            filesystem=filesystem,
+            bucket=bucket,
+            cached=cached,
+            **cached_options,
+        )
+        # self.metadata = ParquetDatasetMetadata(path=path, filesystem=filesystem, bucket=bucket, )
+        if self.has_files:
+            if partitioning == "ignore":
+                self._partitioning = None
+            elif partitioning is None and "=" in self._files[0]:
+                partitioning = "hive"
+            else:
+                self._partitioning = partitioning
+            self._reset_scan_files()
+        else:
+            self._partitioning = None
+
     def load(
         self,
         reload: bool = False,
