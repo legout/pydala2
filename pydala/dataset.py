@@ -160,7 +160,7 @@ class ParquetDatasetMetadata:
             schemas_v = list(schemas.values())
             if self.has_metadata:
                 metadata_schema = self._metadata.schema.to_arrow_schema()
-                schemas_v.append(metadata_schema)
+                schemas_v.insert(0, metadata_schema)
                 format_version = self._metadata.format_version
 
             unified_schema, schemas_equal = unify_schemas(
