@@ -420,17 +420,17 @@ class ParquetDataset(ParquetDatasetMetadata):
                     else:
                         filter_expr_mod.append(fe)
 
-            filter_expr_mod = " AND ".join(filter_expr_mod)
+            self._filter_expr_mod = " AND ".join(filter_expr_mod)
 
             self._scan_files = [
                 os.path.join(self._path, sf)
                 for sf in self._ddb.from_arrow(self.file_catalog.to_arrow())
-                .filter(filter_expr_mod)
+                .filter(self._filter_expr_mod)
                 .pl()["file_path"]
                 .to_list()
             ]
 
-        return self
+        #return self
 
     @property
     def is_scanned(self):
@@ -440,7 +440,8 @@ class ParquetDataset(ParquetDatasetMetadata):
     def filter_expr(self):
         if not hasattr(self, "_filter_expr"):
             self._filter_expr = None
-        return self._filter_expr
+            self._filter_expr_mod = None
+        return self._filter_expr, self._filter_expr_mod
 
     def to_dataset(
         self, filter_expr: str | None = None, from_:str="scan_files"
