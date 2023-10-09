@@ -429,6 +429,8 @@ class ParquetDataset(ParquetDatasetMetadata):
         else:
             self._partitioning = None
 
+        self._ddb = duckdb.connect()
+
     def load(
         self,
         reload: bool = False,
