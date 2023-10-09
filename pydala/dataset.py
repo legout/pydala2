@@ -48,8 +48,33 @@ class ParquetDatasetMetadata:
         Returns:
             None
         """
+        self._path = path
+        self._bucket = bucket
+        self._cached = cached
+        self._base_filesystem = filesystem
+        self._filesystem = get_filesystem(
+            bucket=bucket, fs=filesystem, cached=cached, **cached_options
+        )
+
+        self._files = sorted(self._filesystem.glob(os.path.join(path, "**.parquet")))
+
+        self._file = os.path.join(path, "_metadata")
+        if self.has_metadata_file:
+            self._metadata = pq.read_metadata(
+                self.metadata_file, filesystem=self._filesystem
+            )
 
     def collect_file_metadata(self, files: list[str] | None = None, **kwargs) -> None:
+        """
+        Collects metadata for the specified files and updates the `file_metadata` attribute of the dataset object.
+
+        Args:
+            files (list[str] | None): A list of file paths to collect metadata for. If None, metadata will be collected for all files in the dataset.
+            **kwargs: Additional keyword arguments to pass to the `collect_metadata` function.
+
+        Returns:
+            None
+        """
         if files is None:
             files = self._files
 
