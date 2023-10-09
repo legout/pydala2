@@ -593,7 +593,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                 is_date = False
                 res = re.search("(\d{4}-\d{1,2}-\d{1,2})", fe)
                 if res:
-                    if res.end() == res.endpos:
+                    if res.end() + 1 == res.endpos:
                         is_date = True
                 print(is_date)
                 if ">" in fe:
