@@ -591,10 +591,12 @@ class ParquetDataset(ParquetDatasetMetadata):
             for fe in filter_expr:
                 # chech if fe is a date string
                 matched_string = re.findall("(\d{4}-\d{1,2}-\d{1,2})", fe)
+                print(matched_string)
                 if len(matched_string):
                     is_date = matched_string[0] == fe
                 else:
                     is_date = False
+                print(is_date)
                 if ">" in fe:
                     if not fe.split(">")[0].lstrip("(") in self.file_catalog.columns:
                         filter_expr_mod.append(
