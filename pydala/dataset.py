@@ -935,7 +935,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                         if k != "row_nr"
                     )
                 ),
-                f"data-{dt.datetime.now().strftime('%Y%m%d_%H%M%S')[:-3]}-{uuid.uuid4().hex[:16]}.parquet",
+                f"data-{dt.datetime.now().strftime('%Y%m%d_%H%M%S%f')[:-3]}-{uuid.uuid4().hex[:16]}.parquet",
             )
             for partition in _partitions
         ]
