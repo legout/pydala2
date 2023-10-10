@@ -939,12 +939,11 @@ class ParquetDataset(ParquetDatasetMetadata):
             )
             for partition in _partitions
         ]
-
+        schema = self.file_schema if self.has_files else None
         partitions = [partition[1] for partition in _partitions]
         file_metadata = []
 
         for _df, path in zip(partitions, paths):
-            # print(_df.head(), path)
             if mode == "delta" and self.has_files:
                 if isinstance(_df, _pl.LazyFrame):
                     _df = _df.collect()
