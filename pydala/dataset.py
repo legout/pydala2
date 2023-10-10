@@ -595,7 +595,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                 if res:
                     if res.end() + 1 == res.endpos:
                         is_date = True
-                print(is_date)
+                #print(is_date)
                 if ">" in fe:
                     if not fe.split(">")[0].lstrip("(") in self.file_catalog.columns:
                         filter_expr_mod.append(
