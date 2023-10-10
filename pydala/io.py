@@ -115,14 +115,16 @@ def write_table(
             df = df.unique()
 
     table = df.to_arrow()
-    for col in schema.names:
-        if col not in table.column_names:
-            #print(col)
-            table = table.append_column(col, pa.nulls(table.shape[0]))
     
-
+    
     if schema is not None:
+        for col in schema.names:
+            if col not in table.column_names:
+            #print(col)
+                table = table.append_column(col, pa.nulls(table.shape[0]))
+                
         table = table.select(schema.names)
+        
         schema, _ = unify_schemas(
             [schema, table.schema],
             use_large_string=use_large_string,
