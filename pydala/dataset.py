@@ -877,7 +877,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         Args:
             files (str | list[str] | None, optional): The name(s) of the file(s) to delete. If None, all files in the dataset will be deleted. Defaults to None.
         """
-        self._filesystem.rm(files)
+        self._filesystem.rm(files, recursive=True)
         self.load(reload=True)
 
     def write_to_dataset(
@@ -1096,7 +1096,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                     )
 
                 self.write_to_dataset(df=df, mode="append", **kwargs)
-
+            print(del_files)
             self.delete_files(del_files)
 
         else:
@@ -1203,8 +1203,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                     )
 
                 self.write_to_dataset(df=df, mode="append", **kwargs)
-
-            self.delete_files(del_files)
+            
 
         else:
             file_catalog = file_catalog.filter(_pl.col("num_rows") != target_num_rows)
@@ -1228,7 +1227,9 @@ class ParquetDataset(ParquetDatasetMetadata):
             self.write_to_dataset(
                 df=df, mode="append", num_rows=target_num_rows, **kwargs
             )
-            self.delete_files(del_files)
+            
+        print(del_files)
+        self.delete_files(del_files)
 
     def optimize(
         self,
