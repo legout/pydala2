@@ -463,6 +463,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                 partitioning=self._partitioning,
                 filesystem=self._filesystem,
             )
+            self._reset_scan_files()
             self._timestamp_columns = get_timestamp_column(self.pl.head(1))
 
     @property
@@ -682,6 +683,8 @@ class ParquetDataset(ParquetDatasetMetadata):
         if filter_expr is not None:
             from_ = "scan_files"
         if from_ == "scan_files":
+            if not hasattr(self, "_scan_files"):
+                self._scan_files = self._files.copy()
             files = self._scan_files
         else:
             files = self._files
@@ -724,6 +727,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         if filter_expr is not None:
             from_ = "scan_files"
         if from_ == "scan_files":
+            
             files = self._scan_files
         else:
             files = self._files
