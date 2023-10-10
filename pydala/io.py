@@ -134,7 +134,7 @@ def write_table(
         )
 
         table = table.cast(schema)
-
+    print(table.schema)
     if sort_by is not None:
         if isinstance(sort_by, list):
             if isinstance(sort_by[0], str):
