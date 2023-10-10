@@ -209,6 +209,7 @@ class ParquetDatasetMetadata:
         Returns:
             None
         """
+        
         if reload:
             update = False
             self.reload_files()
@@ -225,6 +226,7 @@ class ParquetDatasetMetadata:
 
             self.clear_cache()
             self.collect_file_metadata(files=self._files, **kwargs)
+                    
 
         self.unify_metadata_schema(
             update_file_metadata=update,
