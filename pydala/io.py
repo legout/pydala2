@@ -119,9 +119,10 @@ def write_table(
         if col not in table.column_names:
             #print(col)
             table = table.append_column(col, pa.nulls(table.shape[0]))
-    table = table.select(schema.names)
+    
 
     if schema is not None:
+        table = table.select(schema.names)
         schema, _ = unify_schemas(
             [schema, table.schema],
             use_large_string=use_large_string,
@@ -130,7 +131,7 @@ def write_table(
             sort=sort_schema
         )
 
-    table = table.cast(schema)
+        table = table.cast(schema)
 
     if sort_by is not None:
         if isinstance(sort_by, list):
