@@ -2,9 +2,10 @@ import os
 import re
 
 import polars as pl
+import polars.selectors as cs
 import pyarrow as pa
-import pyarrow.csv as pc
-import pyarrow.feather as pf
+#import pyarrow.csv as pc
+#import pyarrow.feather as pf
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 from fsspec import filesystem as fsspec_filesystem
@@ -108,6 +109,7 @@ def write_table(
     filesystem.invalidate_cache()
     # format = format or os.path.splitext(path)[-1]
 
+    df = df.with_columns(cs.by_dtype(pl.Null()).cast(pl.Int32())).unique()
     if distinct:
         if isinstance(distinct, str | list):
             df = df.unique(distinct)
