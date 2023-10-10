@@ -617,14 +617,14 @@ class ParquetDataset(ParquetDatasetMetadata):
                 elif "=" in fe:
                     if not fe.split("=")[0].lstrip("(") in self.file_catalog.columns:
                         filter_expr_mod.append(
-                            fe.replace("=", "_min::DATE>=")
+                            fe.replace("=", "_min::DATE<=")
                         ) if is_date else filter_expr_mod.append(
-                            fe.replace("=", "_min>=")
+                            fe.replace("=", "_min<=")
                         )
                         filter_expr_mod.append(
-                            fe.replace("=", "_max::DATE<=")
+                            fe.replace("=", "_max::DATE>=")
                         ) if is_date else filter_expr_mod.append(
-                            fe.replace("=", "_max<=")
+                            fe.replace("=", "_max>=")
                         )
                     else:
                         filter_expr_mod.append(fe)
