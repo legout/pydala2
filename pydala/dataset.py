@@ -965,7 +965,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                 metadata = write_table(
                     df=_df,
                     path=path,
-                    schema=self.file_schema,
+                    schema=schema,
                     filesystem=self._filesystem,
                     row_group_size=row_group_size,
                     compression=compression,
