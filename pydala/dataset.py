@@ -945,7 +945,7 @@ class ParquetDataset(ParquetDatasetMetadata):
 
         for _df, path in zip(partitions, paths):
             # print(_df.head(), path)
-            if mode == "delta":
+            if mode == "delta" and self.has_files:
                 if isinstance(_df, _pl.LazyFrame):
                     _df = _df.collect()
                 self.scan(
