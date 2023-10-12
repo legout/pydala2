@@ -2,6 +2,7 @@ import datetime as dt
 import os
 import re
 import uuid
+import tqdm
 from typing import List, Optional, Union
 
 import duckdb
@@ -1069,7 +1070,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                 (_pl.col("total_byte_size").cumsum() // target_byte_size).alias("group")
             ).select(["file_path", "total_byte_size", "group"])
 
-            for file_group in file_groups.partition_by("group"):
+            for file_group in tqdm.tqdm(file_groups.partition_by("group")):
                 if (
                     file_group.shape[0] == 1
                     and file_group["total_byte_size"].sum() > target_byte_size
@@ -1096,7 +1097,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                     )
 
                 self.write_to_dataset(df=df, mode="append", **kwargs)
-            print(del_files)
+            #print(del_files)
             self.delete_files(del_files)
 
         else:
@@ -1179,7 +1180,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                 (_pl.col("num_rows").cumsum() // target_num_rows).alias("group")
             ).select(["file_path", "num_rows", "group"])
 
-            for file_group in file_groups.partition_by("group"):
+            for file_group in tqdm.tqdm(file_groups.partition_by("group")):
                 if not allow_smaller and file_group["num_rows"].sum() > target_num_rows:
                     continue
                 paths = [
@@ -1228,7 +1229,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                 df=df, mode="append", num_rows=target_num_rows, **kwargs
             )
             
-        print(del_files)
+        #print(del_files)
         self.delete_files(del_files)
 
     def optimize(

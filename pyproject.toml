@@ -6,7 +6,7 @@ authors = [{ name = "Volker Lorrmann", email = "ligno.blades@gmail.com" }]
 dependencies = [
     "pyarrow>=12.0.1",
     "s3fs>=2023.6.0",
-    "duckdb==0.8.1",
+    "duckdb>=0.9.1",
     "tqdm>=4.65.0",
     "joblib>=1.3.2",
     "pandas>=2.0.3",
