@@ -210,7 +210,7 @@ class ParquetDatasetMetadata:
         Returns:
             None
         """
-        
+
         if reload:
             update = False
             self.reload_files()
@@ -227,7 +227,6 @@ class ParquetDatasetMetadata:
 
             self.clear_cache()
             self.collect_file_metadata(files=self._files, **kwargs)
-                    
 
         self.unify_metadata_schema(
             update_file_metadata=update,
@@ -599,7 +598,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                 if res:
                     if res.end() + 1 == res.endpos:
                         is_date = True
-                #print(is_date)
+                # print(is_date)
                 if ">" in fe:
                     if not fe.split(">")[0].lstrip("(") in self.file_catalog.columns:
                         filter_expr_mod.append(
@@ -728,7 +727,6 @@ class ParquetDataset(ParquetDatasetMetadata):
         if filter_expr is not None:
             from_ = "scan_files"
         if from_ == "scan_files":
-            
             files = self._scan_files
         else:
             files = self._files
@@ -888,6 +886,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         | pa.Table
         | pd.DataFrame
         | duckdb.DuckDBPyConnection,
+        base_name: str | None = None,
         mode: str = "append",  # "delta", "overwrite"
         num_rows: int | None = 100_000_000,
         row_group_size: int | None = None,
@@ -928,24 +927,27 @@ class ParquetDataset(ParquetDatasetMetadata):
 
         if self.partitioning_names:
             partitioning_columns = self.partitioning_names.copy()
-
-        _partitions = partition_by(
-            df=df, columns=partitioning_columns, num_rows=num_rows
-        )
-        paths = [
-            os.path.join(
-                self._path,
-                "/".join(
-                    (
-                        "=".join([k, str(v).lstrip("0")])
-                        for k, v in partition[0].items()
-                        if k != "row_nr"
-                    )
-                ),
-                f"data-{dt.datetime.now().strftime('%Y%m%d_%H%M%S%f')[:-3]}-{uuid.uuid4().hex[:16]}.parquet",
+        if base_name is None:
+            _partitions = [df]
+            paths = [base_name.split(".")[0] + ".parquet"]
+        else:
+            _partitions = partition_by(
+                df=df, columns=partitioning_columns, num_rows=num_rows
             )
-            for partition in _partitions
-        ]
+            paths = [
+                os.path.join(
+                    self._path,
+                    "/".join(
+                        (
+                            "=".join([k, str(v).lstrip("0")])
+                            for k, v in partition[0].items()
+                            if k != "row_nr"
+                        )
+                    ),
+                    f"data-{dt.datetime.now().strftime('%Y%m%d_%H%M%S%f')[:-3]}-{uuid.uuid4().hex[:16]}.parquet",
+                )
+                for partition in _partitions
+            ]
         schema = self.file_schema if self.has_files else None
         partitions = [partition[1] for partition in _partitions]
         file_metadata = []
@@ -1097,7 +1099,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                     )
 
                 self.write_to_dataset(df=df, mode="append", **kwargs)
-            #print(del_files)
+            # print(del_files)
             self.delete_files(del_files)
 
         else:
@@ -1204,7 +1206,6 @@ class ParquetDataset(ParquetDatasetMetadata):
                     )
 
                 self.write_to_dataset(df=df, mode="append", **kwargs)
-            
 
         else:
             file_catalog = file_catalog.filter(_pl.col("num_rows") != target_num_rows)
@@ -1228,8 +1229,8 @@ class ParquetDataset(ParquetDatasetMetadata):
             self.write_to_dataset(
                 df=df, mode="append", num_rows=target_num_rows, **kwargs
             )
-            
-        #print(del_files)
+
+        # print(del_files)
         self.delete_files(del_files)
 
     def optimize(
