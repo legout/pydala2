@@ -1,6 +1,7 @@
 import polars as pl
-
+import pandas as pd
 from .helpers import get_timedelta_str, get_timestamp_column
+import string
 
 
 def unnest_all(df: pl.DataFrame, seperator="_", fields: list[str] | None = None):
@@ -53,34 +54,62 @@ def unnest_all(df: pl.DataFrame, seperator="_", fields: list[str] | None = None)
 
 
 def _opt_dtype(s: pl.Series) -> pl.Series:
-    if (s.str.contains("^[0-9,\.-]{1,}$") | s.is_null()).all():
-        s = (
-            s.str.replace_all(",", ".")
-            .str.replace_all(".0$", "")
-            .str.replace_all("^-$", "NaN")
-        )
+    if s.dtype == pl.Utf8():
+        # cast str to numeric
         if (
-            s.str.contains("\.").any()
-            | s.is_null().any()
-            | s.str.contains("^$").any()
-            | s.str.contains("NaN").any()
-        ):
+            s.str.contains("^[0-9,\.-]{1,}$") | s.is_null() | s.str.contains("^$")
+        ).all():
             s = (
-                s.str.replace("^$", pl.lit("NaN"))
-                .cast(pl.Float64(), strict=True)
-                .shrink_dtype()
+                s.str.replace_all(",", ".")
+                .str.replace_all(".0$", "")
+                .str.replace_all("^-$", "NaN")
+                # .str.replace_all("^$", "NaN")
             )
-        else:
-            if (s.str.lengths() > 0).all():
-                s = s.cast(pl.Int64(), strict=True).shrink_dtype()
-    elif s.str.contains("^[T,t]rue|[F,f]alse$").all():
-        s = s.str.contains("^[T,t]rue$", strict=True)
+            if (
+                s.str.contains("\.").any()
+                | s.is_null().any()
+                | s.str.contains("^$").any()
+                | s.str.contains("NaN").any()
+            ):
+                s = (
+                    s.str.replace("^$", pl.lit("NaN"))
+                    .cast(pl.Float64(), strict=True)
+                    .shrink_dtype()
+                )
+            else:
+                if (s.str.lengths() > 0).all():
+                    s = s.cast(pl.Int64(), strict=True).shrink_dtype()
+        # cast str to datetime
+        elif (
+            s.str.contains("^\d{4}-\d{2}-\d{2}$")
+            | s.str.contains("^\d{1,2}\/\d{1,2}\/\d{4}$")
+            | s.str.contains("^\d{4}-\d{2}-\d{2}T{0,1}\s{0,1}\d{2}:\d{2}:\d{0,2}$")
+            | s.str.contains(
+                "^\d{4}-\d{2}-\d{2}T{0,1}\s{0,1}\d{2}:\d{2}:\d{2}\.\d{1,}$"
+            )
+            | s.str.contains(
+                "^\d{4}-\d{2}-\d{2}T{0,1}\s{0,1}\d{2}:\d{2}:\d{2}\.\d{1,}\w{0,1}\+\d{0,2}:\d{0,2}:\d{0,2}$"
+            )
+            | s.is_null()
+            | s.str.contains("^$")
+        ).all():
+            s = pl.Series(name=s.name, values=pd.to_datetime(s))
+
+        elif s.str.contains("^[T,t]rue|[F,f]alse$").all():
+            s = s.str.contains("^[T,t]rue$", strict=True)
+
+    else:
+        s = s.shrink_dtype()
 
     return s
 
 
-def opt_dtype(df: pl.DataFrame, exclude=None) -> pl.DataFrame:
-    return df.with_columns(pl.all().map(_opt_dtype))
+def opt_dtype(df: pl.DataFrame, exclude: str | list[str] | None = None) -> pl.DataFrame:
+    return (
+        df.with_columns(pl.all().exclude(exclude).map(_opt_dtype))
+        if exclude is not None
+        else df.with_columns(pl.all().map(_opt_dtype))
+    )
 
 
 def explode_all(df: pl.DataFrame | pl.LazyFrame):
@@ -88,10 +117,6 @@ def explode_all(df: pl.DataFrame | pl.LazyFrame):
     for col in list_columns:
         df = df.explode(col)
     return df
-
-
-pl.DataFrame.unnest_all = unnest_all
-pl.DataFrame.explode_all = explode_all
 
 
 def with_strftime_columns(
