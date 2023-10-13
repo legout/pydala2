@@ -4,41 +4,51 @@ from .helpers import get_timedelta_str, get_timestamp_column
 
 
 def unnest_all(df: pl.DataFrame, seperator="_", fields: list[str] | None = None):
-    def _unnest_all(struct_columns, fields):
-        return (
-            df.with_columns(
-                [
-                    pl.col(col).struct.rename_fields(
-                        [
-                            f"{col}{seperator}{field_name}"
-                            for field_name in df[col].struct.fields
-                        ]
-                    )
-                    for col in struct_columns
-                ]
-            )
-            .unnest(struct_columns)
-            .select(
-                list(set(df.columns) - set(struct_columns))
-                + sorted(
+    def _unnest_all(struct_columns):
+        if fields is not None:
+            return (
+                df.with_columns(
                     [
-                        f"{col}{seperator}{field_name}"
-                        for field_name in fields
+                        pl.col(col).struct.rename_fields(
+                            [
+                                f"{col}{seperator}{field_name}"
+                                for field_name in df[col].struct.fields
+                            ]
+                        )
                         for col in struct_columns
                     ]
                 )
+                .unnest(struct_columns)
+                .select(
+                    list(set(df.columns) - set(struct_columns))
+                    + sorted(
+                        [
+                            f"{col}{seperator}{field_name}"
+                            for field_name in fields
+                            for col in struct_columns
+                        ]
+                    )
+                )
             )
-        )
+
+        return df.with_columns(
+            [
+                pl.col(col).struct.rename_fields(
+                    [
+                        f"{col}{seperator}{field_name}"
+                        for field_name in df[col].struct.fields
+                    ]
+                )
+                for col in struct_columns
+            ]
+        ).unnest(struct_columns)
 
     struct_columns = [
         col for col in df.columns if df[col].dtype == pl.Struct()
     ]  # noqa: F821
-    if fields is None:
-        fields = [df[col].struct.fields for col in struct_columns]
     while len(struct_columns):
-        df = _unnest_all(struct_columns=struct_columns, fields=fields)
+        df = _unnest_all(struct_columns=struct_columns)
         struct_columns = [col for col in df.columns if df[col].dtype == pl.Struct()]
-        fields = [df[col].struct.fields for col in struct_columns]
     return df
 
 
