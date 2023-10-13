@@ -927,7 +927,7 @@ class ParquetDataset(ParquetDatasetMetadata):
 
         if self.partitioning_names:
             partitioning_columns = self.partitioning_names.copy()
-        if base_name is None:
+        if base_name is not None:
             _partitions = [df]
             paths = [base_name.split(".")[0] + ".parquet"]
         else:
