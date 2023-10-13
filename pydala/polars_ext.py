@@ -4,7 +4,7 @@ from .helpers import get_timedelta_str, get_timestamp_column
 
 
 def unnest_all(df: pl.DataFrame, seperator="_", fields: list[str] | None = None):
-    def _unnest_all(struct_columns):
+    def _unnest_all(struct_columns, fields):
         return (
             df.with_columns(
                 [
@@ -33,9 +33,12 @@ def unnest_all(df: pl.DataFrame, seperator="_", fields: list[str] | None = None)
     struct_columns = [
         col for col in df.columns if df[col].dtype == pl.Struct()
     ]  # noqa: F821
+    if fields is None:
+        fields = [df[col].struct.fields for col in struct_columns]
     while len(struct_columns):
-        df = _unnest_all(struct_columns=struct_columns)
+        df = _unnest_all(struct_columns=struct_columns, fields=fields)
         struct_columns = [col for col in df.columns if df[col].dtype == pl.Struct()]
+        fields = [df[col].struct.fields for col in struct_columns]
     return df
 
 
