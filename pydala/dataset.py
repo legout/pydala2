@@ -893,6 +893,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         compression: str = "zstd",
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
         distinct: bool = False,
+        auto_optimize_dtypes: bool = True,
         delta_subset: str | list[str] | None = None,
         partitioning_columns: str | list[str] | None = None,
         **kwargs,
@@ -980,7 +981,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                     compression=compression,
                     sort_by=sort_by,
                     distinct=distinct,
-                    **kwargs,
+                    auto_optimize_dtypes=auto_optimize_dtypes**kwargs,
                 )
                 file_metadata.append(metadata)
 

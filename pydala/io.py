@@ -4,8 +4,9 @@ import re
 import polars as pl
 import polars.selectors as cs
 import pyarrow as pa
-#import pyarrow.csv as pc
-#import pyarrow.feather as pf
+
+# import pyarrow.csv as pc
+# import pyarrow.feather as pf
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 from fsspec import filesystem as fsspec_filesystem
@@ -64,7 +65,7 @@ def read_table(
             )
     if schema is not None:
         return table.cast(schema)
-    
+
     return table
 
 
@@ -80,8 +81,9 @@ def write_table(
     distinct: bool | str | list[str] = False,
     tz: str = "UTC",
     ts_unit: str = "us",
-    sort_schema:bool|list[str]=False,
+    sort_schema: bool | list[str] = False,
     use_large_string: bool = False,
+    auto_optimize_dtypes: bool = True,
     **kwargs,
 ) -> tuple[str, pq.FileMetaData]:
     """Write pyarrow table to the given file path.
@@ -110,6 +112,10 @@ def write_table(
     # format = format or os.path.splitext(path)[-1]
 
     df = df.with_columns(cs.by_dtype(pl.Null()).cast(pl.Int32())).unique()
+
+    if auto_optimize_dtypes:
+        df = df.opt_dtype()
+
     if distinct:
         if isinstance(distinct, str | list):
             df = df.unique(distinct)
@@ -117,22 +123,21 @@ def write_table(
             df = df.unique()
 
     table = df.to_arrow()
-    
-    
+
     if schema is not None:
         for col in schema.names:
             if col not in table.column_names:
-            #print(col)
+                # print(col)
                 table = table.append_column(col, pa.nulls(table.shape[0]))
-                
+
         table = table.select(schema.names)
-        
+
         schema, _ = unify_schemas(
             [schema, table.schema],
             use_large_string=use_large_string,
             ts_unit=ts_unit,
             tz=tz,
-            sort=sort_schema
+            sort=sort_schema,
         )
 
         table = table.cast(schema)
@@ -155,16 +160,5 @@ def write_table(
         **kwargs,
     )
     metadata = metadata[0]
-    # metadata.set_file_path(path)
-    return path, metadata
-    # elif re.sub("\.", "", format) == "csv":
-    #     with filesystem.open_output_stream(path) as f:
-    #         table = pa.table.from_batches(table.to_batches(), schema=schema)
-    #         pc.write_csv(table, f, **kwargs)
 
-    # elif re.sub("\.", "", format) in ["arrow", "ipc", "feather"]:
-    #     with filesystem.open_output_scream(path) as f:
-    #         table = pa.table.from_batches(table.to_batches(), schema=schema)
-    #         pf.write_feather(
-    #             f, compression=compression, chunksize=row_group_size, **kwargs
-    #         )
+    return path, metadata
