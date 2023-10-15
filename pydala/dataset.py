@@ -957,12 +957,19 @@ class ParquetDataset(ParquetDatasetMetadata):
             if mode == "delta" and self.has_files:
                 if isinstance(_df, _pl.LazyFrame):
                     _df = _df.collect()
+                filter_expr = []
+                for col in delta_subset or _df.columns:
+                    f_max = df.select(_pl.col(col).max())[0,0]
+                    if isinstance(f_max, str):
+                        f_max.replace("'", "")
+                    
+                    f_min = df.select(_pl.col(col).min())[0,0]
+                    if isinstance(f_min, str):
+                        f_min.replace("'", " ")
+                    filter_expr.append(f"{col}<='{f_max}' AND {col}>='{f_min}'")
                 self.scan(
                          " AND ".join(
-                             [
-                                 f"{col}<='{_df.select(_pl.col(col).max())[0,0]}' AND {col}>='{_df.select(_pl.col(col).min())[0,0]}'"
-                                 for col in delta_subset or _df.columns
-                             ]
+                             filter_expr
                          )
                      )
 
