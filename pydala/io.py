@@ -79,7 +79,7 @@ def write_table(
     compression: str = "zstd",
     sort_by: str | list[str] | list[tuple[str, str]] | None = None,
     distinct: bool | str | list[str] = False,
-    tz: str = "UTC",
+    tz: str = None,
     ts_unit: str = "us",
     sort_schema: bool | list[str] = False,
     use_large_string: bool = False,
