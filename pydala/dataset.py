@@ -2,6 +2,7 @@ import datetime as dt
 import os
 import re
 import uuid
+from matplotlib.pylab import f
 import tqdm
 from typing import List, Optional, Union
 
@@ -602,32 +603,32 @@ class ParquetDataset(ParquetDatasetMetadata):
                 if ">" in fe:
                     if not fe.split(">")[0].lstrip("(") in self.file_catalog.columns:
                         filter_expr_mod.append(
-                            fe.replace(">", "_max::DATE>")
+                            f"({fe.replace('>', '_max::DATE>')} OR {fe.split('>')[0]}_max::DATE IS NULL)"
                         ) if is_date else filter_expr_mod.append(
-                            fe.replace(">", "_max>")
+                            f"({fe.replace('>', '_max>')} OR {fe.split('>')[0]}_max IS NULL)"
                         )
                     else:
                         filter_expr_mod.append(fe)
                 elif "<" in fe:
                     if not fe.split("<")[0].lstrip("(") in self.file_catalog.columns:
                         filter_expr_mod.append(
-                            fe.replace("<", "_min::DATE<")
+                            f"({fe.replace('<', '_min::DATE>')} OR {fe.split('<')[0]}_min::DATE IS NULL)"
                         ) if is_date else filter_expr_mod.append(
-                            fe.replace("<", "_min<")
+                            f"({fe.replace('<', '_min>')} OR {fe.split('<')[0]}_min IS NULL)"
                         )
                     else:
                         filter_expr_mod.append(fe)
                 elif "=" in fe:
                     if not fe.split("=")[0].lstrip("(") in self.file_catalog.columns:
                         filter_expr_mod.append(
-                            fe.replace("=", "_min::DATE<=")
+                            f"({fe.replace('=', '_min::DATE<=')} OR {fe.split('=')[0]}_min::DATE IS NULL)"
                         ) if is_date else filter_expr_mod.append(
-                            fe.replace("=", "_min<=")
+                            f"({fe.replace('=', '_min<=')} OR {fe.split('=')[0]}_min IS NULL)"
                         )
                         filter_expr_mod.append(
-                            fe.replace("=", "_max::DATE>=")
+                            f"({fe.replace('=', '_max::DATE>=')} OR {fe.split('=')[0]}_max::DATE IS NULL)"
                         ) if is_date else filter_expr_mod.append(
-                            fe.replace("=", "_max>=")
+                            f"({fe.replace('=', '_max>=')} OR {fe.split('=')[0]}_max IS NULL)"
                         )
                     else:
                         filter_expr_mod.append(fe)
@@ -957,21 +958,23 @@ class ParquetDataset(ParquetDatasetMetadata):
             if mode == "delta" and self.has_files:
                 if isinstance(_df, _pl.LazyFrame):
                     _df = _df.collect()
+                    
                 filter_expr = []
                 for col in delta_subset or _df.columns:
-                    f_max = df.select(_pl.col(col).max())[0,0]
+                    f_max = _df.select(_pl.col(col).max())[0,0]
                     if isinstance(f_max, str):
                         f_max.replace("'", "")
                     
-                    f_min = df.select(_pl.col(col).min())[0,0]
+                    f_min = _df.select(_pl.col(col).min())[0,0]
                     if isinstance(f_min, str):
                         f_min.replace("'", " ")
                     filter_expr.append(f"{col}<='{f_max}' AND {col}>='{f_min}'")
+                    
                 self.scan(
-                         " AND ".join(
-                             filter_expr
-                         )
-                     )
+                            " AND ".join(
+                                filter_expr
+                            )
+                        )
 
                 df0 = self.pl
 
