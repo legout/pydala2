@@ -67,7 +67,7 @@ def _opt_dtype(s: pl.Series) -> pl.Series:
         )
         if (
             s.str.contains("\.").any()
-            | s.is_null().any()
+            #| s.is_null().any() # null / None is valid in Int
             | s.str.contains("^$").any()
             | s.str.contains("NaN").any()
         ):
@@ -92,8 +92,8 @@ def _opt_dtype(s: pl.Series) -> pl.Series:
         )
         | s.is_null()
         | s.str.contains("^$")
-    ).all():
-        s = pl.Series(name=s.name, values=pd.to_datetime(s))
+    ).all() and s.dtype == pl.Utf8():
+        s = pl.Series(name=s.name, values=pd.to_datetime(s).tz_convert("UTC")).cast(pl.Datetime("us", "UTC"))
 
     elif s.str.contains("^[T,t]rue|[F,f]alse$").all():
         s = s.str.contains("^[T,t]rue$", strict=True)
@@ -258,12 +258,12 @@ def delta(
 
     elif isinstance(df1, pl.DataFrame) and isinstance(df2, pl.LazyFrame):
         df1 = df1.lazy()
-
+    
     df = (
         pl.concat(
             [
                 df1.with_columns(pl.lit(1).alias("df")).with_row_count(),
-                df2.with_columns(pl.lit(2).alias("df")).with_row_count(),
+                df2.select(df1.columns).with_columns(pl.lit(2).alias("df")).with_row_count(),
             ], how="vertical_relaxed"
         )
         .filter((pl.count().over(subset) == 1) & (pl.col("df") == 1))
