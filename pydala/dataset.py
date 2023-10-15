@@ -981,7 +981,8 @@ class ParquetDataset(ParquetDatasetMetadata):
                     compression=compression,
                     sort_by=sort_by,
                     distinct=distinct,
-                    auto_optimize_dtypes=auto_optimize_dtypes**kwargs,
+                    auto_optimize_dtypes=auto_optimize_dtypes,
+                    **kwargs,
                 )
                 file_metadata.append(metadata)
 
