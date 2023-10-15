@@ -958,13 +958,14 @@ class ParquetDataset(ParquetDatasetMetadata):
                 if isinstance(_df, _pl.LazyFrame):
                     _df = _df.collect()
                 self.scan(
-                    " AND ".join(
-                        [
-                            f"{col}<='{_df.select(_pl.col(col).max())[0,0]}' AND {col}>='{_df.select(_pl.col(col).min())[0,0]}'"
-                            for col in _df.columns
-                        ]
-                    )
-                )
+                         " AND ".join(
+                             [
+                                 f"{col}<='{_df.select(_pl.col(col).max())[0,0]}' AND {col}>='{_df.select(_pl.col(col).min())[0,0]}'"
+                                 for col in delta_subset or _df.columns
+                             ]
+                         )
+                     )
+
                 df0 = self.pl
 
                 _df = _df.delta(df0, subset=delta_subset, eager=True)
