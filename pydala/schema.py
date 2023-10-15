@@ -92,7 +92,7 @@ def _unify_schemas(
     schema1: pa.Schema,
     schema2: pa.Schema,
     ts_unit: str | None = "us",
-    tz: str | None = "UTC",
+    tz: str | None = None,
     use_large_string: bool = False,
     sort: bool | list[str] | str = False,
 ) -> tuple[dict, bool]:
@@ -230,7 +230,7 @@ def _unify_schemas(
 def unify_schemas(
     schemas: list[pa.Schema],
     ts_unit: str | None = "us",
-    tz: str | None = "UTC",
+    tz: str | None = None,
     use_large_string: bool = False,
     sort: bool | list[str] = False,
 ) -> tuple[pa.Schema, bool]:
@@ -275,7 +275,7 @@ def repair_schema(
     backend: str = "threading",
     verbose: bool = True,
     ts_unit: str | None = "us",
-    tz: str | None = "UTC",
+    tz: str | None = None,
     use_large_string: bool = False,
     sort: bool | list[str] = True,
     **kwargs,
