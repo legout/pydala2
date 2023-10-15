@@ -611,9 +611,9 @@ class ParquetDataset(ParquetDatasetMetadata):
                 elif "<" in fe:
                     if not fe.split("<")[0].lstrip("(") in self.file_catalog.columns:
                         filter_expr_mod.append(
-                            f"({fe.replace('<', '_min::DATE>')} OR {fe.split('<')[0]}_min::DATE IS NULL)"
+                            f"({fe.replace('<', '_min::DATE<')} OR {fe.split('<')[0]}_min::DATE IS NULL)"
                         ) if is_date else filter_expr_mod.append(
-                            f"({fe.replace('<', '_min>')} OR {fe.split('<')[0]}_min IS NULL)"
+                            f"({fe.replace('<', '_min<')} OR {fe.split('<')[0]}_min IS NULL)"
                         )
                     else:
                         filter_expr_mod.append(fe)
