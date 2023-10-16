@@ -908,7 +908,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                     )
                 )
 
-        df0 = self.pl
+        df0 = self.pl.collect()
         self._reset_scan_files()
         if df0.shape[0] > 0:
             return df.delta(df0, subset=delta_subset, eager=True)
