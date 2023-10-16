@@ -574,6 +574,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         # self.reload_files()
         # self.gen_file_catalog()
         self._scan_files = self._files.copy()
+        
     @staticmethod
     def _gen_filter_expr_mod(filter_expr: str, exclude_columns:list[str]=[]) -> list:
         # chech if filter_expr is a date string
@@ -885,6 +886,34 @@ class ParquetDataset(ParquetDatasetMetadata):
         self._filesystem.rm(files, recursive=True)
         self.load(reload=True)
 
+    
+    def _gen_delta_df(self, df: _pl.DataFrame|_pl.LazyFrame, delta_subset: str | list[str] | None = None):
+        if isinstance(df, _pl.LazyFrame):
+            df = df.collect()
+                
+        filter_expr = []
+        for col in delta_subset or df.columns:
+            f_max = df.select(_pl.col(col).max())[0,0]
+            if isinstance(f_max, str):
+                f_max.replace("'", "")
+            
+            f_min = df.select(_pl.col(col).min())[0,0]
+            if isinstance(f_min, str):
+                f_min.replace("'", " ")
+            filter_expr.append(f"{col}<='{f_max}' AND {col}>='{f_min}'")
+            
+        self.scan(
+                    " AND ".join(
+                        filter_expr
+                    )
+                )
+
+        df0 = self.pl
+        self._reset_scan_files()
+
+        return df.delta(df0, subset=delta_subset, eager=True)
+        
+        
     def write_to_dataset(
         self,
         df: _pl.DataFrame
@@ -961,29 +990,7 @@ class ParquetDataset(ParquetDatasetMetadata):
 
         for _df, path in zip(partitions, paths):
             if mode == "delta" and self.has_files:
-                if isinstance(_df, _pl.LazyFrame):
-                    _df = _df.collect()
-                    
-                filter_expr = []
-                for col in delta_subset or _df.columns:
-                    f_max = _df.select(_pl.col(col).max())[0,0]
-                    if isinstance(f_max, str):
-                        f_max.replace("'", "")
-                    
-                    f_min = _df.select(_pl.col(col).min())[0,0]
-                    if isinstance(f_min, str):
-                        f_min.replace("'", " ")
-                    filter_expr.append(f"{col}<='{f_max}' AND {col}>='{f_min}'")
-                    
-                self.scan(
-                            " AND ".join(
-                                filter_expr
-                            )
-                        )
-
-                df0 = self.pl
-
-                _df = _df.delta(df0, subset=delta_subset, eager=True)
+                _df = self._gen_delta_df(df=_df, delta_subset=delta_subset)
 
             if _df.shape[0]:
                 if isinstance(_df, _pl.LazyFrame):
