@@ -900,7 +900,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             f_min = df.select(_pl.col(col).min())[0,0]
             if isinstance(f_min, str):
                 f_min = f_min.replace("'", " ")
-            filter_expr.append(f"{col}<='{f_max}' AND {col}>='{f_min}'")
+            filter_expr.append(f"{col}<='{f_max}' AND {col}>='{f_min}'".replace("'None'", "NULL"))
             
         self.scan(
                     " AND ".join(
