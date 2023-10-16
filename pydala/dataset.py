@@ -212,6 +212,11 @@ class ParquetDatasetMetadata:
             filesystem=self._filesystem,
             **kwargs,
         )
+        if hasattr(self, "_schema"):
+            del self._schema
+        if hasattr(self, "_file_schema"):
+            del self._file_schema
+
         self.load_metadata(reload=True)
 
     def load_metadata(
