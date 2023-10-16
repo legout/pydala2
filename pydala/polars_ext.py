@@ -273,7 +273,7 @@ def delta(
         .select(pl.exclude(["df", "row_nr"]))
     )
 
-    if eager:
+    if eager and isinstance(df, pl.LazyFrame):
         return df.collect()
     return df
 
