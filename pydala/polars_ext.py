@@ -61,11 +61,9 @@ def _opt_dtype(s: pl.Series) -> pl.Series:
     ).all():
         s = (
             s.str.replace_all(",", ".")
-            .str.replace_all("\.0*$", "")
+            .str.replace_all("^0$","+0")
             .str.strip_chars_start("0")
-            #.str.replace_all("^-$", "NaN")
-            # .str.replace_all("^$", "NaN")
-                
+            .str.replace_all("\.0*$", "")
         )
         if s.dtype == pl.Utf8():
             s = s.set(s=="-",None)
@@ -73,12 +71,12 @@ def _opt_dtype(s: pl.Series) -> pl.Series:
         if (
             s.str.contains("\.").any()
             #| s.is_null().any() # null / None is valid in Int
-            | s.str.contains("^$").any()
+            #| s.str.contains("^$").any()
             | s.str.contains("NaN").any()
         ):
             s = (
-                s.str.replace("^$", pl.lit("NaN"))
-                .cast(pl.Float64(), strict=True)
+                #s.str.replace("^$", pl.lit("NaN"))
+                s.cast(pl.Float64(), strict=True)
                 .shrink_dtype()
             )
         else:

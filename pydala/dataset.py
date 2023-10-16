@@ -574,7 +574,51 @@ class ParquetDataset(ParquetDatasetMetadata):
         # self.reload_files()
         # self.gen_file_catalog()
         self._scan_files = self._files.copy()
-
+    @staticmethod
+    def _gen_filter_expr_mod(filter_expr: str, exclude_columns:list[str]=[]) -> list:
+        # chech if filter_expr is a date string
+        filter_expr_mod = []
+        is_date = False
+        res = re.search("(\d{4}-\d{1,2}-\d{1,2})", filter_expr)
+        if res:
+            if res.end() + 1 == res.endpos:
+                is_date = True
+        # print(is_date)
+        if ">" in filter_expr:
+            if not filter_expr.split(">")[0].lstrip("(") in exclude_columns:
+                filter_expr_mod.append(
+                    f"({filter_expr.replace('>', '_max::DATE>')} OR {filter_expr.split('>')[0]}_max::DATE IS NULL)"
+                ) if is_date else filter_expr_mod.append(
+                    f"({filter_expr.replace('>', '_max>')} OR {filter_expr.split('>')[0]}_max IS NULL)"
+                )
+            else:
+                filter_expr_mod.append(filter_expr)
+        elif "<" in filter_expr:
+            if not filter_expr.split("<")[0].lstrip("(") in exclude_columns:
+                filter_expr_mod.append(
+                    f"({filter_expr.replace('<', '_min::DATE<')} OR {filter_expr.split('<')[0]}_min::DATE IS NULL)"
+                ) if is_date else filter_expr_mod.append(
+                    f"({filter_expr.replace('<', '_min<')} OR {filter_expr.split('<')[0]}_min IS NULL)"
+                )
+            else:
+                filter_expr_mod.append(filter_expr)
+        elif "=" in filter_expr:
+            if not filter_expr.split("=")[0].lstrip("(") in exclude_columns:
+                filter_expr_mod.append(
+                    f"({filter_expr.replace('=', '_min::DATE<=')} OR {filter_expr.split('=')[0]}_min::DATE IS NULL)"
+                ) if is_date else filter_expr_mod.append(
+                    f"({filter_expr.replace('=', '_min<=')} OR {filter_expr.split('=')[0]}_min IS NULL)"
+                )
+                filter_expr_mod.append(
+                    f"({filter_expr.replace('=', '_max::DATE>=')} OR {filter_expr.split('=')[0]}_max::DATE IS NULL)"
+                ) if is_date else filter_expr_mod.append(
+                    f"({filter_expr.replace('=', '_max>=')} OR {filter_expr.split('=')[0]}_max IS NULL)"
+                )
+            else:
+                filter_expr_mod.append(filter_expr)
+                
+            return filter_expr_mod
+        
     def scan(self, filter_expr: str | None = None, lazy: bool = True):
         """
         Scans the dataset for files that match the given filter expression.
@@ -592,45 +636,7 @@ class ParquetDataset(ParquetDatasetMetadata):
 
             filter_expr_mod = []
             for fe in filter_expr:
-                # chech if fe is a date string
-                is_date = False
-                res = re.search("(\d{4}-\d{1,2}-\d{1,2})", fe)
-                if res:
-                    if res.end() + 1 == res.endpos:
-                        is_date = True
-                # print(is_date)
-                if ">" in fe:
-                    if not fe.split(">")[0].lstrip("(") in self.file_catalog.columns:
-                        filter_expr_mod.append(
-                            f"({fe.replace('>', '_max::DATE>')} OR {fe.split('>')[0]}_max::DATE IS NULL)"
-                        ) if is_date else filter_expr_mod.append(
-                            f"({fe.replace('>', '_max>')} OR {fe.split('>')[0]}_max IS NULL)"
-                        )
-                    else:
-                        filter_expr_mod.append(fe)
-                elif "<" in fe:
-                    if not fe.split("<")[0].lstrip("(") in self.file_catalog.columns:
-                        filter_expr_mod.append(
-                            f"({fe.replace('<', '_min::DATE<')} OR {fe.split('<')[0]}_min::DATE IS NULL)"
-                        ) if is_date else filter_expr_mod.append(
-                            f"({fe.replace('<', '_min<')} OR {fe.split('<')[0]}_min IS NULL)"
-                        )
-                    else:
-                        filter_expr_mod.append(fe)
-                elif "=" in fe:
-                    if not fe.split("=")[0].lstrip("(") in self.file_catalog.columns:
-                        filter_expr_mod.append(
-                            f"({fe.replace('=', '_min::DATE<=')} OR {fe.split('=')[0]}_min::DATE IS NULL)"
-                        ) if is_date else filter_expr_mod.append(
-                            f"({fe.replace('=', '_min<=')} OR {fe.split('=')[0]}_min IS NULL)"
-                        )
-                        filter_expr_mod.append(
-                            f"({fe.replace('=', '_max::DATE>=')} OR {fe.split('=')[0]}_max::DATE IS NULL)"
-                        ) if is_date else filter_expr_mod.append(
-                            f"({fe.replace('=', '_max>=')} OR {fe.split('=')[0]}_max IS NULL)"
-                        )
-                    else:
-                        filter_expr_mod.append(fe)
+                filter_expr_mod += self._gen_filter_expr_mod(fe, exclude_columns=self.file_catalog.columns)
 
             self._filter_expr_mod = " AND ".join(filter_expr_mod)
 
