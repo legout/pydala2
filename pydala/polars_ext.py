@@ -54,30 +54,27 @@ def unnest_all(df: pl.DataFrame, seperator="_", fields: list[str] | None = None)
 
 
 def _opt_dtype(s: pl.Series) -> pl.Series:
-    #if s.dtype == pl.Utf8():
-        # cast str to numeric
-    if (
-        s.str.contains("^[0-9,\.-]{1,}$") | s.is_null() | s.str.contains("^$")
-    ).all():
+    # if s.dtype == pl.Utf8():
+    # cast str to numeric
+    if (s.str.contains("^[0-9,\.-]{1,}$") | s.is_null() | s.str.contains("^$")).all():
         s = (
             s.str.replace_all(",", ".")
-            .str.replace_all("^0$","+0")
+            .str.replace_all("^0$", "+0")
             .str.strip_chars_start("0")
             .str.replace_all("\.0*$", "")
         )
         if s.dtype == pl.Utf8():
-            s = s.set(s=="-",None)
-            s = s.set(s=="",None)
+            s = s.set(s == "-", None)
+            s = s.set(s == "", None)
         if (
             s.str.contains("\.").any()
-            #| s.is_null().any() # null / None is valid in Int
-            #| s.str.contains("^$").any()
+            # | s.is_null().any() # null / None is valid in Int
+            # | s.str.contains("^$").any()
             | s.str.contains("NaN").any()
         ):
             s = (
-                #s.str.replace("^$", pl.lit("NaN"))
-                s.cast(pl.Float64(), strict=True)
-                .shrink_dtype()
+                # s.str.replace("^$", pl.lit("NaN"))
+                s.cast(pl.Float64(), strict=True).shrink_dtype()
             )
         else:
             if (s.str.lengths() > 0).all():
@@ -87,21 +84,19 @@ def _opt_dtype(s: pl.Series) -> pl.Series:
         s.str.contains("^\d{4}-\d{2}-\d{2}$")
         | s.str.contains("^\d{1,2}\/\d{1,2}\/\d{4}$")
         | s.str.contains("^\d{4}-\d{2}-\d{2}T{0,1}\s{0,1}\d{2}:\d{2}:\d{0,2}$")
-        | s.str.contains(
-            "^\d{4}-\d{2}-\d{2}T{0,1}\s{0,1}\d{2}:\d{2}:\d{2}\.\d{1,}$"
-        )
+        | s.str.contains("^\d{4}-\d{2}-\d{2}T{0,1}\s{0,1}\d{2}:\d{2}:\d{2}\.\d{1,}$")
         | s.str.contains(
             "^\d{4}-\d{2}-\d{2}T{0,1}\s{0,1}\d{2}:\d{2}:\d{2}\.\d{1,}\w{0,1}\+\d{0,2}:\d{0,2}:\d{0,2}$"
         )
         | s.is_null()
         | s.str.contains("^$")
     ).all() and s.dtype == pl.Utf8():
-        s = pl.Series(name=s.name, values=pd.to_datetime(s).tz_convert("UTC")).cast(pl.Datetime("us", "UTC"))
+        s = pl.Series(name=s.name, values=pd.to_datetime(s)).cast(pl.Datetime("us"))
 
     elif s.str.contains("^[T,t]rue|[F,f]alse$").all():
         s = s.str.contains("^[T,t]rue$", strict=True)
 
-    #else:
+    # else:
     #    s = s.shrink_dtype()
 
     return s
@@ -261,13 +256,16 @@ def delta(
 
     elif isinstance(df1, pl.DataFrame) and isinstance(df2, pl.LazyFrame):
         df1 = df1.lazy()
-    
+
     df = (
         pl.concat(
             [
                 df1.with_columns(pl.lit(1).alias("df")).with_row_count(),
-                df2.select(df1.columns).with_columns(pl.lit(2).alias("df")).with_row_count(),
-            ], how="vertical_relaxed"
+                df2.select(df1.columns)
+                .with_columns(pl.lit(2).alias("df"))
+                .with_row_count(),
+            ],
+            how="vertical_relaxed",
         )
         .filter((pl.count().over(subset) == 1) & (pl.col("df") == 1))
         .select(pl.exclude(["df", "row_nr"]))

@@ -130,7 +130,7 @@ class ParquetDatasetMetadata:
 
     def unify_metadata_schema(
         self,
-        format_version: str = "1.0",
+        format_version: str = None,
         update_file_metadata: bool = True,
         unify_schema_args: dict = {},
         **kwargs,
@@ -159,6 +159,9 @@ class ParquetDatasetMetadata:
                 for f in self.file_metadata
             }
             schemas_v = list(schemas.values())
+            format_version = (
+                format_version or self.file_metadata[self._files[0]].format_version
+            )
             if self.has_metadata:
                 metadata_schema = self._metadata.schema.to_arrow_schema()
                 schemas_v.insert(0, metadata_schema)
@@ -437,7 +440,8 @@ class ParquetDataset(ParquetDatasetMetadata):
         self,
         reload: bool = False,
         update: bool = True,
-        format_version: str = "1.0",
+        format_version: str = None,
+        unify_schema_args: dict = {},
         **kwargs,
     ):
         """
@@ -454,7 +458,11 @@ class ParquetDataset(ParquetDatasetMetadata):
         """
         if self.has_files:
             self.load_metadata(
-                reload=reload, update=update, format_version=format_version, **kwargs
+                reload=reload,
+                update=update,
+                format_version=format_version,
+                unify_schema_args=unify_schema_args,
+                **kwargs,
             )
 
             self._base_dataset = pds.parquet_dataset(
@@ -566,7 +574,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             ]
         )
 
-    def _reset_scan_files(self):
+    def reset_scan_files(self):
         """
         Resets the list of scanned files to the original list of files.
         """
@@ -574,6 +582,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         # self.reload_files()
         # self.gen_file_catalog()
         self._scan_files = self._files.copy()
+        self.gen_file_catalog()
 
     @staticmethod
     def _gen_filter_expr_mod(filter_expr: str, exclude_columns: list[str] = []) -> list:

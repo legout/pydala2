@@ -145,7 +145,7 @@ def _unify_schemas(
     else:
         all_names = list(set(schema1.names + schema2.names))
         file_schemas_equal = False
-        
+
     if sort:
         if isinstance(sort, bool):
             all_names = sorted(all_names)
