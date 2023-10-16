@@ -430,7 +430,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                 partitioning = "hive"
             else:
                 self._partitioning = partitioning
-            self._reset_scan_files()
+            self.reset_scan_files()
         else:
             self._partitioning = None
 
@@ -471,7 +471,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                 partitioning=self._partitioning,
                 filesystem=self._filesystem,
             )
-            self._reset_scan_files()
+            self.reset_scan_files()
             self._timestamp_columns = get_timestamp_column(self.pl.head(1))
 
     @property
@@ -921,7 +921,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         self.scan(" AND ".join(filter_expr))
 
         df0 = self.pl.collect()
-        self._reset_scan_files()
+        self.reset_scan_files()
         if df0.shape[0] > 0:
             return df.delta(df0, subset=delta_subset, eager=True)
         return df
