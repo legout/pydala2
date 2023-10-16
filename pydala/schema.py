@@ -88,6 +88,21 @@ def convert_timestamp(
     return schema
 
 
+def replace_dtype(schema: pa.Schema, field: str, dtype: pa.DataType) -> pa.Schema:
+    """Replace the dtype of a field in a pyarrow schema.
+
+    Args:
+        schema (pa.Schema): Pyarrow schema.
+        field (str): Field name.
+        dtype (pa.DataType): Pyarrow data type.
+
+    Returns:
+        pa.Schema: Pyarrow schema with replaced dtype.
+    """
+    field_idx = schema.get_field_index(field)
+    return schema.remove(field_idx).insert(field_idx, pa.field(field, dtype))
+
+
 def _unify_schemas(
     schema1: pa.Schema,
     schema2: pa.Schema,
@@ -277,7 +292,7 @@ def repair_schema(
     ts_unit: str | None = "us",
     tz: str | None = None,
     use_large_string: bool = False,
-    sort: bool | list[str] = True,
+    sort: bool | list[str] = False,
     **kwargs,
 ):
     """Repairs the pyarrow schema of a parquet or arrow dataset

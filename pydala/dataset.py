@@ -193,6 +193,27 @@ class ParquetDatasetMetadata:
                 self.clear_cache()
                 self.collect_file_metadata(files=files)
 
+    def replace_schema(self, schema: pa.Schema, **kwargs) -> None:
+        """
+        Replaces the schema of the dataset with the given schema.
+
+        Args:
+            schema (pa.Schema): The schema to use for the dataset.
+            **kwargs: Additional keyword arguments to pass to the `repair_schema` method.
+
+        Returns:
+            None
+        """
+        self.reload_files()
+        self.clear_cache()
+        repair_schema(
+            files=self._files,
+            schema=schema,
+            filesystem=self._filesystem,
+            **kwargs,
+        )
+        self.load_metadata(reload=True)
+
     def load_metadata(
         self,
         reload: bool = False,
