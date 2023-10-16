@@ -615,10 +615,10 @@ class ParquetDataset(ParquetDatasetMetadata):
                 ) if is_date else filter_expr_mod.append(
                     f"({filter_expr.replace('=', '_max>=')} OR {filter_expr.split('=')[0]}_max IS NULL)"
                 )
-            else:
-                filter_expr_mod.append(filter_expr)
+        else:
+            filter_expr_mod.append(filter_expr)
                 
-            return filter_expr_mod
+        return filter_expr_mod
         
     def scan(self, filter_expr: str | None = None, lazy: bool = True):
         """
