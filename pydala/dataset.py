@@ -574,9 +574,9 @@ class ParquetDataset(ParquetDatasetMetadata):
         # self.reload_files()
         # self.gen_file_catalog()
         self._scan_files = self._files.copy()
-        
+
     @staticmethod
-    def _gen_filter_expr_mod(filter_expr: str, exclude_columns:list[str]=[]) -> list:
+    def _gen_filter_expr_mod(filter_expr: str, exclude_columns: list[str] = []) -> list:
         # chech if filter_expr is a date string
         filter_expr_mod = []
         is_date = False
@@ -617,9 +617,9 @@ class ParquetDataset(ParquetDatasetMetadata):
                 )
         else:
             filter_expr_mod.append(filter_expr)
-                
+
         return filter_expr_mod
-        
+
     def scan(self, filter_expr: str | None = None, lazy: bool = True):
         """
         Scans the dataset for files that match the given filter expression.
@@ -637,7 +637,9 @@ class ParquetDataset(ParquetDatasetMetadata):
 
             filter_expr_mod = []
             for fe in filter_expr:
-                filter_expr_mod += self._gen_filter_expr_mod(fe, exclude_columns=self.file_catalog.columns)
+                filter_expr_mod += self._gen_filter_expr_mod(
+                    fe, exclude_columns=self.file_catalog.columns
+                )
 
             self._filter_expr_mod = " AND ".join(filter_expr_mod)
 
@@ -747,7 +749,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                 read_table,
                 files,
                 schema=self.schema,
-                format="parquet",
+                # format="parquet",
                 filesystem=self._filesystem,
                 partitioning=self._partitioning,
                 **kwargs,
@@ -886,35 +888,35 @@ class ParquetDataset(ParquetDatasetMetadata):
         self._filesystem.rm(files, recursive=True)
         self.load(reload=True)
 
-    
-    def _gen_delta_df(self, df: _pl.DataFrame|_pl.LazyFrame, delta_subset: str | list[str] | None = None):
+    def _gen_delta_df(
+        self,
+        df: _pl.DataFrame | _pl.LazyFrame,
+        delta_subset: str | list[str] | None = None,
+    ):
         if isinstance(df, _pl.LazyFrame):
             df = df.collect()
-                
+
         filter_expr = []
         for col in delta_subset or df.columns:
-            f_max = df.select(_pl.col(col).max())[0,0]
+            f_max = df.select(_pl.col(col).max())[0, 0]
             if isinstance(f_max, str):
                 f_max = f_max.replace("'", "")
-            
-            f_min = df.select(_pl.col(col).min())[0,0]
+
+            f_min = df.select(_pl.col(col).min())[0, 0]
             if isinstance(f_min, str):
                 f_min = f_min.replace("'", " ")
-            filter_expr.append(f"{col}<='{f_max}' AND {col}>='{f_min}'".replace("'None'", "NULL"))
-            
-        self.scan(
-                    " AND ".join(
-                        filter_expr
-                    )
-                )
+            filter_expr.append(
+                f"{col}<='{f_max}' AND {col}>='{f_min}'".replace("'None'", "NULL")
+            )
+
+        self.scan(" AND ".join(filter_expr))
 
         df0 = self.pl.collect()
         self._reset_scan_files()
         if df0.shape[0] > 0:
             return df.delta(df0, subset=delta_subset, eager=True)
         return df
-        
-        
+
     def write_to_dataset(
         self,
         df: _pl.DataFrame
