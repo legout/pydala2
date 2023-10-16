@@ -895,11 +895,11 @@ class ParquetDataset(ParquetDatasetMetadata):
         for col in delta_subset or df.columns:
             f_max = df.select(_pl.col(col).max())[0,0]
             if isinstance(f_max, str):
-                f_max.replace("'", "")
+                f_max = f_max.replace("'", "")
             
             f_min = df.select(_pl.col(col).min())[0,0]
             if isinstance(f_min, str):
-                f_min.replace("'", " ")
+                f_min = f_min.replace("'", " ")
             filter_expr.append(f"{col}<='{f_max}' AND {col}>='{f_min}'")
             
         self.scan(
