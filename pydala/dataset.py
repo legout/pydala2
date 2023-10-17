@@ -126,7 +126,7 @@ class ParquetDatasetMetadata:
             files = list(set(files) - set(self.file_metadata.keys()))
 
         if len(files):
-            self.collect_file_metadata(files=files, **kwargs)
+            self.collect_file_metadata(files=sorted(files), **kwargs)
 
     def unify_metadata_schema(
         self,
@@ -184,14 +184,14 @@ class ParquetDatasetMetadata:
             if len(files):
                 # print("repair")
                 repair_schema(
-                    files=files,
+                    files=sorted(files),
                     schema=unified_schema,
                     filesystem=self._filesystem,
                     version=format_version,
                     **kwargs,
                 )
                 self.clear_cache()
-                self.collect_file_metadata(files=files)
+                self.collect_file_metadata(files=sorted(files))
 
     def replace_schema(self, schema: pa.Schema, **kwargs) -> None:
         """
@@ -275,7 +275,7 @@ class ParquetDatasetMetadata:
                 self._metadata.append_row_groups(self.file_metadata[f])
         else:
             files = list(set(self.file_metadata.keys()) - set(self.files_in_metadata))
-            for f in files:
+            for f in sorted(files):
                 self._metadata.append_row_groups(self.file_metadata[f])
 
         self.write_metadata_file()
@@ -694,13 +694,15 @@ class ParquetDataset(ParquetDatasetMetadata):
 
             self._filter_expr_mod = " AND ".join(filter_expr_mod)
 
-            self._scan_files = [
-                os.path.join(self._path, sf)
-                for sf in self._ddb.from_arrow(self.file_catalog.to_arrow())
-                .filter(self._filter_expr_mod)
-                .pl()["file_path"]
-                .to_list()
-            ]
+            self._scan_files = sorted(
+                [
+                    os.path.join(self._path, sf)
+                    for sf in self._ddb.from_arrow(self.file_catalog.to_arrow())
+                    .filter(self._filter_expr_mod)
+                    .pl()["file_path"]
+                    .to_list()
+                ]
+            )
 
         # return self
 
