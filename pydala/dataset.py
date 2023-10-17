@@ -246,10 +246,12 @@ class ParquetDatasetMetadata:
             self.delete_metadata_file()
             if self.has_metadata:
                 del self._metadata
-                if hasattr(self, "_file_schema"):
-                    del self._file_schema
-                if hasattr(self, "_file_catalog"):
-                    del self._file_catalog
+            if hasattr(self, "_file_schema"):
+                del self._file_schema
+            if hasattr(self, "_file_catalog"):
+                del self._file_catalog
+            if hasattr(self, "_schema"):
+                del self._schema
 
             if hasattr(self, "file_metadata"):
                 del self.file_metadata
@@ -414,6 +416,20 @@ class ParquetDatasetMetadata:
             )
         else:
             return []
+
+    @property
+    def files(self) -> list:
+        """
+        Returns a list of file paths in the dataset.
+
+        Returns:
+            A list of file paths in the dataset.
+        """
+        if not hasattr(self, "_files"):
+            self._files = sorted(
+                self._filesystem.glob(os.path.join(self._path, "**.parquet"))
+            )
+        return self._files
 
 
 class ParquetDataset(ParquetDatasetMetadata):
