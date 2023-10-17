@@ -111,7 +111,9 @@ def write_table(
     filesystem.invalidate_cache()
     # format = format or os.path.splitext(path)[-1]
 
-    df = df.with_columns(cs.by_dtype(pl.Null()).cast(pl.Int32())).unique()
+    df = df.with_columns(cs.by_dtype(pl.Null()).cast(pl.Int32())).unique(
+        maintain_order=True
+    )
 
     if auto_optimize_dtypes:
         df = df.opt_dtype()
