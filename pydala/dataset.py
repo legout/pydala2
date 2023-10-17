@@ -1361,5 +1361,4 @@ class ParquetDataset(ParquetDatasetMetadata):
                 **kwargs,
             )
 
-
-    def zorder()
+    # def zorder()
