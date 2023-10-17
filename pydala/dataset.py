@@ -639,9 +639,9 @@ class ParquetDataset(ParquetDatasetMetadata):
         if ">" in filter_expr:
             if not filter_expr.split(">")[0].lstrip("(") in exclude_columns:
                 filter_expr_mod.append(
-                    f"({filter_expr.replace('>', '_max::DATE>')} OR {filter_expr.split('>')[0]}_max::DATE IS NULL)"
+                    f"({filter_expr.replace('>', '_max::DATE<')} OR {filter_expr.split('>')[0]}_max::DATE IS NULL)"
                 ) if is_date else filter_expr_mod.append(
-                    f"({filter_expr.replace('>', '_max>')} OR {filter_expr.split('>')[0]}_max IS NULL)"
+                    f"({filter_expr.replace('>', '_max<')} OR {filter_expr.split('>')[0]}_max IS NULL)"
                 )
             else:
                 filter_expr_mod.append(filter_expr)
@@ -1360,3 +1360,6 @@ class ParquetDataset(ParquetDatasetMetadata):
                 allow_smaller=allow_smaller,
                 **kwargs,
             )
+
+
+    def zorder()
