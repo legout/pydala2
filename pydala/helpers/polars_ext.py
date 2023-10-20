@@ -104,7 +104,7 @@ def _opt_dtype_(s: pl.Series, strict: bool = True) -> pl.Series:
             s = s.str.contains("^[T,t]rue$", strict=True)
 
     except Exception as e:
-        if stricct:
+        if strict:
             e.add_note(
                 "if you were trying to cast Utf8 to temporal dtypes, consider using `strptime` or setting `strict=False`"
             )
