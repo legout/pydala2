@@ -796,8 +796,10 @@ class ParquetDataset(ParquetDatasetMetadata):
         if mode == "overwrite":
             self.delete_files(del_files)
 
-        self.load_metadata(update=True)
-        self.gen_file_catalog()
+        self.load_metadata()
+        self.metadata = self.pydala_dataset_metadata.gen_metadata_table(
+            self.metadata, self._partitioning
+        )
         self.clear_cache()
 
     def _optimize_by_file_size(
