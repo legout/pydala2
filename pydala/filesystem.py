@@ -18,7 +18,6 @@ import pyarrow as pa
 import pyarrow.dataset as pds
 import pyarrow.parquet as pq
 from fsspec.implementations.dirfs import DirFileSystem
-from .dataset import ParquetDataset
 from .helpers.misc import run_parallel
 from .schema import repair_schema, shrink_large_string, unify_schemas
 
@@ -172,10 +171,10 @@ def pyarrow_dataset(
     )
 
 
-def pydala_dataset(
-    self, path: str, partitioning: str | None = None, **kwargs
-) -> ParquetDataset:
-    return ParquetDataset(path=path, filesystem=self, **kwargs)
+# def pydala_dataset(
+#     self, path: str, partitioning: str | None = None, **kwargs
+# ) -> ParquetDataset:
+#     return ParquetDataset(path=path, filesystem=self, **kwargs)
 
 
 def write_parquet(
@@ -296,58 +295,58 @@ def write_to_pyarrow_dataset(
     )
 
 
-def write_to_pydala_dataset(
-    self,
-    data: pl.DataFrame
-    | pa.Table
-    | pd.DataFrame
-    | ddb.DuckDBPyRelation
-    | list[pl.DataFrame]
-    | list[pa.Table]
-    | list[pd.DataFrame]
-    | list[ddb.DuckDBPyRelation],
-    path: str,
-    basename: str | None = None,
-    concat: bool = True,
-    partitioning: str | list[str] | pds.Partitioning | None = None,
-    mode: str = "append",
-    num_rows: int | None = 100_000_000,
-    row_group_size: int | None = None,
-    compression: str = "zstd",
-    sort_by: str | list[str] | list[tuple[str, str]] | None = None,
-    distinct: bool = False,
-    auto_optimize_dtypes: bool = True,
-    delta_subset: str | list[str] | None = None,
-    partitioning_columns: str | list[str] | None = None,
-    **kwargs,
-) -> None:
-    ds = ParquetDataset(path=path, filesystem=self, partitioning=partitioning)
+# def write_to_pydala_dataset(
+#     self,
+#     data: pl.DataFrame
+#     | pa.Table
+#     | pd.DataFrame
+#     | ddb.DuckDBPyRelation
+#     | list[pl.DataFrame]
+#     | list[pa.Table]
+#     | list[pd.DataFrame]
+#     | list[ddb.DuckDBPyRelation],
+#     path: str,
+#     basename: str | None = None,
+#     concat: bool = True,
+#     partitioning: str | list[str] | pds.Partitioning | None = None,
+#     mode: str = "append",
+#     num_rows: int | None = 100_000_000,
+#     row_group_size: int | None = None,
+#     compression: str = "zstd",
+#     sort_by: str | list[str] | list[tuple[str, str]] | None = None,
+#     distinct: bool = False,
+#     auto_optimize_dtypes: bool = True,
+#     delta_subset: str | list[str] | None = None,
+#     partitioning_columns: str | list[str] | None = None,
+#     **kwargs,
+# ) -> None:
+#     ds = ParquetDataset(path=path, filesystem=self, partitioning=partitioning)
 
-    if concat:
-        if isinstance(data, list):
-            if isinstance(data[0], pl.DataFrame):
-                data = pl.concat(data, how="diagonal_relaxed")
-            elif isinstance(data[0], pa.Table):
-                data = pa.concat_tables(data, promote=True)
-            elif isinstance(data[0], pd.DataFrame):
-                data = pd.concat(data, copy=False, ignore_index=True)
-            elif isinstance(data[0], ddb.DuckDBPyRelation):
-                data = pl.concat([dd.pl() for dd in data], how="diagonal_relaxed")
+#     if concat:
+#         if isinstance(data, list):
+#             if isinstance(data[0], pl.DataFrame):
+#                 data = pl.concat(data, how="diagonal_relaxed")
+#             elif isinstance(data[0], pa.Table):
+#                 data = pa.concat_tables(data, promote=True)
+#             elif isinstance(data[0], pd.DataFrame):
+#                 data = pd.concat(data, copy=False, ignore_index=True)
+#             elif isinstance(data[0], ddb.DuckDBPyRelation):
+#                 data = pl.concat([dd.pl() for dd in data], how="diagonal_relaxed")
 
-    ds.write_to_dataset(
-        df=data,
-        mode=mode,
-        base_name=basename,
-        num_rows=num_rows,
-        row_group_size=row_group_size,
-        compression=compression,
-        sort_by=sort_by,
-        distinct=distinct,
-        delta_subset=delta_subset,
-        partitioning_columns=partitioning_columns,
-        auto_optimize_dtypes=auto_optimize_dtypes,
-        **kwargs,
-    )
+#     ds.write_to_dataset(
+#         df=data,
+#         mode=mode,
+#         base_name=basename,
+#         num_rows=num_rows,
+#         row_group_size=row_group_size,
+#         compression=compression,
+#         sort_by=sort_by,
+#         distinct=distinct,
+#         delta_subset=delta_subset,
+#         partitioning_columns=partitioning_columns,
+#         auto_optimize_dtypes=auto_optimize_dtypes,
+#         **kwargs,
+#     )
 
 
 def _json_to_parquet(
@@ -594,7 +593,7 @@ def sync_folder(
 DirFileSystem.read_parquet = read_parquet
 DirFileSystem.read_parquet_dataset = read_parquet_dataset
 DirFileSystem.write_parquet = write_parquet
-DirFileSystem.write_to_parquet_dataset = write_to_pydala_dataset
+# DirFileSystem.write_to_parquet_dataset = write_to_pydala_dataset
 DirFileSystem.write_to_dataset = write_to_pyarrow_dataset
 DirFileSystem.read_parquet_schema = read_parquet_schema
 DirFileSystem.read_parquet_metadata = read_paruet_metadata
@@ -612,7 +611,7 @@ DirFileSystem._json_to_parquet = _json_to_parquet
 DirFileSystem.json_to_parquet = json_to_parquet
 
 DirFileSystem.pyarrow_dataset = pyarrow_dataset
-DirFileSystem.pydala_dataset = pydala_dataset
+# DirFileSystem.pydala_dataset = pydala_dataset
 
 DirFileSystem.lss = ls
 DirFileSystem.ls2 = ls
