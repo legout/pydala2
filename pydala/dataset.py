@@ -65,7 +65,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             if partitioning == "ignore":
                 self._partitioning = None
             elif partitioning is None and "=" in self._files[0]:
-                partitioning = "hive"
+                self._partitioning = "hive"
             else:
                 self._partitioning = partitioning
 

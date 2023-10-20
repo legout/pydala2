@@ -256,7 +256,7 @@ files = [
 
 [[package]]
 name = "black"
-version = "23.9.1"
+version = "23.10.0"
 requires_python = ">=3.8"
 summary = "The uncompromising code formatter."
 dependencies = [
@@ -269,18 +269,16 @@ dependencies = [
     "typing-extensions>=4.0.1; python_version < \"3.11\"",
 ]
 files = [
-    {file = "black-23.9.1-cp310-cp310-macosx_10_16_arm64.whl", hash = "sha256:d6bc09188020c9ac2555a498949401ab35bb6bf76d4e0f8ee251694664df6301"},
-    {file = "black-23.9.1-cp310-cp310-macosx_10_16_universal2.whl", hash = "sha256:13ef033794029b85dfea8032c9d3b92b42b526f1ff4bf13b2182ce4e917f5100"},
-    {file = "black-23.9.1-cp310-cp310-macosx_10_16_x86_64.whl", hash = "sha256:75a2dc41b183d4872d3a500d2b9c9016e67ed95738a3624f4751a0cb4818fe71"},
-    {file = "black-23.9.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:13a2e4a93bb8ca74a749b6974925c27219bb3df4d42fc45e948a5d9feb5122b7"},
-    {file = "black-23.9.1-cp310-cp310-win_amd64.whl", hash = "sha256:adc3e4442eef57f99b5590b245a328aad19c99552e0bdc7f0b04db6656debd80"},
-    {file = "black-23.9.1-cp311-cp311-macosx_10_16_arm64.whl", hash = "sha256:8431445bf62d2a914b541da7ab3e2b4f3bc052d2ccbf157ebad18ea126efb91f"},
-    {file = "black-23.9.1-cp311-cp311-macosx_10_16_universal2.whl", hash = "sha256:8fc1ddcf83f996247505db6b715294eba56ea9372e107fd54963c7553f2b6dfe"},
-    {file = "black-23.9.1-cp311-cp311-macosx_10_16_x86_64.whl", hash = "sha256:7d30ec46de88091e4316b17ae58bbbfc12b2de05e069030f6b747dfc649ad186"},
-    {file = "black-23.9.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:031e8c69f3d3b09e1aa471a926a1eeb0b9071f80b17689a655f7885ac9325a6f"},
-    {file = "black-23.9.1-cp311-cp311-win_amd64.whl", hash = "sha256:538efb451cd50f43aba394e9ec7ad55a37598faae3348d723b59ea8e91616300"},
-    {file = "black-23.9.1-py3-none-any.whl", hash = "sha256:6ccd59584cc834b6d127628713e4b6b968e5f79572da66284532525a042549f9"},
-    {file = "black-23.9.1.tar.gz", hash = "sha256:24b6b3ff5c6d9ea08a8888f6977eae858e1f340d7260cf56d70a49823236b62d"},
+    {file = "black-23.10.0-cp310-cp310-macosx_10_16_arm64.whl", hash = "sha256:f8dc7d50d94063cdfd13c82368afd8588bac4ce360e4224ac399e769d6704e98"},
+    {file = "black-23.10.0-cp310-cp310-macosx_10_16_x86_64.whl", hash = "sha256:f20ff03f3fdd2fd4460b4f631663813e57dc277e37fb216463f3b907aa5a9bdd"},
+    {file = "black-23.10.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d3d9129ce05b0829730323bdcb00f928a448a124af5acf90aa94d9aba6969604"},
+    {file = "black-23.10.0-cp310-cp310-win_amd64.whl", hash = "sha256:960c21555be135c4b37b7018d63d6248bdae8514e5c55b71e994ad37407f45b8"},
+    {file = "black-23.10.0-cp311-cp311-macosx_10_16_arm64.whl", hash = "sha256:30b78ac9b54cf87bcb9910ee3d499d2bc893afd52495066c49d9ee6b21eee06e"},
+    {file = "black-23.10.0-cp311-cp311-macosx_10_16_x86_64.whl", hash = "sha256:0e232f24a337fed7a82c1185ae46c56c4a6167fb0fe37411b43e876892c76699"},
+    {file = "black-23.10.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:31946ec6f9c54ed7ba431c38bc81d758970dd734b96b8e8c2b17a367d7908171"},
+    {file = "black-23.10.0-cp311-cp311-win_amd64.whl", hash = "sha256:c870bee76ad5f7a5ea7bd01dc646028d05568d33b0b09b7ecfc8ec0da3f3f39c"},
+    {file = "black-23.10.0-py3-none-any.whl", hash = "sha256:e223b731a0e025f8ef427dd79d8cd69c167da807f5710add30cdf131f13dd62e"},
+    {file = "black-23.10.0.tar.gz", hash = "sha256:31b9f87b277a68d0e99d2905edae08807c007973eaa609da5f0c62def6b7c0bd"},
 ]
 
 [[package]]
@@ -1350,16 +1348,16 @@ files = [
 
 [[package]]
 name = "polars"
-version = "0.19.8"
+version = "0.19.9"
 requires_python = ">=3.8"
 summary = "Blazingly fast DataFrame library"
 files = [
-    {file = "polars-0.19.8-cp38-abi3-macosx_10_12_x86_64.whl", hash = "sha256:bd35b6f5aaa85db3bacb0d4b0c556c08da007291d41e837c62e831cf2905c520"},
-    {file = "polars-0.19.8-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:89418a059df1a387e661973aba7c60ec64ed6efe5d6421f06949ea582fd2a8a7"},
-    {file = "polars-0.19.8-cp38-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:bddf392b5a8766f7b6fa991d913d864ea53d7407280f109223174ded84bdb7b1"},
-    {file = "polars-0.19.8-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a43bd78d6f6bc8a943620324611baa143c07907265fd2680a1b923cc6d2e19c3"},
-    {file = "polars-0.19.8-cp38-abi3-win_amd64.whl", hash = "sha256:6b79691fe68362b79942182d8e78d064b4b3b7191fa8c2899dece93a5b036aa3"},
-    {file = "polars-0.19.8.tar.gz", hash = "sha256:7ba32d104832fed1ac75b8f264f11953751edf062b2ab9d4e69b19ab5a224a0c"},
+    {file = "polars-0.19.9-cp38-abi3-macosx_10_12_x86_64.whl", hash = "sha256:733525ad608b8668de3749aa21d1c61bd96944b1d88895765b34d8340421a1d2"},
+    {file = "polars-0.19.9-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:5091fe78dbf82a2e30380cd6e73a3411b65a1ea9dd55afd07065944534fa5246"},
+    {file = "polars-0.19.9-cp38-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:5b3fc4b2ed02efa29855c8f4dbc26d2e45d2c1a586f6ae692489d3e7786abb27"},
+    {file = "polars-0.19.9-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:02314810dbdd0821645e7ce05a2295102992a229d46938c7f520ccde68625cc9"},
+    {file = "polars-0.19.9-cp38-abi3-win_amd64.whl", hash = "sha256:3c99bbe5ee2a2938fe750c8df429c42967d47e302b2b4b6dcb9b4267c8d42510"},
+    {file = "polars-0.19.9.tar.gz", hash = "sha256:4936b563c609c9def81c2a85ab856ee4b162d2d87566858671fd9f5cba49aa46"},
 ]
 
 [[package]]
