@@ -61,7 +61,7 @@ def _opt_dtype_(s: pl.Series, strict: bool = True) -> pl.Series:
     try:
         if (
             s.str.contains("^[0-9,\.-]{1,}$") | s.is_null() | s.str.contains("^$")
-        ).all():
+        ).all() and s.dtype != pl.Date():
             s = (
                 s.str.replace_all(",", ".")
                 .str.replace_all("^0$", "+0")
