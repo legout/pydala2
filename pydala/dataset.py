@@ -171,7 +171,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             int: The number of rows in the dataset.
         """
         if self.is_loaded:
-            return self.arrow_parquet_dataset.count_rows
+            return self.arrow_parquet_dataset().count_rows
         else:
             # print(f"No dataset loaded yet. Run {self}.load()")
             return 0
@@ -189,7 +189,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         if not hasattr(self, "_partitioning_schema"):
             if self.is_loaded:
                 self._partitioning_schema = (
-                    self.arrow_parquet_dataset.partitioning.schema
+                    self.arrow_parquet_dataset().partitioning.schema
                 )
             else:
                 # print(f"No dataset loaded yet. Run {self}.load()")
@@ -349,7 +349,7 @@ class ParquetDataset(ParquetDatasetMetadata):
 
         if lazy:
             if sorted(self.files) == sorted(self.scan_files):
-                self._ddb = self.ddb_con.from_arrow(self.arrow_parquet_dataset)
+                self._ddb = self.ddb_con.from_arrow(self.arrow_parquet_dataset())
             else:
                 self._ddb = self.ddb_con.from_arrow(self.arrow_dataset())
 
