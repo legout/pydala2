@@ -495,10 +495,11 @@ class PydalaDatasetMetadata:
                     partitioning = partitioning or "hive"
 
                 if partitioning is not None:
-                    partitions = get_partitions_from_path(
-                        file_path, partitioning=partitioning
+                    partitions = dict(
+                        get_partitions_from_path(file_path, partitioning=partitioning)
                     )
-                    metadata_table.update(dict(partitions))
+                    for part in partitions:
+                        metadata_table[part].append(partitions[part])
 
                 for col_num in range(row_group.num_columns):
                     rgc = row_group.column(col_num)
