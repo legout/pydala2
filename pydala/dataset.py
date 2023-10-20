@@ -69,7 +69,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                 self._partitioning = partitioning
 
         else:
-            self._partitioning = None
+            self._partitioning = partitioning
 
         if self.has_metadata:
             self.pydala_dataset_metadata = PydalaDatasetMetadata(
