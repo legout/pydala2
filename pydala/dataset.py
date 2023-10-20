@@ -127,11 +127,13 @@ class ParquetDataset(ParquetDatasetMetadata):
                 partitioning=self._partitioning,
                 filesystem=self._filesystem,
             )
-            self.ddb_con.register(
-                "pyarrow_parquet_dataset", self._pyarrow_parquet_dataset
-            )
 
-            self._timestamp_columns = get_timestamp_column(self.pl().head(1))
+            if len(self._pyarrow_parquet_dataset.files):
+                self.ddb_con.register(
+                    "pyarrow_parquet_dataset", self._pyarrow_parquet_dataset
+                )
+
+                self._timestamp_columns = get_timestamp_column(self.pl().head(1))
 
     # @property
     def arrow_parquet_dataset(self) -> pds.FileSystemDataset:
@@ -261,8 +263,9 @@ class ParquetDataset(ParquetDatasetMetadata):
                 partitioning=self._partitioning,
                 filesystem=self._filesystem,
             )
+        if len(self._pyarrow_dataset.files):
+            self.ddb_con.register("pyarrow_dataset", self._pyarrow_dataset)
 
-        self.ddb_con.register("pyarrow_dataset", self._pyarrow_dataset)
         return self._pyarrow_dataset
 
     # @property
@@ -311,7 +314,9 @@ class ParquetDataset(ParquetDatasetMetadata):
             )
         self._table_files = self.scan_files.copy()
 
-        self.ddb_con.register("pyarrow_table", self._pyarrow_table)
+        if len(self._table_files):
+            self.ddb_con.register("pyarrow_table", self._pyarrow_table)
+
         return self._pyarrow_table
 
     # @property
