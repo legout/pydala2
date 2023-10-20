@@ -590,6 +590,11 @@ class ParquetDataset(ParquetDatasetMetadata):
         self.pydala_dataset_metadata.reset_scan()
 
     def update_metadata_table(self):
+        if not hasattr(self, "pydala_dataset_metadata"):
+            self.pydala_dataset_metadata = PydalaDatasetMetadata(
+                metadata=self.metadata,
+                partitioning=self._partitioning,
+            )
         self.pydala_dataset_metadata.gen_metadata_table(
             self.metadata, self._partitioning
         )
@@ -804,6 +809,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                 self.load_metadata()
             except:
                 self.load_metadata(reload=True)
+
             self.update_metadata_table()
 
         if mode == "overwrite":
