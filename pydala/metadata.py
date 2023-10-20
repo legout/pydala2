@@ -591,8 +591,9 @@ class PydalaDatasetMetadata:
                 #    re.split("[>=<]", fe)[0].lstrip("(")
                 #    in self.metadata_table.column_names
                 # ):
+                col = re.split("[>=<]", fe)[0].lstrip("(")
                 if not isinstance(
-                    self.metadata_table.schema.field("AE_DATUM").type, pa.StructType
+                    self.metadata_table.schema.field(col).type, pa.StructType
                 ):
                     filter_expr_mod.append(fe)
                 else:
