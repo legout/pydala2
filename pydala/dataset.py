@@ -120,6 +120,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                     format_version=format_version,
                     **kwargs,
                 )
+                self.update_metadata_table()
 
             self._pyarrow_parquet_dataset = pds.parquet_dataset(
                 self.metadata_file,
@@ -582,6 +583,13 @@ class ParquetDataset(ParquetDatasetMetadata):
         """
         self.pydala_dataset_metadata.reset_scan()
 
+    def update_metadata_table(self):
+        self.pydala_dataset_metadata._metadata_table = (
+            self.pydala_dataset_metadata.gen_metadata_table(
+                self.metadata, self._partitioning
+            )
+        )
+
     @property
     def metadata_table(self) -> pa.Table:
         """
@@ -789,17 +797,16 @@ class ParquetDataset(ParquetDatasetMetadata):
                 self.file_metadata = file_metadata
 
             try:
-                self.load_metadata(update=False, reload=False)
+                self.load_metadata()
             except:
-                self.load_metadata(update=False, reload=True)
+                self.load_metadata(reload=True)
+            self.update_metadata_table()
 
         if mode == "overwrite":
             self.delete_files(del_files)
 
         self.load_metadata()
-        self.metadata = self.pydala_dataset_metadata.gen_metadata_table(
-            self.metadata, self._partitioning
-        )
+        self.update_metadata_table()
         self.clear_cache()
 
     def _optimize_by_file_size(
