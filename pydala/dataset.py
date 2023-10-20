@@ -584,10 +584,8 @@ class ParquetDataset(ParquetDatasetMetadata):
         self.pydala_dataset_metadata.reset_scan()
 
     def update_metadata_table(self):
-        self.pydala_dataset_metadata._metadata_table = (
-            self.pydala_dataset_metadata.gen_metadata_table(
-                self.metadata, self._partitioning
-            )
+        self.pydala_dataset_metadata.gen_metadata_table(
+            self.metadata, self._partitioning
         )
 
     @property
