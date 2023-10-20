@@ -1,7 +1,10 @@
-import polars as pl
 import pandas as pd
-from .helpers import get_timedelta_str, get_timestamp_column
-import string
+import polars as pl
+
+from .datetime import get_timedelta_str
+from .misc import get_timestamp_column
+
+# import string
 
 
 def unnest_all(df: pl.DataFrame, seperator="_", fields: list[str] | None = None):
@@ -141,28 +144,28 @@ def with_strftime_columns(
     )
 
 
-def with_duration_columns(
+def with_truncated_columns(
     df: pl.DataFrame | pl.LazyFrame,
     timestamp_column: str,
-    timedelta: str | list[str],
+    truncate: str | list[str],
     column_names: str | list[str] | None = None,
 ):
-    if isinstance(timedelta, str):
-        timedelta = [timedelta]
+    if isinstance(truncate, str):
+        truncate = [truncate]
 
     if isinstance(column_names, str):
         column_names = [column_names]
 
     if column_names is None:
         column_names = [
-            f"_timebucket_{timedelta_.replace(' ', '_')}_" for timedelta_ in timedelta
+            f"_truncated_{truncate_.replace(' ', '_')}_" for truncate_ in truncate
         ]
 
-    timedelta = [get_timedelta_str(timedelta_, to="polars") for timedelta_ in timedelta]
+    truncate = [get_timedelta_str(truncate_, to="polars") for truncate_ in truncate]
     return df.with_columns(
         [
-            pl.col(timestamp_column).dt.truncate(timedelta_).alias(column_name)
-            for timedelta_, column_name in zip(timedelta, column_names)
+            pl.col(timestamp_column).dt.truncate(truncate_).alias(column_name)
+            for truncate_, column_name in zip(truncate, column_names)
         ]
     )
 
@@ -281,7 +284,7 @@ pl.DataFrame.explode_all = explode_all
 pl.DataFrame.opt_dtype = opt_dtype
 pl.DataFrame.with_row_count_ext = with_row_count
 pl.DataFrame.with_datepart_columns = with_datepart_columns
-pl.DataFrame.with_duration_columns = with_duration_columns
+pl.DataFrame.with_duration_columns = with_truncated_columns
 pl.DataFrame.with_striftime_columns = with_strftime_columns
 pl.DataFrame.delta = delta
 
@@ -290,6 +293,6 @@ pl.LazyFrame.explode_all = explode_all
 pl.LazyFrame.opt_dtype = opt_dtype
 pl.LazyFrame.with_row_count_ext = with_row_count
 pl.LazyFrame.with_datepart_columns = with_datepart_columns
-pl.LazyFrame.with_duration_columns = with_duration_columns
+pl.LazyFrame.with_duration_columns = with_truncated_columns
 pl.LazyFrame.with_striftime_columns = with_strftime_columns
 pl.LazyFrame.delta = delta

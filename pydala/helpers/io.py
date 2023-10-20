@@ -4,15 +4,14 @@ import re
 import polars as pl
 import polars.selectors as cs
 import pyarrow as pa
-
 # import pyarrow.csv as pc
 # import pyarrow.feather as pf
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 from fsspec import filesystem as fsspec_filesystem
 
-from .helpers import get_partitions_from_path
-from .schema import convert_timestamp, shrink_large_string, unify_schemas
+from ..schema import convert_timestamp, shrink_large_string, unify_schemas
+from .misc import get_partitions_from_path
 
 
 def read_table(

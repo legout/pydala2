@@ -1,6 +1,6 @@
 [project]
 name = "pydala2"
-version = "0.1.5"
+version = "0.2"
 description = "poor man´s datalake"
 authors = [{ name = "Volker Lorrmann", email = "ligno.blades@gmail.com" }]
 dependencies = [
@@ -11,6 +11,7 @@ dependencies = [
     "joblib>=1.3.2",
     "pandas>=2.0.3",
     "polars>=0.18.15",
+    "pendulum>=2.1.2",
 ]
 requires-python = ">=3.10"
 readme = "README.md"

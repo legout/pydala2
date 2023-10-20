@@ -3,7 +3,7 @@ import pyarrow.fs as pfs
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 
-from .helpers import collect_file_schemas, run_parallel
+from .helpers.misc import run_parallel
 
 # from .io import read_table, write_table
 
@@ -279,7 +279,7 @@ def unify_schemas(
 
         schemas_equal *= schemas_equal_
 
-    return unified_schema, schemas_equal
+    return unified_schema, bool(schemas_equal)
 
 
 def repair_schema(
@@ -339,9 +339,6 @@ def repair_schema(
         schema = shrink_large_string(schema)
 
     def _repair_schema(f, schema, filesystem):
-        # filesystem.invalidate_cache()
-        # file_schema = pq.read_metadata(f, filesystem=filesystem)
-        # if file_schema!=schema:
         table = pq.read_table(f, schema=schema, filesystem=filesystem)
         pq.write_table(table, f, filesystem=filesystem, **kwargs)
 
@@ -354,3 +351,37 @@ def repair_schema(
         n_jobs=n_jobs,
         verbose=verbose,
     )
+
+
+def collect_file_schemas(
+    files: list[str] | str,
+    filesystem: AbstractFileSystem | pfs.FileSystem | None = None,
+    n_jobs: int = -1,
+    backend: str = "threading",
+    verbose: bool = True,
+) -> dict[str, pa.Schema]:
+    """Collect all pyarrow schemas for the given parquet files.
+
+    Args:
+        files (list[str] | str): Parquet files.
+        filesystem (AbstractFileSystem | pfs.FileSystem | None, optional): Filesystem. Defaults to None.
+        n_jobs (int, optional): n_jobs parameter of joblib.Parallel. Defaults to -1.
+        backend (str, optional): backend parameter of joblib.Parallel. Defaults to "threading".
+        verbose (bool, optional): Wheter to show the task progress using tqdm or not. Defaults to True.
+
+    Returns:
+        dict[str, pa.Schema]: Pyarrow schemas of the given files.
+    """
+
+    def get_schema(f, filesystem):
+        return {f: pq.read_schema(f, filesystem=filesystem)}
+
+    schemas = run_parallel(
+        get_schema,
+        files,
+        filesystem=filesystem,
+        backend=backend,
+        n_jobs=n_jobs,
+        verbose=verbose,
+    )
+    return {key: value for d in schemas for key, value in d.items()}

@@ -3,9 +3,9 @@ import os
 import re
 import uuid
 import tqdm
-from typing import List, Optional, Union
 
-import duckdb
+
+import duckdb as _duckdb
 import pandas as pd
 import pyarrow as pa
 import pyarrow.dataset as pds
@@ -14,422 +14,17 @@ import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 
 from .filesystem import clear_cache, get_filesystem
-from .helpers import (
-    collect_metadata,
-    get_row_group_stats,
+from .helpers.misc import (
     get_timestamp_column,
     humanized_size_to_bytes,
     partition_by,
     run_parallel,
+    str2pyarrow_filter,
 )
-from .io import read_table, write_table
-from .polars_ext import pl as _pl
-from .schema import repair_schema, unify_schemas
+from .helpers.io import read_table, write_table
+from .helpers.polars_ext import pl as _pl
 
-
-class ParquetDatasetMetadata:
-    def __init__(
-        self,
-        path: str,
-        filesystem: AbstractFileSystem | pfs.FileSystem | None = None,
-        bucket: str | None = None,
-        cached: bool = False,
-        **cached_options,
-    ) -> None:
-        """
-        A class representing metadata for a Parquet dataset.
-
-        Args:
-            path (str): The path to the dataset.
-            filesystem (AbstractFileSystem | pfs.FileSystem | None, optional): The filesystem to use. Defaults to None.
-            bucket (str | None, optional): The name of the bucket to use. Defaults to None.
-            cached (bool, optional): Whether to use a cached filesystem. Defaults to False.
-            **cached_options: Additional options to pass to the cached filesystem.
-
-        Returns:
-            None
-        """
-        self._path = path
-        self._bucket = bucket
-        self._cached = cached
-        self._base_filesystem = filesystem
-        self._filesystem = get_filesystem(
-            bucket=bucket, fs=filesystem, cached=cached, **cached_options
-        )
-
-        self._files = sorted(self._filesystem.glob(os.path.join(path, "**.parquet")))
-
-        self._file = os.path.join(path, "_metadata")
-        if self.has_metadata_file:
-            self._metadata = pq.read_metadata(
-                self.metadata_file, filesystem=self._filesystem
-            )
-
-    def collect_file_metadata(self, files: list[str] | None = None, **kwargs) -> None:
-        """
-        Collects metadata for the specified files and updates the `file_metadata` attribute of the dataset object.
-
-        Args:
-            files (list[str] | None): A list of file paths to collect metadata for. If None, metadata will be collected for all files in the dataset.
-            **kwargs: Additional keyword arguments to pass to the `collect_metadata` function.
-
-        Returns:
-            None
-        """
-        if files is None:
-            files = self._files
-
-        file_metadata = collect_metadata(
-            files=files, filesystem=self._filesystem, **kwargs
-        )
-
-        if file_metadata:
-            for f in file_metadata:
-                file_metadata[f].set_file_path(f.split(self._path)[-1].lstrip("/"))
-
-            if hasattr(self, "file_metadata"):
-                self.file_metadata.update(file_metadata)
-            else:
-                self.file_metadata = file_metadata
-
-    def reload_files(self) -> None:
-        """
-        Reloads the list of files in the dataset directory. This method should be called
-        after adding or removing files from the directory to ensure that the dataset object
-        has an up-to-date list of files.
-
-        Returns:
-            None
-        """
-        self._files = sorted(
-            self._filesystem.glob(os.path.join(self._path, "**.parquet"))
-        )
-
-    def update_file_metadata(self, **kwargs) -> None:
-        """
-        Updates the metadata for files in the dataset.
-
-        This method reloads the files in the dataset and then updates the metadata for any files that have not yet been
-        processed. If the dataset already has file metadata, this method will only update the metadata for files that have
-        been added since the last time metadata was collected.
-
-        Args:
-            **kwargs: Additional keyword arguments to pass to the `collect_file_metadata` method.
-
-        Returns:
-            None
-        """
-        self.reload_files()
-
-        files = list((set(self._files) - set(self.files_in_metadata)))
-        if hasattr(self, "file_metadata"):
-            files = list(set(files) - set(self.file_metadata.keys()))
-
-        if len(files):
-            self.collect_file_metadata(files=sorted(files), **kwargs)
-
-    def unify_metadata_schema(
-        self,
-        format_version: str = None,
-        update_file_metadata: bool = True,
-        unify_schema_args: dict = {},
-        **kwargs,
-    ) -> None:
-        """
-        Unifies the metadata schema of all files in the dataset to a common schema.
-
-        Args:
-            format_version (str, optional): The format version to use for the unified schema. Defaults to "1.0".
-            update_file_metadata (bool, optional): Whether to update the file metadata before unifying the schemas. Defaults to True.
-            unify_schema_args (dict, optional): Additional arguments to pass to the `unify_schemas` function. Defaults to {}.
-            **kwargs: Additional keyword arguments to pass to the `update_file_metadata` and `repair_schema` methods.
-
-        Returns:
-            None
-        """
-
-        if update_file_metadata:
-            self.update_file_metadata(**kwargs)
-
-        if hasattr(self, "file_metadata"):
-            # self.collect_file_metadata(**kwargs)
-
-            schemas = {
-                f: self.file_metadata[f].schema.to_arrow_schema()
-                for f in self.file_metadata
-            }
-            schemas_v = list(schemas.values())
-            format_version = (
-                format_version or self.file_metadata[self._files[0]].format_version
-            )
-            if self.has_metadata:
-                metadata_schema = self._metadata.schema.to_arrow_schema()
-                schemas_v.insert(0, metadata_schema)
-                format_version = self._metadata.format_version
-
-            unified_schema, schemas_equal = unify_schemas(
-                schemas_v, **unify_schema_args
-            )
-
-            files = []
-            if not schemas_equal:
-                files += [f for f in self.file_metadata if schemas[f] != unified_schema]
-            files += [
-                f
-                for f in files
-                if self.file_metadata[f].format_version != format_version
-            ]
-            files = set(files)
-
-            if len(files):
-                # print("repair")
-                repair_schema(
-                    files=sorted(files),
-                    schema=unified_schema,
-                    filesystem=self._filesystem,
-                    version=format_version,
-                    **kwargs,
-                )
-                self.clear_cache()
-                self.collect_file_metadata(files=sorted(files))
-
-    def replace_schema(self, schema: pa.Schema, **kwargs) -> None:
-        """
-        Replaces the schema of the dataset with the given schema.
-
-        Args:
-            schema (pa.Schema): The schema to use for the dataset.
-            **kwargs: Additional keyword arguments to pass to the `repair_schema` method.
-
-        Returns:
-            None
-        """
-        self.reload_files()
-        self.clear_cache()
-        repair_schema(
-            files=self._files,
-            schema=schema,
-            filesystem=self._filesystem,
-            **kwargs,
-        )
-        if hasattr(self, "_schema"):
-            del self._schema
-        if hasattr(self, "_file_schema"):
-            del self._file_schema
-
-        self.load_metadata(reload=True)
-
-    def load_metadata(
-        self,
-        reload: bool = False,
-        update: bool = True,
-        format_version: str = "1.0",
-        unify_schema_args: dict = {},
-        **kwargs,
-    ) -> None:
-        """Loads the metadata for the dataset.
-
-        Args:
-            reload (bool, optional): Whether to reload the metadata. Defaults to False.
-            update (bool, optional): Whether to update the metadata. Defaults to True.
-            format_version (str, optional): The format version of the metadata. Defaults to "1.0".
-            unify_schema_args (dict, optional): Arguments to unify the metadata schema. Defaults to {}.
-            **kwargs: Additional keyword arguments.
-
-        Returns:
-            None
-        """
-
-        if reload:
-            update = False
-            self.reload_files()
-            self.delete_metadata_file()
-            if self.has_metadata:
-                del self._metadata
-            if hasattr(self, "_file_schema"):
-                del self._file_schema
-            if hasattr(self, "_file_catalog"):
-                del self._file_catalog
-            if hasattr(self, "_schema"):
-                del self._schema
-
-            if hasattr(self, "file_metadata"):
-                del self.file_metadata
-
-            self.clear_cache()
-            self.collect_file_metadata(files=self._files, **kwargs)
-
-        self.unify_metadata_schema(
-            update_file_metadata=update,
-            format_version=format_version,
-            unify_schema_args=unify_schema_args,
-            **kwargs,
-        )
-
-        if not hasattr(self, "file_metadata"):
-            return
-
-        if not self.has_metadata:
-            self._metadata = self.file_metadata[list(self.file_metadata.keys())[0]]
-            for f in list(self.file_metadata.keys())[1:]:
-                self._metadata.append_row_groups(self.file_metadata[f])
-        else:
-            files = list(set(self.file_metadata.keys()) - set(self.files_in_metadata))
-            for f in sorted(files):
-                self._metadata.append_row_groups(self.file_metadata[f])
-
-        self.write_metadata_file()
-
-    def write_metadata_file(self) -> None:
-        """
-        Writes metadata to a file named '_metadata' in the dataset directory.
-
-        Returns:
-            None
-        """
-        with self._filesystem.open(os.path.join(self._path, "_metadata"), "wb") as f:
-            self._metadata.write_metadata_file(f)
-
-    def delete_metadata_file(self) -> None:
-        """
-        Deletes the metadata file associated with the dataset, if it exists.
-
-        Raises:
-            None
-        """
-        if self.has_metadata_file:
-            self._filesystem.rm(self.metadata_file)
-
-    def clear_cache(self) -> None:
-        """
-        Clears the cache for the dataset's filesystem and base filesystem.
-
-        This method clears the cache for the dataset's filesystem and base filesystem,
-        which can be useful if the dataset has been modified and the cache needs to be
-        updated accordingly.
-
-        Returns:
-            None
-        """
-        clear_cache(self._filesystem)
-        clear_cache(self._base_filesystem)
-
-    @property
-    def has_metadata(self):
-        """
-        Returns True if the dataset has metadata, False otherwise.
-        """
-        return hasattr(self, "_metadata")
-
-    @property
-    def metadata(self):
-        """
-        Returns the metadata associated with the dataset.
-
-        If the metadata has not been loaded yet, it will be loaded before being returned.
-
-        Returns:
-            dict: The metadata associated with the dataset.
-        """
-        if not self.has_metadata:
-            self.load_metadata()
-        return self._metadata
-
-    @property
-    def schema(self):
-        """
-        Returns the Arrow schema for the dataset.
-
-        If the dataset has metadata, the schema includes both the metadata and the data schema.
-        Otherwise, the schema only includes the data schema.
-
-        Returns:
-            pyarrow.Schema: The Arrow schema for the dataset.
-        """
-        if not hasattr(self, "_schema"):
-            self._schema = self.metadata.schema.to_arrow_schema()
-            if self.has_metadata:
-                self._file_schema = self.metadata.schema.to_arrow_schema()
-            else:
-                self._file_schema = pa.schema([])
-        return self._schema
-
-    @property
-    def file_schema(self):
-        """
-        Returns the Arrow schema of the dataset file.
-        If metadata is available, it returns the schema from metadata.
-        If metadata is not available, it returns an empty schema.
-        """
-        if not hasattr(self, "_file_schema"):
-            if self.has_metadata:
-                self._file_schema = self.metadata.schema.to_arrow_schema()
-            else:
-                self._file_schema = pa.schema([])
-        return self._file_schema
-
-    @property
-    def metadata_file(self):
-        """
-        Returns the path to the metadata file for this dataset. If the metadata file
-        does not exist, it will be created.
-
-        Returns:
-            str: The path to the metadata file.
-        """
-        if not hasattr(self, "_metadata_file"):
-            self._file = os.path.join(self._path, "_metadata")
-        return self._file
-
-    @property
-    def has_metadata_file(self):
-        """
-        Returns True if the dataset has a metadata file, False otherwise.
-        """
-        return self._filesystem.exists(self.metadata_file)
-
-    @property
-    def has_files(self):
-        """
-        Returns True if the dataset has files, False otherwise.
-        """
-        return len(self._files) > 0
-
-    @property
-    def files_in_metadata(self) -> list:
-        """
-        Returns a list of file paths referenced in the metadata of the dataset.
-
-        Returns:
-            A list of file paths referenced in the metadata of the dataset.
-        """
-        if self.has_metadata:
-            return list(
-                set(
-                    [
-                        os.path.join(
-                            self._path, self._metadata.row_group(i).column(0).file_path
-                        )
-                        for i in range(self._metadata.num_row_groups)
-                    ]
-                )
-            )
-        else:
-            return []
-
-    @property
-    def files(self) -> list:
-        """
-        Returns a list of file paths in the dataset.
-
-        Returns:
-            A list of file paths in the dataset.
-        """
-        if not hasattr(self, "_files"):
-            self._files = sorted(
-                self._filesystem.glob(os.path.join(self._path, "**.parquet"))
-            )
-        return self._files
+from .metadata import ParquetDatasetMetadata, PydalaDatasetMetadata
 
 
 class ParquetDataset(ParquetDatasetMetadata):
@@ -438,9 +33,9 @@ class ParquetDataset(ParquetDatasetMetadata):
         path: str,
         filesystem: AbstractFileSystem | None = None,
         bucket: str | None = None,
-        partitioning: str | None = None,
+        partitioning: str | list[str] | None = None,
         cached: bool = False,
-        **cached_options,
+        **caching_options,
     ):
         """
         Initialize a Dataset object.
@@ -449,7 +44,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             path (str): The path to the dataset.
             filesystem (AbstractFileSystem, optional): The filesystem to use. Defaults to None.
             bucket (str, optional): The bucket to use. Defaults to None.
-            partitioning (str, optional): The partitioning scheme to use. Defaults to None.
+            partitioning (str, list[str], optional): The partitioning scheme to use. Defaults to None.
             cached (bool, optional): Whether to use cached data. Defaults to False.
             **cached_options: Additional options for cached data.
 
@@ -462,9 +57,9 @@ class ParquetDataset(ParquetDatasetMetadata):
             filesystem=filesystem,
             bucket=bucket,
             cached=cached,
-            **cached_options,
+            **caching_options,
         )
-        # self.metadata = ParquetDatasetMetadata(path=path, filesystem=filesystem, bucket=bucket, )
+
         if self.has_files:
             if partitioning == "ignore":
                 self._partitioning = None
@@ -472,56 +67,83 @@ class ParquetDataset(ParquetDatasetMetadata):
                 partitioning = "hive"
             else:
                 self._partitioning = partitioning
-            self.reset_scan_files()
+
         else:
             self._partitioning = None
 
-        self._ddb = duckdb.connect()
+        self.pydala_dataset_metadata = PydalaDatasetMetadata(
+            metadata=self.metadata,
+            partitioning=partitioning,
+        )
+
+        self.ddb_con = _duckdb.connect()
 
     def load(
         self,
-        reload: bool = False,
-        update: bool = True,
-        format_version: str = None,
-        unify_schema_args: dict = {},
+        update_metadata: bool = False,
+        reload_metadata: bool = False,
+        schema: pa.Schema | None = None,
+        ts_unit: str = "us",
+        tz: str | None = None,
+        use_large_string: bool = False,
+        sort: bool = False,
+        format_version: str = "1.0",
         **kwargs,
     ):
         """
-        Load the dataset metadata and create a PyArrow ParquetDataset object.
+        Load the dataset.
 
         Args:
-            reload (bool, optional): Whether to reload the metadata file if it already exists. Defaults to False.
-            update (bool, optional): Whether to update the metadata file with any new files found. Defaults to True.
-            format_version (str, optional): The version of the metadata format to use. Defaults to "1.0".
-            **kwargs: Additional keyword arguments to pass to the PyArrow ParquetDataset constructor.
+            reload (bool, optional): Reload the dataset even if it is already loaded. Defaults to False.
+            update (bool, optional): Update the dataset metadata. Defaults to False.
+            schema (pa.Schema | None, optional): Arrow schema to use for the dataset. Defaults to None.
+            ts_unit (str, optional): Timestamp unit to use for the dataset. Defaults to "us".
+            tz (str | None, optional): Timezone to use for the dataset. Defaults to None.
+            use_large_string (bool, optional): Use large string type for the dataset. Defaults to False.
+            sort (bool, optional): Sort the dataset. Defaults to False.
+            format_version (str, optional): Format version to use for the dataset. Defaults to "1.0".
+            **kwargs: Additional keyword arguments to pass to the update method.
 
         Returns:
             None
         """
-        if self.has_files:
-            self.load_metadata(
-                reload=reload,
-                update=update,
-                format_version=format_version,
-                unify_schema_args=unify_schema_args,
-                **kwargs,
-            )
 
-            self._base_dataset = pds.parquet_dataset(
+        if self.has_files:
+            if update_metadata or reload_metadata or not self.has_metadata_file:
+                self.update(
+                    reload=reload_metadata,
+                    schema=schema,
+                    ts_unit=ts_unit,
+                    tz=tz,
+                    use_large_string=use_large_string,
+                    sort=sort,
+                    format_version=format_version,
+                    **kwargs,
+                )
+
+            self._pyarrow_parquet_dataset = pds.parquet_dataset(
                 self.metadata_file,
-                # schema=self.schema,
                 partitioning=self._partitioning,
                 filesystem=self._filesystem,
             )
-            self.reset_scan_files()
-            self._timestamp_columns = get_timestamp_column(self.pl.head(1))
+            self.ddb_con.register(
+                "pyarrow_parquet_dataset", self._pyarrow_parquet_dataset
+            )
+
+            self._timestamp_columns = get_timestamp_column(self.pl().head(1))
+
+    # @property
+    def arrow_parquet_dataset(self) -> pds.FileSystemDataset:
+        if not hasattr(self, "_pyarrow_parquet_dataset"):
+            self.load()
+        return self._pyarrow_parquet_dataset
 
     @property
-    def is_loaded(self):
+    def is_loaded(self) -> bool:
         """
         Returns True if the dataset has been loaded into memory, False otherwise.
         """
-        return hasattr(self, "_base_dataset")
+        return hasattr(self, "pyarrow_parquet_dataset")
 
     @property
     def columns(self) -> list:
@@ -546,9 +168,9 @@ class ParquetDataset(ParquetDatasetMetadata):
             int: The number of rows in the dataset.
         """
         if self.is_loaded:
-            return self._base_dataset.count_rows
+            return self.arrow_parquet_dataset.count_rows
         else:
-            print(f"No dataset loaded yet. Run {self}.load()")
+            # print(f"No dataset loaded yet. Run {self}.load()")
             return 0
 
     @property
@@ -563,14 +185,16 @@ class ParquetDataset(ParquetDatasetMetadata):
         """
         if not hasattr(self, "_partitioning_schema"):
             if self.is_loaded:
-                self._partitioning_schema = self._base_dataset.partitioning.schema
+                self._partitioning_schema = (
+                    self.arrow_parquet_dataset.partitioning.schema
+                )
             else:
-                print(f"No dataset loaded yet. Run {self}.load()")
+                # print(f"No dataset loaded yet. Run {self}.load()")
                 return pa.schema([])
         return self._partitioning_schema
 
     @property
-    def schema(self):
+    def schema(self) -> pa.Schema:
         """
         Returns the schema of the dataset, which is a unified schema
         of the file schema and partitioning schema (if present).
@@ -598,234 +222,113 @@ class ParquetDataset(ParquetDatasetMetadata):
             if self.is_loaded:
                 self._partitioning_names = self.partitioning_schema.names
             else:
-                print(f"No dataset loaded yet. Run {self}.load()")
+                # print(f"No dataset loaded yet. Run {self}.load()")
                 return []
         return self._partitioning_names
 
-    def gen_file_catalog(self):
-        """
-        Generates a polars DataFrame with statistics for each row group in the dataset.
-
-        """
-        self._file_catalog = _pl.DataFrame(
-            [
-                get_row_group_stats(
-                    self.metadata.row_group(i), partitioning=self._partitioning
-                )
-                for i in range(self.metadata.num_row_groups)
-            ]
+    def gen_metadata_table(self):
+        self.pydala_dataset_metadata.gen_metadata_table(
+            self.metadata, self._partitioning
         )
 
-    def reset_scan_files(self):
-        """
-        Resets the list of scanned files to the original list of files.
-        """
-        self._is_scanned = False
-        # self.reload_files()
-        # self.gen_file_catalog()
-        self._scan_files = self._files.copy()
-        self.gen_file_catalog()
+    def scan(self, filter_expr: str | None = None) -> ParquetDatasetMetadata:
+        self.pydala_dataset_metadata.scan(filter_expr=filter_expr)
+        return self
 
-    @staticmethod
-    def _gen_filter_expr_mod(filter_expr: str, exclude_columns: list[str] = []) -> list:
-        # chech if filter_expr is a date string
-        filter_expr_mod = []
-        is_date = False
-        res = re.search("(\d{4}-\d{1,2}-\d{1,2})", filter_expr)
-        if res:
-            if res.end() + 1 == res.endpos:
-                is_date = True
-        # print(is_date)
-        if ">" in filter_expr:
-            if not filter_expr.split(">")[0].lstrip("(") in exclude_columns:
-                filter_expr_mod.append(
-                    f"({filter_expr.replace('>', '_max::DATE<')} OR {filter_expr.split('>')[0]}_max::DATE IS NULL)"
-                ) if is_date else filter_expr_mod.append(
-                    f"({filter_expr.replace('>', '_max<')} OR {filter_expr.split('>')[0]}_max IS NULL)"
-                )
-            else:
-                filter_expr_mod.append(filter_expr)
-        elif "<" in filter_expr:
-            if not filter_expr.split("<")[0].lstrip("(") in exclude_columns:
-                filter_expr_mod.append(
-                    f"({filter_expr.replace('<', '_min::DATE<')} OR {filter_expr.split('<')[0]}_min::DATE IS NULL)"
-                ) if is_date else filter_expr_mod.append(
-                    f"({filter_expr.replace('<', '_min<')} OR {filter_expr.split('<')[0]}_min IS NULL)"
-                )
-            else:
-                filter_expr_mod.append(filter_expr)
-        elif "=" in filter_expr:
-            if not filter_expr.split("=")[0].lstrip("(") in exclude_columns:
-                filter_expr_mod.append(
-                    f"({filter_expr.replace('=', '_min::DATE<=')} OR {filter_expr.split('=')[0]}_min::DATE IS NULL)"
-                ) if is_date else filter_expr_mod.append(
-                    f"({filter_expr.replace('=', '_min<=')} OR {filter_expr.split('=')[0]}_min IS NULL)"
-                )
-                filter_expr_mod.append(
-                    f"({filter_expr.replace('=', '_max::DATE>=')} OR {filter_expr.split('=')[0]}_max::DATE IS NULL)"
-                ) if is_date else filter_expr_mod.append(
-                    f"({filter_expr.replace('=', '_max>=')} OR {filter_expr.split('=')[0]}_max IS NULL)"
-                )
-        else:
-            filter_expr_mod.append(filter_expr)
-
-        return filter_expr_mod
-
-    def scan(self, filter_expr: str | None = None, lazy: bool = True):
-        """
-        Scans the dataset for files that match the given filter expression.
-
-        Args:
-            filter_expr (str | None): A filter expression to apply to the dataset. Defaults to None.
-            lazy (bool): Whether to perform the scan lazily or eagerly. Defaults to True.
-
-        Returns:
-            None
-        """
-        self._filter_expr = filter_expr
-        if filter_expr is not None:
-            filter_expr = [fe.strip() for fe in filter_expr.split("AND")]
-
-            filter_expr_mod = []
-            for fe in filter_expr:
-                filter_expr_mod += self._gen_filter_expr_mod(
-                    fe, exclude_columns=self.file_catalog.columns
-                )
-
-            self._filter_expr_mod = " AND ".join(filter_expr_mod)
-
-            self._scan_files = sorted(
-                [
-                    os.path.join(self._path, sf)
-                    for sf in self._ddb.from_arrow(self.file_catalog.to_arrow())
-                    .filter(self._filter_expr_mod)
-                    .pl()["file_path"]
-                    .to_list()
-                ]
-            )
-
-        # return self
-
-    @property
-    def is_scanned(self):
-        """
-        Check if all files in the dataset have been scanned.
-
-        Returns:
-            bool: True if all files have been scanned, False otherwise.
-        """
-        return sorted(self._scan_files) == sorted(self._files)
-
-    @property
-    def filter_expr(self):
-        """
-        Returns the filter expression and its module.
-
-        If the filter expression has not been set yet, it will return None for both the expression and its module.
-        """
-        if not hasattr(self, "_filter_expr"):
-            self._filter_expr = None
-            self._filter_expr_mod = None
-        return self._filter_expr, self._filter_expr_mod
-
-    def to_dataset(
-        self, filter_expr: str | None = None, from_: str = "scan_files"
+    def to_arrow_dataset(
+        self,
     ) -> pds.Dataset:
         """
         Converts the current Pydala object to a PyArrow Dataset object.
 
-        Args:
-            filter_expr (str | None): Optional filter expression to apply to the dataset.
-            from_ (str): The source of the dataset. Can be either "scan_files" or "files". Defaults to "scan_files".
 
         Returns:
             pds.Dataset: The PyArrow Dataset object.
         """
-        self.scan(filter_expr=filter_expr, lazy=True)
-        if filter_expr is not None:
-            from_ = "scan_files"
-        if from_ == "scan_files":
-            if not hasattr(self, "_scan_files"):
-                self._scan_files = self._files.copy()
-            files = self._scan_files
+        if hasattr(self, "_pyarrow_dataset"):
+            if sorted(self._pyarrow_dataset.files) == sorted(self.scan_files):
+                return self._pyarrow_dataset
+
+            self._pyarrow_dataset = pds.dataset(
+                self.scan_files,
+                partitioning=self._partitioning,
+                filesystem=self._filesystem,
+            )
         else:
-            files = self._files
-        if hasattr(self, "_dataset"):
-            if sorted(self._dataset.files) == sorted(files):
-                return self._dataset
-        self._dataset = pds.dataset(
-            files,
-            partitioning=self._partitioning,
-            filesystem=self._filesystem,
-        )
+            self._pyarrow_dataset = pds.dataset(
+                self.scan_files,
+                partitioning=self._partitioning,
+                filesystem=self._filesystem,
+            )
 
-        return self._dataset
+        self.ddb_con.register("pyarrow_dataset", self._pyarrow_dataset)
+        return self._pyarrow_dataset
 
-    @property
-    def dataset(self) -> pds.Dataset:
+    # @property
+    def arrow_dataset(self) -> pds.Dataset:
         """
         Returns a PyArrow Dataset object representing the data in this instance.
         """
-        return self.to_dataset()
+        # if not hasattr(self, "_pyarrow_dataset"):
+        return self.to_arrow_dataset()
+        # return self._pyarrow_dataset
 
-    def to_table(
-        self, filter_expr: str | None = None, from_: str = "scan_files", **kwargs
-    ) -> pa.Table:
+    def to_arrow(self, **kwargs) -> pa.Table:
         """
         Converts the dataset to a PyArrow table by reading the data from disk.
-
-        Args:
-            filter_expr (str | None): An optional filter expression to apply to the dataset.
-            from_ (str): The source of the files to read. Can be either "scan_files" (default) or "files".
-            **kwargs: Additional keyword arguments to pass to the `read_table` function.
 
         Returns:
             A PyArrow table containing the data from the dataset.
 
-        Raises:
-            ValueError: If the `from_` argument is not valid.
         """
-        self.scan(filter_expr=filter_expr, lazy=False)
-        if filter_expr is not None:
-            from_ = "scan_files"
-        if from_ == "scan_files":
-            files = self._scan_files
+        if hasattr(self, "_pyarrow_table"):
+            if sorted(self._table_files) == sorted(self.scan_files):
+                return self._pyarrow_table
+
+            else:
+                self._pyarrow_table = pa.concat_tables(
+                    run_parallel(
+                        read_table,
+                        self.scan_files,
+                        schema=self.schema,
+                        filesystem=self._filesystem,
+                        partitioning=self._partitioning,
+                        **kwargs,
+                    )
+                )
+
         else:
-            files = self._files
-        if hasattr(self, "_table"):
-            if sorted(self._table_files) == sorted(files):
-                return self._table
-
-        self._table_files = files.copy()
-        self._table = pa.concat_tables(
-            run_parallel(
-                read_table,
-                files,
-                schema=self.schema,
-                # format="parquet",
-                filesystem=self._filesystem,
-                partitioning=self._partitioning,
-                **kwargs,
+            self._pyarrow_table = pa.concat_tables(
+                run_parallel(
+                    read_table,
+                    self.scan_files,
+                    schema=self.schema,
+                    filesystem=self._filesystem,
+                    partitioning=self._partitioning,
+                    **kwargs,
+                )
             )
-        )
-        return self._table
+        self._table_files = self.scan_files.copy()
 
-    @property
-    def table(self) -> pa.Table:
+        self.ddb_con.register("pyarrow_table", self._pyarrow_table)
+        return self._pyarrow_table
+
+    # @property
+    def arrow(self) -> pa.Table:
         """
         Returns a PyArrow Table representation of the dataset.
 
         Returns:
             pa.Table: A PyArrow Table representation of the dataset.
         """
-        return self.to_table()
+        # if not hasattr(self, "_pyarrow_table"):
+        return self.to_arrow()
+        # return self._pyarrow_table
 
     def to_duckdb(
         self,
-        filter_expr: str | None = None,
         lazy: bool = True,
-        from_="scan_files",
-    ) -> duckdb.DuckDBPyRelation:
+    ) -> _duckdb.DuckDBPyRelation:
         """
         Converts the dataset to a DuckDBPyRelation object.
 
@@ -835,31 +338,49 @@ class ParquetDataset(ParquetDatasetMetadata):
             from_ (str): The source of the dataset. Can be either "scan_files" or "files". Defaults to "scan_files".
 
         Returns:
-            duckdb.DuckDBPyRelation: A DuckDBPyRelation object representing the dataset.
+            _duckdb.DuckDBPyRelation: A DuckDBPyRelation object representing the dataset.
         """
 
         if lazy:
-            self.to_dataset(filter_expr=filter_expr, from_=from_)
-            return self._ddb.from_arrow(self._dataset)
-        else:
-            self.to_table(filter_expr=filter_expr, from_=from_)
-            return self._ddb.from_arrow(self._table)
+            if sorted(self.files) == sorted(self.scan_files):
+                self._ddb = self.ddb_con.from_arrow(self.arrow_parquet_dataset)
+            else:
+                self._ddb = self.ddb_con.from_arrow(self.arrow_dataset())
 
-    @property
-    def ddb(self) -> duckdb.DuckDBPyRelation:
+        else:
+            self._ddb = self.ddb_con.from_arrow(self.arrow())
+
+        return self._ddb
+
+    def duckdb(self, lazy: bool = True) -> _duckdb.DuckDBPyRelation:
+        """
+        Converts the dataset to a DuckDBPyRelation object.
+
+        Args:
+            filter_expr (str | None): An optional filter expression to apply to the dataset.
+            lazy (bool): If True, the dataset is lazily loaded. If False, the dataset is eagerly loaded.
+            from_ (str): The source of the dataset. Can be either "scan_files" or "files". Defaults to "scan_files".
+
+        Returns:
+            _duckdb.DuckDBPyRelation: A DuckDBPyRelation object representing the dataset.
+        """
+        return self.to_duckdb(lazy=lazy)
+
+    # @property
+    def ddb(self) -> _duckdb.DuckDBPyRelation:
         """
         Converts the dataset to a DuckDBPyRelation object.
 
         Returns:
-            duckdb.DuckDBPyRelation: A DuckDBPyRelation object representing the dataset.
+            _duckdb.DuckDBPyRelation: A DuckDBPyRelation object representing the dataset.
         """
+        # if not hasattr(self, "_ddb"):
         return self.to_duckdb()
+        # return self._ddb
 
     def to_polars(
         self,
-        filter_expr: str | None = None,
         lazy: bool = True,
-        from_="scan_files",
     ) -> _pl.DataFrame:
         """
         Converts the dataset to a Polars DataFrame.
@@ -873,13 +394,27 @@ class ParquetDataset(ParquetDatasetMetadata):
             _pl.DataFrame: A Polars DataFrame representing the dataset.
         """
         if lazy:
-            self.to_dataset(filter_expr=filter_expr, from_=from_)
-            return _pl.scan_pyarrow_dataset(self._dataset)
+            self._pl = _pl.scan_pyarrow_dataset(self.arrow_dataset())
         else:
-            self.to_table(filter_expr=filter_expr, from_=from_)
-            return _pl.from_arrow(self._table)
+            self._pl = _pl.from_arrow(self.arrow())
 
-    @property
+        return self._pl
+
+    def to_pl(self, lazy: bool = True) -> _pl.DataFrame:
+        """
+        Converts the dataset to a Polars DataFrame.
+
+        Args:
+            filter_expr (str | None): An optional filter expression to apply to the dataset.
+            lazy (bool): If True, the dataset is lazily loaded. If False, the dataset is eagerly loaded.
+            from_ (str): The source of the dataset. Can be either "scan_files" or "files". Defaults to "scan_files".
+
+        Returns:
+            _pl.DataFrame: A Polars DataFrame representing the dataset.
+        """
+        return self.to_polars(lazy=lazy)
+
+    # @property
     def pl(self) -> _pl.DataFrame:
         """
         Convert the dataset to a Polars DataFrame.
@@ -887,13 +422,13 @@ class ParquetDataset(ParquetDatasetMetadata):
         Returns:
             _pl.DataFrame: A Polars DataFrame representing the dataset.
         """
+        # if not hasattr(self, "_pl"):
         return self.to_polars()
+        # return self._pl
 
     def to_pandas(
         self,
-        filter_expr: str | None = None,
         lazy: bool = True,
-        from_="scan_files",
     ) -> pd.DataFrame:
         """
         Convert the dataset to a pandas DataFrame.
@@ -905,9 +440,23 @@ class ParquetDataset(ParquetDatasetMetadata):
         Returns:
             pd.DataFrame: A pandas DataFrame containing the dataset.
         """
-        return self.to_duckdb(filter_expr=filter_expr, lazy=lazy, from_=from_).df()
+        self._df = self.to_duckdb(lazy=lazy).df()
+        return self._df
 
-    @property
+    def to_df(self, lazy: bool = True) -> pd.DataFrame:
+        """
+        Convert the dataset to a pandas DataFrame.
+
+        Args:
+            filter_expr (str | None): An optional filter expression to apply to the dataset.
+            lazy (bool): If True, the dataset is lazily loaded. If False, the dataset is eagerly loaded.
+            from_ (str): The source of the dataset. Can be either "scan_files" or "files". Defaults to "scan_files".
+        Returns:
+            pd.DataFrame: A pandas DataFrame containing the dataset.
+        """
+        return self.to_pandas(lazy=lazy)
+
+    # @property
     def df(self) -> pd.DataFrame:
         """
         Returns a pandas DataFrame representation of the dataset.
@@ -915,10 +464,126 @@ class ParquetDataset(ParquetDatasetMetadata):
         Returns:
             pd.DataFrame: A pandas DataFrame representation of the dataset.
         """
+        # if not hasattr(self, "_df"):
         return self.to_pandas()
+        # return self._df
+
+    def sql(self, sql: str) -> _duckdb.DuckDBPyRelation:
+        """
+        Executes an SQL query on the DuckDBPy connection.
+
+        Args:
+            sql (str): The SQL query to be executed.
+
+        Returns:
+            _duckdb.DuckDBPyRelation: The result of the SQL query as a DuckDBPyRelation object.
+        """
+        return self.ddb_con.sql(sql)
+
+    def _filter_duckdb(self, filter_expr: str) -> _duckdb.DuckDBPyRelation:
+        """
+        Filter the DuckDBPyRelation based on a given filter expression.
+
+        Parameters:
+            filter_expr (str): The filter expression to apply.
+
+        Returns:
+            _duckdb.DuckDBPyRelation: The filtered DuckDBPyRelation object.
+        """
+        return self.ddb().filter(filter_expr)
+
+    def _filter_pyarrow_dataset(self, filter_expr: str | pds.Expression) -> pds.Dataset:
+        """
+        Filters the pyarrow dataset based on a filter expression.
+
+        Args:
+            filter_expr (str | pds.Expression): The filter expression to apply. It can be either a string or a pyarrow expression.
+
+        Returns:
+            pds.Dataset: The filtered pyarrow dataset.
+        """
+        if isinstance(filter_expr, str):
+            filter_expr = str2pyarrow_filter(filter_expr, self.schema)
+        return self.arrow_dataset().filter(filter_expr)
+
+    def _filter_pyarrow_parquet_dataset(
+        self, filter_expr: str | pds.Expression
+    ) -> pds.FileSystemDataset:
+        """
+        Filters a PyArrow Parquet dataset based on the provided filter expression.
+
+        Args:
+            filter_expr (str | pds.Expression): The filter expression to be applied to the dataset.
+                It can be either a string representation of a filter expression or a PyArrow Expression object.
+
+        Returns:
+            pds.FileSystemDataset: The filtered PyArrow Parquet dataset.
+        """
+        if isinstance(filter_expr, str):
+            filter_expr = str2pyarrow_filter(filter_expr, self.schema)
+        return self.arrow_parquet_dataset().filter(filter_expr)
+
+    def filter(
+        self, filter_expr: str | pds.Expression, use: str = "pyarrow", on: str = "auto"
+    ) -> pds.FileSystemDataset | pds.Dataset | _duckdb.DuckDBPyRelation:
+        """
+        Filters the dataset based on the given filter expression.
+
+        Args:
+            filter_expr (str | pds.Expression): The filter expression to apply.
+            use (str, optional): The library to use for filtering. Options are "pyarrow" and "duckdb".
+                Defaults to "pyarrow".
+            on (str, optional): The dataset type to filter on. Options are "parquet_dataset", "dataset" or "auto".
+                Defaults to "auto".
+
+        Returns:
+            pds.FileSystemDataset | pds.Dataset | _duckdb.DuckDBPyRelation: The filtered dataset based on the specified parameters.
+        """
+
+        if use == "pyarrow":
+            if on == "auto":
+                if sorted(self.files) == sorted(self.scan_files):
+                    return self._filter_pyarrow_parquet_dataset(filter_expr)
+                else:
+                    return self._filter_pyarrow_dataset(filter_expr)
+            elif on == "parquet_dataset":
+                return self._filter_pyarrow_parquet_dataset(filter_expr)
+            elif on == "dataset":
+                return self._filter_pyarrow_dataset(filter_expr)
+
+        elif use == "duckdb":
+            if on == "parquet_dataset":
+                self.reset_scan()
+                return self._filter_duckdb(filter_expr)
+            else:
+                return self._filter_duckdb(filter_expr)
 
     @property
-    def file_catalog(self) -> _pl.DataFrame:
+    def registered_tables(self) -> list[str]:
+        """
+        Get a list of registered tables.
+
+        Returns:
+            list[str]: A list of table names.
+        """
+        return self.ddb_con.sql("SHOW TABLES").arrow().column("name").to_pylist()
+
+    def reset_scan(self):
+        """
+        Reset the scan of the dataset metadata.
+
+        This function calls the `reset_scan` method of the `pydala_dataset_metadata` object.
+
+        Parameters:
+            self (object): The instance of the class.
+
+        Returns:
+            None
+        """
+        self.pydala_dataset_metadata.reset_scan()
+
+    @property
+    def metadata_table(self) -> pa.Table:
         """
         Returns a Polars DataFrame containing information about the files in the dataset.
 
@@ -927,9 +592,32 @@ class ParquetDataset(ParquetDatasetMetadata):
         Returns:
             _pl.DataFrame: A Pandas DataFrame containing information about the files in the dataset.
         """
-        if not hasattr(self, "_file_catalog"):
-            self.gen_file_catalog()
-        return self._file_catalog
+        return self.pydala_dataset_metadata.metadata_table
+
+    @property
+    def metadata_table_scanned(self) -> pa.Table:
+        """
+        Returns a Polars DataFrame containing information about the filtered files in the dataset.
+
+        Returns:
+            _pl.DataFrame: A Pandas DataFrame containing information about the files in the dataset.
+        """
+        return self.pydala_dataset_metadata._metadata_table_scanned
+
+    @property
+    def scan_files(self) -> list[str]:
+        """
+        Returns a list of files in the dataset.
+
+        Returns:
+            list[str]: A list of files in the dataset.
+        """
+        return sorted(
+            [
+                os.path.join(self._path, f)
+                for f in self.pydala_dataset_metadata.scan_files
+            ]
+        )
 
     def delete_files(self, files: str | list[str] | None = None):
         """
@@ -945,7 +633,24 @@ class ParquetDataset(ParquetDatasetMetadata):
         self,
         df: _pl.DataFrame | _pl.LazyFrame,
         delta_subset: str | list[str] | None = None,
+        use: str = "duckdb",
+        on: str = "auto",
     ):
+        """
+        Generates a delta DataFrame by comparing the input DataFrame with the current
+        state of the Dataset object. The delta DataFrame contains only the rows that
+        have changed since the last scan.
+
+        Args:
+            df: A polars DataFrame or LazyFrame to compare with the current state of the
+                Dataset object.
+            delta_subset: A string or list of strings representing the subset of columns
+                to consider when computing the delta. If None, all columns are used.
+
+        Returns:
+            A polars DataFrame containing the rows that have changed since the last scan.
+        """
+
         if isinstance(df, _pl.LazyFrame):
             df = df.collect()
 
@@ -953,21 +658,29 @@ class ParquetDataset(ParquetDatasetMetadata):
         for col in delta_subset or df.columns:
             f_max = df.select(_pl.col(col).max())[0, 0]
             if isinstance(f_max, str):
-                f_max = f_max.replace("'", "")
+                f_max = f_max.strip("'")
 
             f_min = df.select(_pl.col(col).min())[0, 0]
             if isinstance(f_min, str):
-                f_min = f_min.replace("'", " ")
+                f_min = f_min.strip("'")
+
             filter_expr.append(
                 f"{col}<='{f_max}' AND {col}>='{f_min}'".replace("'None'", "NULL")
             )
 
-        self.scan(" AND ".join(filter_expr))
+        res = self.scan(" AND ".join(filter_expr)).filter(
+            " AND ".join(filter_expr), use=use, on=on
+        )
 
-        df0 = self.pl.collect()
-        self.reset_scan_files()
+        if isinstance(res, _duckdb.DuckDBPyRelation):
+            df0 = res.pl()
+        else:
+            df0 = _pl.from_arrow(res.to_table())
+        self.reset_scan()
+
         if df0.shape[0] > 0:
             return df.delta(df0, subset=delta_subset, eager=True)
+
         return df
 
     def write_to_dataset(
@@ -976,7 +689,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         | _pl.LazyFrame
         | pa.Table
         | pd.DataFrame
-        | duckdb.DuckDBPyConnection,
+        | _duckdb.DuckDBPyConnection,
         base_name: str | None = None,
         mode: str = "append",  # "delta", "overwrite"
         num_rows: int | None = 100_000_000,
@@ -1011,7 +724,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             df = _pl.from_pandas(df)
         elif isinstance(df, pa.Table):
             df = _pl.from_arrow(df)
-        elif isinstance(df, duckdb.DuckDBPyRelation):
+        elif isinstance(df, _duckdb.DuckDBPyRelation):
             df = df.pl()
 
         if mode == "overwrite":
@@ -1116,7 +829,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             None
         """
         if filter_expr is not None:
-            self.scan(filter_expr=filter_expr)
+            self.scan_file_catalog(filter_expr=filter_expr)
             file_catalog = self.file_catalog.filter(
                 _pl.col("file_path").is_in(
                     [os.path.basename(f) for f in self._scan_files]
@@ -1234,7 +947,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             None
         """
         if filter_expr is not None:
-            self.scan(filter_expr=filter_expr)
+            self.scan_file_catalog(filter_expr=filter_expr)
             file_catalog = self.file_catalog.filter(
                 _pl.col("file_path").is_in(
                     [os.path.basename(f) for f in self._scan_files]
