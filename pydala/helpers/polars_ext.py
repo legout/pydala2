@@ -3,6 +3,7 @@ import polars as pl
 
 from .datetime import get_timedelta_str
 from .misc import get_timestamp_column
+from functools import partial
 
 # import string
 
@@ -56,9 +57,7 @@ def unnest_all(df: pl.DataFrame, seperator="_", fields: list[str] | None = None)
     return df
 
 
-def _opt_dtype(s: pl.Series, strict: bool = True) -> pl.Series:
-    # if s.dtype == pl.Utf8():
-    # cast str to numeric
+def _opt_dtype_(s: pl.Series, strict: bool = True) -> pl.Series:
     try:
         if (
             s.str.contains("^[0-9,\.-]{1,}$") | s.is_null() | s.str.contains("^$")
@@ -104,8 +103,6 @@ def _opt_dtype(s: pl.Series, strict: bool = True) -> pl.Series:
         elif s.str.contains("^[T,t]rue|[F,f]alse$").all():
             s = s.str.contains("^[T,t]rue$", strict=True)
 
-        # else:
-        #    s = s.shrink_dtype()
     except Exception as e:
         if stricct:
             e.add_note(
@@ -119,10 +116,18 @@ def _opt_dtype(s: pl.Series, strict: bool = True) -> pl.Series:
 def opt_dtype(
     df: pl.DataFrame, exclude: str | list[str] | None = None, strict: bool = True
 ) -> pl.DataFrame:
+    _opt_dtype_strict = partial(_opt_dtype_, strict=strict)
+    _opt_dtype_not_strict = partial(_opt_dtype_, strict=False)
     return (
-        df.with_columns(pl.all().exclude(exclude).map(_opt_dtype, strict=strict))
+        df.with_columns(
+            pl.all()
+            .exclude(exclude)
+            .map(_opt_dtype_strict if strict else _opt_dtype_not_strict)
+        )
         if exclude is not None
-        else df.with_columns(pl.all().map(_opt_dtype, strict=strict))
+        else df.with_columns(
+            pl.all().map(_opt_dtype_strict if strict else _opt_dtype_not_strict)
+        )
     )
 
 
