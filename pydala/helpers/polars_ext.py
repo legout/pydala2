@@ -56,60 +56,73 @@ def unnest_all(df: pl.DataFrame, seperator="_", fields: list[str] | None = None)
     return df
 
 
-def _opt_dtype(s: pl.Series) -> pl.Series:
+def _opt_dtype(s: pl.Series, strict: bool = True) -> pl.Series:
     # if s.dtype == pl.Utf8():
     # cast str to numeric
-    if (s.str.contains("^[0-9,\.-]{1,}$") | s.is_null() | s.str.contains("^$")).all():
-        s = (
-            s.str.replace_all(",", ".")
-            .str.replace_all("^0$", "+0")
-            .str.strip_chars_start("0")
-            .str.replace_all("\.0*$", "")
-        )
-        if s.dtype == pl.Utf8():
-            s = s.set(s == "-", None)
-            s = s.set(s == "", None)
+    try:
         if (
-            s.str.contains("\.").any()
-            # | s.is_null().any() # null / None is valid in Int
-            # | s.str.contains("^$").any()
-            | s.str.contains("NaN").any()
-        ):
+            s.str.contains("^[0-9,\.-]{1,}$") | s.is_null() | s.str.contains("^$")
+        ).all():
             s = (
-                # s.str.replace("^$", pl.lit("NaN"))
-                s.cast(pl.Float64(), strict=True).shrink_dtype()
+                s.str.replace_all(",", ".")
+                .str.replace_all("^0$", "+0")
+                .str.strip_chars_start("0")
+                .str.replace_all("\.0*$", "")
             )
-        else:
-            if (s.str.lengths() > 0).all():
-                s = s.cast(pl.Int64(), strict=True).shrink_dtype()
-    # cast str to datetime
-    elif (
-        s.str.contains("^\d{4}-\d{2}-\d{2}$")
-        | s.str.contains("^\d{1,2}\/\d{1,2}\/\d{4}$")
-        | s.str.contains("^\d{4}-\d{2}-\d{2}T{0,1}\s{0,1}\d{2}:\d{2}:\d{0,2}$")
-        | s.str.contains("^\d{4}-\d{2}-\d{2}T{0,1}\s{0,1}\d{2}:\d{2}:\d{2}\.\d{1,}$")
-        | s.str.contains(
-            "^\d{4}-\d{2}-\d{2}T{0,1}\s{0,1}\d{2}:\d{2}:\d{2}\.\d{1,}\w{0,1}\+\d{0,2}:\d{0,2}:\d{0,2}$"
-        )
-        | s.is_null()
-        | s.str.contains("^$")
-    ).all() and s.dtype == pl.Utf8():
-        s = pl.Series(name=s.name, values=pd.to_datetime(s)).cast(pl.Datetime("us"))
+            if s.dtype == pl.Utf8():
+                s = s.set(s == "-", None)
+                s = s.set(s == "", None)
+            if (
+                s.str.contains("\.").any()
+                # | s.is_null().any() # null / None is valid in Int
+                # | s.str.contains("^$").any()
+                | s.str.contains("NaN").any()
+            ):
+                s = (
+                    # s.str.replace("^$", pl.lit("NaN"))
+                    s.cast(pl.Float64(), strict=True).shrink_dtype()
+                )
+            else:
+                if (s.str.lengths() > 0).all():
+                    s = s.cast(pl.Int64(), strict=True).shrink_dtype()
+        # cast str to datetime
+        elif (
+            s.str.contains("^\d{4}-\d{2}-\d{2}$")
+            | s.str.contains("^\d{1,2}\/\d{1,2}\/\d{4}$")
+            | s.str.contains("^\d{4}-\d{2}-\d{2}T{0,1}\s{0,1}\d{2}:\d{2}:\d{0,2}$")
+            | s.str.contains(
+                "^\d{4}-\d{2}-\d{2}T{0,1}\s{0,1}\d{2}:\d{2}:\d{2}\.\d{1,}$"
+            )
+            | s.str.contains(
+                "^\d{4}-\d{2}-\d{2}T{0,1}\s{0,1}\d{2}:\d{2}:\d{2}\.\d{1,}\w{0,1}\+\d{0,2}:\d{0,2}:\d{0,2}$"
+            )
+            | s.is_null()
+            | s.str.contains("^$")
+        ).all() and s.dtype == pl.Utf8():
+            s = pl.Series(name=s.name, values=pd.to_datetime(s)).cast(pl.Datetime("us"))
 
-    elif s.str.contains("^[T,t]rue|[F,f]alse$").all():
-        s = s.str.contains("^[T,t]rue$", strict=True)
+        elif s.str.contains("^[T,t]rue|[F,f]alse$").all():
+            s = s.str.contains("^[T,t]rue$", strict=True)
 
-    # else:
-    #    s = s.shrink_dtype()
+        # else:
+        #    s = s.shrink_dtype()
+    except Exception as e:
+        if stricct:
+            e.add_note(
+                "if you were trying to cast Utf8 to temporal dtypes, consider using `strptime` or setting `strict=False`"
+            )
+            raise e
 
     return s
 
 
-def opt_dtype(df: pl.DataFrame, exclude: str | list[str] | None = None) -> pl.DataFrame:
+def opt_dtype(
+    df: pl.DataFrame, exclude: str | list[str] | None = None, strict: bool = True
+) -> pl.DataFrame:
     return (
-        df.with_columns(pl.all().exclude(exclude).map(_opt_dtype))
+        df.with_columns(pl.all().exclude(exclude).map(_opt_dtype, strict=strict))
         if exclude is not None
-        else df.with_columns(pl.all().map(_opt_dtype))
+        else df.with_columns(pl.all().map(_opt_dtype, strict=strict))
     )
 
 
