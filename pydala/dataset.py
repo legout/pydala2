@@ -1,6 +1,5 @@
 import datetime as dt
 import os
-import re
 import uuid
 import tqdm
 
@@ -9,11 +8,10 @@ import duckdb as _duckdb
 import pandas as pd
 import pyarrow as pa
 import pyarrow.dataset as pds
-import pyarrow.fs as pfs
-import pyarrow.parquet as pq
+
 from fsspec import AbstractFileSystem
 
-from .filesystem import clear_cache, get_filesystem
+
 from .helpers.misc import (
     get_timestamp_column,
     humanized_size_to_bytes,
@@ -42,10 +40,13 @@ class ParquetDataset(ParquetDatasetMetadata):
 
         Args:
             path (str): The path to the dataset.
-            filesystem (AbstractFileSystem, optional): The filesystem to use. Defaults to None.
+            filesystem (AbstractFileSystem, optional): The filesystem to use.
+                Defaults to None.
             bucket (str, optional): The bucket to use. Defaults to None.
-            partitioning (str, list[str], optional): The partitioning scheme to use. Defaults to None.
-            cached (bool, optional): Whether to use cached data. Defaults to False.
+            partitioning (str, list[str], optional): The partitioning scheme
+                to use. Defaults to None.
+            cached (bool, optional): Whether to use cached data. Defaults to
+                False.
             **cached_options: Additional options for cached data.
 
         Returns:

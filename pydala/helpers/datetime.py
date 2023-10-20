@@ -115,9 +115,6 @@ def timedelta_from_string(
     return delta.as_timedelta if as_timedelta else delta
 
 
-import re
-
-
 def extract_timezone(timestamp_string):
     """
     Extracts the timezone from a timestamp string.

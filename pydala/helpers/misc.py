@@ -8,7 +8,7 @@ import pyarrow.compute as pc
 import tqdm
 from joblib import Parallel, delayed
 
-from .datetime import extract_timezone, timedelta_from_string, timestamp_from_string
+from .datetime import timestamp_from_string
 
 # from .schema import shrink_large_string, convert_timestamp
 # from .polars_ext import pl

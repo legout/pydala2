@@ -26,6 +26,7 @@ dev = [
     "jupyter-black>=0.3.4",
     # "python-lsp-ruff>=1.5.1",
     # "python-lsp-server[all]>=1.7.4",
+    "flake8>=6.1.0",
 ]
 
 [build-system]

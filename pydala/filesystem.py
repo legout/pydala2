@@ -7,7 +7,6 @@ from fsspec.implementations import dirfs
 
 
 import datetime as dt
-import os
 
 
 import duckdb as ddb
@@ -19,7 +18,7 @@ import pyarrow.dataset as pds
 import pyarrow.parquet as pq
 from fsspec.implementations.dirfs import DirFileSystem
 from .helpers.misc import run_parallel
-from .schema import repair_schema, shrink_large_string, unify_schemas
+from .schema import shrink_large_string
 
 
 def get_new_file_names(src: list[str], dst: list[str]) -> list[str]:
@@ -370,7 +369,7 @@ def _json_to_parquet(
     if sort_by is not None:
         data = data.sort(sort_by)
 
-    if not ".parquet" in dst:
+    if ".parquet" not in dst:
         dst = os.path.join(dst, f"{os.path.basename(src).replace('.json', '.parquet')}")
 
     self.write_parquet(data, dst, **kwargs)
@@ -396,7 +395,7 @@ def _csv_to_parquet(
     if sort_by is not None:
         data = data.sort(sort_by)
 
-    if not ".parquet" in dst:
+    if ".parquet" not in dst:
         dst = os.path.join(dst, f"{os.path.basename(src).replace('.csv', '.parquet')})")
 
     self.write_parquet(data, dst, **kwargs)

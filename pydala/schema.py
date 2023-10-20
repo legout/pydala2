@@ -143,7 +143,7 @@ def _unify_schemas(
         pa.large_utf8(),
     ]
     timestamp_units = ["ns", "us", "ms", "s"]
-    string_dtypes = [pa.string(), pa.utf8(), pa.large_string(), pa.large_utf8()]
+    # string_dtypes = [pa.string(), pa.utf8(), pa.large_string(), pa.large_utf8()]
 
     # check for equal columns and column order
     if schema1.names == schema2.names:
