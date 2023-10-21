@@ -168,6 +168,22 @@ def pyarrow_dataset(
         schema=schema,
         **kwargs,
     )
+    
+def pyarrow_parquet_dataset(
+    self,
+    path: str,
+    schema: pa.Schema | None = None,
+    partitioning: str | list[str] | pds.Partitioning = None,
+    **kwargs,
+) -> pds.FilesystemDataset:
+    return pds.dataset(
+        os.path.join(path, "_metadata"),
+        filesystem=self,
+        partitioning=partitioning,
+        schema=schema,
+        **kwargs,
+    )
+
 
 
 # def pydala_dataset(
