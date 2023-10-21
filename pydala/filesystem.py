@@ -485,36 +485,36 @@ def sync_folder(
         self.cp(new_src, dst)
 
 
-fsspec_filesystem.read_parquet = read_parquet
-fsspec_filesystem.read_parquet_dataset = read_parquet_dataset
-fsspec_filesystem.write_parquet = write_parquet
+AbstractFileSystem.read_parquet = read_parquet
+AbstractFileSystem.read_parquet_dataset = read_parquet_dataset
+AbstractFileSystem.write_parquet = write_parquet
 # DirFileSystem.write_to_parquet_dataset = write_to_pydala_dataset
 DirFileSystem.write_to_dataset = write_to_pyarrow_dataset
-fsspec_filesystem.read_parquet_schema = read_parquet_schema
-fsspec_filesystem.read_parquet_metadata = read_paruet_metadata
+AbstractFileSystem.read_parquet_schema = read_parquet_schema
+AbstractFileSystem.read_parquet_metadata = read_paruet_metadata
 
-fsspec_filesystem.read_csv = read_csv
-fsspec_filesystem.read_csv_dataset = read_csv_dataset
-fsspec_filesystem.write_csv = write_csv
-fsspec_filesystem._csv_to_parquet = _csv_to_parquet
-fsspec_filesystem.csv_to_parquet = csv_to_parquet
+AbstractFileSystem.read_csv = read_csv
+AbstractFileSystem.read_csv_dataset = read_csv_dataset
+AbstractFileSystem.write_csv = write_csv
+AbstractFileSystem._csv_to_parquet = _csv_to_parquet
+AbstractFileSystem.csv_to_parquet = csv_to_parquet
 
-fsspec_filesystem.read_json = read_json
-fsspec_filesystem.read_json_dataset = read_json_dataset
-fsspec_filesystem.write_json = write_json
-fsspec_filesystem._json_to_parquet = _json_to_parquet
-fsspec_filesystem.json_to_parquet = json_to_parquet
+AbstractFileSystem.read_json = read_json
+AbstractFileSystem.read_json_dataset = read_json_dataset
+AbstractFileSystem.write_json = write_json
+AbstractFileSystem._json_to_parquet = _json_to_parquet
+AbstractFileSystem.json_to_parquet = json_to_parquet
 
-fsspec_filesystem.pyarrow_dataset = pyarrow_dataset
-# fsspec_filesystem.pydala_dataset = pydala_dataset
+AbstractFileSystem.pyarrow_dataset = pyarrow_dataset
+# AbstractFileSystem.pydala_dataset = pydala_dataset
 
-fsspec_filesystem.lss = ls
-fsspec_filesystem.ls2 = ls
+AbstractFileSystem.lss = ls
+AbstractFileSystem.ls2 = ls
 
-# fsspec_filesystem.parallel_cp = parallel_cp
-# fsspec_filesystem.parallel_mv = parallel_mv
-# fsspec_filesystem.parallel_rm = parallel_rm
-fsspec_filesystem.sync_folder = sync_folder
+# AbstractFileSystem.parallel_cp = parallel_cp
+# AbstractFileSystem.parallel_mv = parallel_mv
+# AbstractFileSystem.parallel_rm = parallel_rm
+AbstractFileSystem.sync_folder = sync_folder
 
 
 def get_filesystem(
