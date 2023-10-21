@@ -175,7 +175,7 @@ def pyarrow_parquet_dataset(
     schema: pa.Schema | None = None,
     partitioning: str | list[str] | pds.Partitioning = None,
     **kwargs,
-) -> pds.FilesystemDataset:
+) -> pds.FileSystemDataset:
     return pds.dataset(
         os.path.join(path, "_metadata"),
         filesystem=self,
