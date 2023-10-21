@@ -522,7 +522,7 @@ AbstractFileSystem._json_to_parquet = _json_to_parquet
 AbstractFileSystem.json_to_parquet = json_to_parquet
 
 AbstractFileSystem.pyarrow_dataset = pyarrow_dataset
-# AbstractFileSystem.pydala_dataset = pydala_dataset
+AbstractFileSystem.pyarrow_parquet_dataset = pyarrow_parquet_dataset
 
 AbstractFileSystem.lss = ls
 AbstractFileSystem.ls2 = ls
@@ -536,6 +536,13 @@ AbstractFileSystem.sync_folder = sync_folder
 def get_filesystem(
     bucket: str | None = None,
     fs=AbstractFileSystem | None,
+    profile:str|None=None,
+    key: str | None = None,
+    region: str | None = None,
+    endpoint: str | None = None,
+    secret: str | None = None,
+    token: str | None = None,
+    protocol:str|None=None,
     cached: bool = False,
     cache_storage="~/.tmp",
     check_files: bool = False,
@@ -544,8 +551,19 @@ def get_filesystem(
     same_names: bool = False,
     **kwargs,
 ):
-    if fs is None:
+    if all([k is None for k in [fs, profile, key, region, endpoint, secret, token, protocol]]):
         fs = fsspec_filesystem("file")
+        
+    else:
+        fs = fsspec_filesystem(
+            protocol=protocol,
+            profile=profile,
+            key=key,
+            region=region,
+            endpoint=endpoint,
+            secret=secret,
+            token=token,
+        )
 
     if bucket is not None:
         fs = DirFileSystem(path=bucket, fs=fs)
