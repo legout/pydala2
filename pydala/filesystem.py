@@ -294,58 +294,6 @@ def write_to_pyarrow_dataset(
     )
 
 
-# def write_to_pydala_dataset(
-#     self,
-#     data: pl.DataFrame
-#     | pa.Table
-#     | pd.DataFrame
-#     | ddb.DuckDBPyRelation
-#     | list[pl.DataFrame]
-#     | list[pa.Table]
-#     | list[pd.DataFrame]
-#     | list[ddb.DuckDBPyRelation],
-#     path: str,
-#     basename: str | None = None,
-#     concat: bool = True,
-#     partitioning: str | list[str] | pds.Partitioning | None = None,
-#     mode: str = "append",
-#     num_rows: int | None = 100_000_000,
-#     row_group_size: int | None = None,
-#     compression: str = "zstd",
-#     sort_by: str | list[str] | list[tuple[str, str]] | None = None,
-#     distinct: bool = False,
-#     auto_optimize_dtypes: bool = True,
-#     delta_subset: str | list[str] | None = None,
-#     partitioning_columns: str | list[str] | None = None,
-#     **kwargs,
-# ) -> None:
-#     ds = ParquetDataset(path=path, filesystem=self, partitioning=partitioning)
-
-#     if concat:
-#         if isinstance(data, list):
-#             if isinstance(data[0], pl.DataFrame):
-#                 data = pl.concat(data, how="diagonal_relaxed")
-#             elif isinstance(data[0], pa.Table):
-#                 data = pa.concat_tables(data, promote=True)
-#             elif isinstance(data[0], pd.DataFrame):
-#                 data = pd.concat(data, copy=False, ignore_index=True)
-#             elif isinstance(data[0], ddb.DuckDBPyRelation):
-#                 data = pl.concat([dd.pl() for dd in data], how="diagonal_relaxed")
-
-#     ds.write_to_dataset(
-#         df=data,
-#         mode=mode,
-#         base_name=basename,
-#         num_rows=num_rows,
-#         row_group_size=row_group_size,
-#         compression=compression,
-#         sort_by=sort_by,
-#         distinct=distinct,
-#         delta_subset=delta_subset,
-#         partitioning_columns=partitioning_columns,
-#         auto_optimize_dtypes=auto_optimize_dtypes,
-#         **kwargs,
-#     )
 
 
 def _json_to_parquet(
@@ -515,58 +463,6 @@ def ls(
     return path
 
 
-# def parallel_cp(
-#     self,
-#     src: str | list[str],
-#     dst: str,
-#     recursive: bool = False,
-#     maxdepth: int | None = None,
-#     **kwargs,
-# ):
-#     src = self.lss(src, recursive=recursive, maxdepth=maxdepth, files_only=True)
-
-#     backend = kwargs.pop("backend", None) or "threading"
-#     if len(src):
-#         if len(src) == 1:
-#             backend = "sequential"
-
-#         run_parallel(self.cp, src, dst, backend=backend, recursive=recursive, **kwargs)
-
-
-# def parallel_mv(
-#     self,
-#     src: str | list[str],
-#     dst: str,
-#     recursive: bool = False,
-#     maxdepth: int | None = None,
-#     **kwargs,
-# ):
-#     src = self.lss(src, recursive=recursive, maxdepth=maxdepth, files_only=True)
-
-#     backend = kwargs.pop("backend", None) or "threading"
-#     if len(src):
-#         if len(src) == 1:
-#             backend = "sequential"
-
-#         run_parallel(self.mv, src, dst, backend=backend, recursive=recursive, **kwargs)
-
-
-# def parallel_rm(
-#     self,
-#     src: str | list[str],
-#     recursive: bool = False,
-#     maxdepth: int | None = None,
-#     **kwargs,
-# ):
-#     src = self.lss(src, recursive=recursive, maxdepth=maxdepth, files_only=True)
-
-#     backend = kwargs.pop("backend", None) or "threading"
-#     if len(src):
-#         if len(src) == 1:
-#             backend = "sequential"
-
-#         run_parallel(self.rm, src, backend=backend, **kwargs)
-
 
 def sync_folder(
     self, src: str, dst: str, recursive: bool = False, maxdepth: int | None = None
@@ -589,36 +485,36 @@ def sync_folder(
         self.cp(new_src, dst)
 
 
-DirFileSystem.read_parquet = read_parquet
-DirFileSystem.read_parquet_dataset = read_parquet_dataset
-DirFileSystem.write_parquet = write_parquet
+fsspec_filesystem.read_parquet = read_parquet
+fsspec_filesystem.read_parquet_dataset = read_parquet_dataset
+fsspec_filesystem.write_parquet = write_parquet
 # DirFileSystem.write_to_parquet_dataset = write_to_pydala_dataset
 DirFileSystem.write_to_dataset = write_to_pyarrow_dataset
-DirFileSystem.read_parquet_schema = read_parquet_schema
-DirFileSystem.read_parquet_metadata = read_paruet_metadata
+fsspec_filesystem.read_parquet_schema = read_parquet_schema
+fsspec_filesystem.read_parquet_metadata = read_paruet_metadata
 
-DirFileSystem.read_csv = read_csv
-DirFileSystem.read_csv_dataset = read_csv_dataset
-DirFileSystem.write_csv = write_csv
-DirFileSystem._csv_to_parquet = _csv_to_parquet
-DirFileSystem.csv_to_parquet = csv_to_parquet
+fsspec_filesystem.read_csv = read_csv
+fsspec_filesystem.read_csv_dataset = read_csv_dataset
+fsspec_filesystem.write_csv = write_csv
+fsspec_filesystem._csv_to_parquet = _csv_to_parquet
+fsspec_filesystem.csv_to_parquet = csv_to_parquet
 
-DirFileSystem.read_json = read_json
-DirFileSystem.read_json_dataset = read_json_dataset
-DirFileSystem.write_json = write_json
-DirFileSystem._json_to_parquet = _json_to_parquet
-DirFileSystem.json_to_parquet = json_to_parquet
+fsspec_filesystem.read_json = read_json
+fsspec_filesystem.read_json_dataset = read_json_dataset
+fsspec_filesystem.write_json = write_json
+fsspec_filesystem._json_to_parquet = _json_to_parquet
+fsspec_filesystem.json_to_parquet = json_to_parquet
 
-DirFileSystem.pyarrow_dataset = pyarrow_dataset
-# DirFileSystem.pydala_dataset = pydala_dataset
+fsspec_filesystem.pyarrow_dataset = pyarrow_dataset
+# fsspec_filesystem.pydala_dataset = pydala_dataset
 
-DirFileSystem.lss = ls
-DirFileSystem.ls2 = ls
+fsspec_filesystem.lss = ls
+fsspec_filesystem.ls2 = ls
 
-# DirFileSystem.parallel_cp = parallel_cp
-# DirFileSystem.parallel_mv = parallel_mv
-# DirFileSystem.parallel_rm = parallel_rm
-DirFileSystem.sync_folder = sync_folder
+# fsspec_filesystem.parallel_cp = parallel_cp
+# fsspec_filesystem.parallel_mv = parallel_mv
+# fsspec_filesystem.parallel_rm = parallel_rm
+fsspec_filesystem.sync_folder = sync_folder
 
 
 def get_filesystem(
@@ -636,7 +532,7 @@ def get_filesystem(
         fs = fsspec_filesystem("file")
 
     if bucket is not None:
-        fs = dirfs.DirFileSystem(path=bucket, fs=fs)
+        fs = DirFileSystem(path=bucket, fs=fs)
 
     if cached:
         if "~" in cache_storage:
