@@ -148,7 +148,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         """
         Returns True if the dataset has been loaded into memory, False otherwise.
         """
-        return hasattr(self, "pyarrow_parquet_dataset")
+        return hasattr(self, "arrow_parquet_dataset")
 
     @property
     def columns(self) -> list:

@@ -8,7 +8,7 @@ import pyarrow.fs as pfs
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 
-from .filesystem import clear_cache, get_filesystem
+from .filesystem import clear_cache, FileSystem
 from .helpers.misc import get_partitions_from_path, run_parallel
 from .schema import repair_schema, unify_schemas
 
@@ -73,7 +73,7 @@ class ParquetDatasetMetadata:
         self._bucket = bucket
         self._cached = cached
         self._base_filesystem = filesystem
-        self._filesystem = get_filesystem(
+        self._filesystem = FileSystem(
             bucket=bucket, fs=filesystem, cached=cached, **caching_options
         )
         self._caching_options = caching_options

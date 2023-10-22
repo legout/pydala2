@@ -1,7 +1,7 @@
 import os
 
 from fsspec import AbstractFileSystem
-from fsspec import filesystem as fsspec_filesystem
+from fsspec import filesystem 
 from fsspec.implementations import cached as cachedfs
 from fsspec.implementations import dirfs
 
@@ -168,7 +168,8 @@ def pyarrow_dataset(
         schema=schema,
         **kwargs,
     )
-    
+
+
 def pyarrow_parquet_dataset(
     self,
     path: str,
@@ -183,7 +184,6 @@ def pyarrow_parquet_dataset(
         schema=schema,
         **kwargs,
     )
-
 
 
 # def pydala_dataset(
@@ -308,8 +308,6 @@ def write_to_pyarrow_dataset(
         format=format,
         **kwargs,
     )
-
-
 
 
 def _json_to_parquet(
@@ -479,7 +477,6 @@ def ls(
     return path
 
 
-
 def sync_folder(
     self, src: str, dst: str, recursive: bool = False, maxdepth: int | None = None
 ):
@@ -533,16 +530,15 @@ AbstractFileSystem.ls2 = ls
 AbstractFileSystem.sync_folder = sync_folder
 
 
-def get_filesystem(
+def FileSystem(
     bucket: str | None = None,
-    fs=AbstractFileSystem | None,
-    profile:str|None=None,
+    fs:AbstractFileSystem | None=None,
+    profile: str | None = None,
     key: str | None = None,
-    region: str | None = None,
-    endpoint: str | None = None,
+    endpoint_url: str | None = None,
     secret: str | None = None,
     token: str | None = None,
-    protocol:str|None=None,
+    protocol: str | None = None,
     cached: bool = False,
     cache_storage="~/.tmp",
     check_files: bool = False,
@@ -551,16 +547,15 @@ def get_filesystem(
     same_names: bool = False,
     **kwargs,
 ):
-    if all([k is None for k in [fs, profile, key, region, endpoint, secret, token, protocol]]):
-        fs = fsspec_filesystem("file")
-        
-    else:
-        fs = fsspec_filesystem(
+    if all([fs, profile, key, endpoint_url, secret, token, protocol]):
+        fs = filesystem("file")
+
+    elif fs is None:
+        fs = filesystem(
             protocol=protocol,
             profile=profile,
             key=key,
-            region=region,
-            endpoint=endpoint,
+            endpoint_url=endpoint_url,
             secret=secret,
             token=token,
         )
