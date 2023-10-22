@@ -269,10 +269,14 @@ def delta(
     subset: str | list[str] | None = None,
     eager: bool = False,
 ) -> pl.LazyFrame:
+    
     if subset is None:
         subset = df1.columns
+        
     if isinstance(subset, str):
         subset = [subset]
+        
+    columns = sorted(set(df1.columns) & set(df2.columns))
 
     if isinstance(df1, pl.LazyFrame) and isinstance(df2, pl.DataFrame):
         df2 = df2.lazy()
@@ -283,8 +287,8 @@ def delta(
     df = (
         pl.concat(
             [
-                df1.with_columns(pl.lit(1).alias("df")).with_row_count(),
-                df2.select(df1.columns)
+                df1.seletct(columns).with_columns(pl.lit(1).alias("df")).with_row_count(),
+                df2.select(columns)
                 .with_columns(pl.lit(2).alias("df"))
                 .with_row_count(),
             ],
