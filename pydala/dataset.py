@@ -759,6 +759,12 @@ class ParquetDataset(ParquetDatasetMetadata):
 
         if mode == "overwrite":
             del_files = self._files.copy()
+            
+        elif mode == "delta":
+            df = self._gen_delta_df(df=df, delta_subset=delta_subset, on=on, use=use)
+            
+        if df.shape[0]==0:
+            return
 
         if self.partitioning_names:
             partitioning_columns = self.partitioning_names.copy()
@@ -790,23 +796,27 @@ class ParquetDataset(ParquetDatasetMetadata):
         for _df, path in zip(partitions, paths):
             if mode == "delta" and self.has_files:
                 _df = self._gen_delta_df(df=_df, delta_subset=delta_subset, on=on, use=use)
-
-            if _df.shape[0]:
-                if isinstance(_df, _pl.LazyFrame):
-                    _df = _df.collect()
-                metadata = write_table(
-                    df=_df,
-                    path=path,
-                    schema=schema,
-                    filesystem=self._filesystem,
-                    row_group_size=row_group_size,
-                    compression=compression,
-                    sort_by=sort_by,
-                    distinct=distinct,
-                    auto_optimize_dtypes=auto_optimize_dtypes,
-                    **kwargs,
-                )
-                file_metadata.append(metadata)
+            
+            if isinstance(_df, _pl.LazyFrame):
+                _df = _df.collect()
+            
+            if _df.shape[0]==0:
+                return
+        
+                
+            metadata = write_table(
+                df=_df,
+                path=path,
+                schema=schema,
+                filesystem=self._filesystem,
+                row_group_size=row_group_size,
+                compression=compression,
+                sort_by=sort_by,
+                distinct=distinct,
+                auto_optimize_dtypes=auto_optimize_dtypes,
+                **kwargs,
+            )
+            file_metadata.append(metadata)
 
         if len(file_metadata):
             file_metadata = dict(file_metadata)
