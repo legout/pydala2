@@ -269,13 +269,14 @@ def delta(
     subset: str | list[str] | None = None,
     eager: bool = False,
 ) -> pl.LazyFrame:
+    
+    columns = sorted(set(df1.columns) & set(df2.columns))
+    
     if subset is None:
         subset = df1.columns
 
     if isinstance(subset, str):
         subset = [subset]
-
-    columns = sorted(set(df1.columns) & set(df2.columns))
 
     if isinstance(df1, pl.LazyFrame) and isinstance(df2, pl.DataFrame):
         df2 = df2.lazy()
