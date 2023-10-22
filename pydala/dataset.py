@@ -729,7 +729,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         delta_subset: str | list[str] | None = None,
         partitioning_columns: str | list[str] | None = None,
         use: str = "duckdb",
-        on: str = "auto",
+        on: str = "dataset",
         **kwargs,
     ):
         """
@@ -789,7 +789,7 @@ class ParquetDataset(ParquetDatasetMetadata):
 
         for _df, path in zip(partitions, paths):
             if mode == "delta" and self.has_files:
-                _df = self._gen_delta_df(df=_df, delta_subset=delta_subset)
+                _df = self._gen_delta_df(df=_df, delta_subset=delta_subset, on=on, use=use)
 
             if _df.shape[0]:
                 if isinstance(_df, _pl.LazyFrame):
