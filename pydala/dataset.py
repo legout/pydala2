@@ -728,6 +728,8 @@ class ParquetDataset(ParquetDatasetMetadata):
         auto_optimize_dtypes: bool = True,
         delta_subset: str | list[str] | None = None,
         partitioning_columns: str | list[str] | None = None,
+        use: str = "duckdb",
+        on: str = "auto",
         **kwargs,
     ):
         """
