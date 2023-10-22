@@ -139,9 +139,12 @@ class ParquetDataset(ParquetDatasetMetadata):
 
     # @property
     def arrow_parquet_dataset(self) -> pds.FileSystemDataset:
-        if not hasattr(self, "_pyarrow_parquet_dataset"):
-            self.load()
-        return self._pyarrow_parquet_dataset
+        if self.has_files:
+            if not hasattr(self, "_pyarrow_parquet_dataset"):
+                self.load()
+            return self._pyarrow_parquet_dataset
+        
+            
 
     @property
     def is_loaded(self) -> bool:
@@ -188,15 +191,16 @@ class ParquetDataset(ParquetDatasetMetadata):
         Returns:
             pa.Schema: The partitioning schema for the dataset.
         """
-        if not hasattr(self, "_partitioning_schema"):
-            if self.is_loaded:
-                self._partitioning_schema = (
-                    self.arrow_parquet_dataset().partitioning.schema
-                )
-            else:
-                # print(f"No dataset loaded yet. Run {self}.load()")
-                return pa.schema([])
-        return self._partitioning_schema
+        if self.has_files:
+            if not hasattr(self, "_partitioning_schema"):
+                if self.is_loaded:
+                    self._partitioning_schema = (
+                        self.arrow_parquet_dataset().partitioning.schema
+                    )
+                else:
+                    # print(f"No dataset loaded yet. Run {self}.load()")
+                    return pa.schema([])
+            return self._partitioning_schema
 
     @property
     def schema(self) -> pa.Schema:
@@ -204,12 +208,13 @@ class ParquetDataset(ParquetDatasetMetadata):
         Returns the schema of the dataset, which is a unified schema
         of the file schema and partitioning schema (if present).
         """
-        if not hasattr(self, "_schema"):
-            # if self._partitioning is not None and self._partitioning!="ignore":
-            self._schema = pa.unify_schemas(
-                [self.file_schema, self.partitioning_schema]
-            )
-        return self._schema
+        if self.has_files:
+            if not hasattr(self, "_schema"):
+                # if self._partitioning is not None and self._partitioning!="ignore":
+                self._schema = pa.unify_schemas(
+                    [self.file_schema, self.partitioning_schema]
+                )
+            return self._schema
 
     @property
     def partitioning_names(self) -> list:
@@ -223,13 +228,14 @@ class ParquetDataset(ParquetDatasetMetadata):
         Returns:
             A list of partitioning names for the dataset.
         """
-        if not hasattr(self, "_partitioning_names"):
-            if self.is_loaded:
-                self._partitioning_names = self.partitioning_schema.names
-            else:
-                # print(f"No dataset loaded yet. Run {self}.load()")
-                return []
-        return self._partitioning_names
+        if self.has_files:
+            if not hasattr(self, "_partitioning_names"):
+                if self.is_loaded:
+                    self._partitioning_names = self.partitioning_schema.names
+                else:
+                    # print(f"No dataset loaded yet. Run {self}.load()")
+                    return []
+            return self._partitioning_names
 
     def gen_metadata_table(self):
         self.pydala_dataset_metadata.gen_metadata_table(
@@ -250,25 +256,26 @@ class ParquetDataset(ParquetDatasetMetadata):
         Returns:
             pds.Dataset: The PyArrow Dataset object.
         """
-        if hasattr(self, "_pyarrow_dataset"):
-            if sorted(self._pyarrow_dataset.files) == sorted(self.scan_files):
-                return self._pyarrow_dataset
+        if self.has_files:
+            if hasattr(self, "_pyarrow_dataset"):
+                if sorted(self._pyarrow_dataset.files) == sorted(self.scan_files):
+                    return self._pyarrow_dataset
 
-            self._pyarrow_dataset = pds.dataset(
-                self.scan_files,
-                partitioning=self._partitioning,
-                filesystem=self._filesystem,
-            )
-        else:
-            self._pyarrow_dataset = pds.dataset(
-                self.scan_files,
-                partitioning=self._partitioning,
-                filesystem=self._filesystem,
-            )
-        if len(self._pyarrow_dataset.files):
-            self.ddb_con.register("pyarrow_dataset", self._pyarrow_dataset)
+                self._pyarrow_dataset = pds.dataset(
+                    self.scan_files,
+                    partitioning=self._partitioning,
+                    filesystem=self._filesystem,
+                )
+            else:
+                self._pyarrow_dataset = pds.dataset(
+                    self.scan_files,
+                    partitioning=self._partitioning,
+                    filesystem=self._filesystem,
+                )
+            if len(self._pyarrow_dataset.files):
+                self.ddb_con.register("pyarrow_dataset", self._pyarrow_dataset)
 
-        return self._pyarrow_dataset
+            return self._pyarrow_dataset
 
     # @property
     def arrow_dataset(self) -> pds.Dataset:
@@ -510,9 +517,10 @@ class ParquetDataset(ParquetDatasetMetadata):
         Returns:
             pds.Dataset: The filtered pyarrow dataset.
         """
-        if isinstance(filter_expr, str):
-            filter_expr = str2pyarrow_filter(filter_expr, self.schema)
-        return self.arrow_dataset().filter(filter_expr)
+        if self.has_files:
+            if isinstance(filter_expr, str):
+                filter_expr = str2pyarrow_filter(filter_expr, self.schema)
+            return self.arrow_dataset().filter(filter_expr)
 
     def _filter_pyarrow_parquet_dataset(
         self, filter_expr: str | pds.Expression
@@ -527,9 +535,10 @@ class ParquetDataset(ParquetDatasetMetadata):
         Returns:
             pds.FileSystemDataset: The filtered PyArrow Parquet dataset.
         """
-        if isinstance(filter_expr, str):
-            filter_expr = str2pyarrow_filter(filter_expr, self.schema)
-        return self.arrow_parquet_dataset().filter(filter_expr)
+        if self.has_files:
+            if isinstance(filter_expr, str):
+                filter_expr = str2pyarrow_filter(filter_expr, self.schema)
+            return self.arrow_parquet_dataset().filter(filter_expr)
 
     def filter(
         self, filter_expr: str | pds.Expression, use: str = "pyarrow", on: str = "auto"
