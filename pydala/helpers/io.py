@@ -80,7 +80,7 @@ def write_table(
     ts_unit: str = "us",
     sort_schema: bool | list[str] = False,
     use_large_string: bool = False,
-    auto_optimize_dtypes: bool = True,
+    auto_optimize_dtypes: bool = False,
     **kwargs,
 ) -> tuple[str, pq.FileMetaData]:
     """Write pyarrow table to the given file path.
@@ -113,7 +113,7 @@ def write_table(
     )
 
     if auto_optimize_dtypes:
-        df = df.opt_dtype()
+        df = df.opt_dtype(strict=False)
 
     if distinct:
         if isinstance(distinct, str | list):
