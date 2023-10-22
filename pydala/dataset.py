@@ -760,7 +760,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         if mode == "overwrite":
             del_files = self._files.copy()
             
-        elif mode == "delta":
+        elif mode == "delta" and self.has_files:
             df = self._gen_delta_df(df=df, delta_subset=delta_subset, on=on, use=use)
             
         if df.shape[0]==0:
@@ -794,8 +794,6 @@ class ParquetDataset(ParquetDatasetMetadata):
         file_metadata = []
 
         for _df, path in zip(partitions, paths):
-            if mode == "delta" and self.has_files:
-                _df = self._gen_delta_df(df=_df, delta_subset=delta_subset, on=on, use=use)
             
             if isinstance(_df, _pl.LazyFrame):
                 _df = _df.collect()
