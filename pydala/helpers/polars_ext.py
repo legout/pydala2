@@ -108,7 +108,8 @@ def _opt_dtype_(s: pl.Series, strict: bool = True) -> pl.Series:
     except Exception as e:
         if strict:
             e.add_note(
-                "if you were trying to cast Utf8 to temporal dtypes, consider using `strptime` or setting `strict=False`"
+                "if you were trying to cast Utf8 to temporal dtypes, consider using `strptime`"
+                " or setting `strict=False`"
             )
             raise e
 
@@ -269,9 +270,8 @@ def delta(
     subset: str | list[str] | None = None,
     eager: bool = False,
 ) -> pl.LazyFrame:
-    
     columns = sorted(set(df1.columns) & set(df2.columns))
-    
+
     if subset is None:
         subset = df1.columns
 
@@ -305,6 +305,97 @@ def delta(
     return df
 
 
+def partition_by(
+    df: pl.DataFrame | pl.LazyFrame,
+    timestamp_column: str | None = None,
+    columns: str | list[str] | None = None,
+    strftime: str | list[str] | None = None,
+    timedelta: str | list[str] | None = None,
+    num_rows: int | None = None,
+) -> list[tuple[dict, pl.DataFrame | pl.LazyFrame]]:
+    if timestamp_column is None:
+        timestamp_column = get_timestamp_column(df)
+        if len(timestamp_column):
+            timestamp_column = timestamp_column[0]
+
+    if columns is not None:
+        if isinstance(columns, str):
+            columns = [columns]
+        columns_ = columns.copy()
+    else:
+        columns_ = []
+
+    drop_columns = columns_.copy()
+
+    if strftime is not None:
+        if isinstance(strftime, str):
+            strftime = [strftime]
+
+        df = df.with_striftime_columns(
+            timestamp_column=timestamp_column, strftime=strftime
+        )
+        strftime_columns = [
+            f"_strftime_{strftime_.replaace('%', '')}_" for strftime_ in strftime
+        ]
+        columns_ += strftime_columns
+        drop_columns += strftime_columns
+
+    if timedelta:
+        if isinstance(timedelta, str):
+            timedelta = [timedelta]
+
+        df = df.with_duration_columns(
+            timestamp_column=timestamp_column, timedelta=timedelta
+        )
+        timedelta_columns = [f"_timedelta_{timedelta_}_" for timedelta_ in timedelta]
+        columns_ += timedelta_columns
+        drop_columns += timedelta_columns
+
+    if num_rows:
+        df = df.with_row_count_ext(over=columns).with_columns(
+            (pl.col("row_nr") - 1) // num_rows
+        )
+        columns_ += ["row_nr"]
+        drop_columns += ["row_nr"]
+
+    if columns_:
+        datetime_columns = {
+            col: col in [col.lower() for col in columns_]
+            for col in [
+                "year",
+                "month",
+                "week",
+                "yearday",
+                "monthday",
+                "weekday",
+                "strftime",
+            ]
+            if col not in [table_col.lower() for table_col in df.columns]
+        }
+        if len(datetime_columns) and timestamp_column:
+            df = df.with_datepart_columns(
+                timestamp_column=timestamp_column, **datetime_columns
+            )
+
+        if isinstance(df, pl.LazyFrame):
+            df = df.collect()
+
+        columns_ = [col for col in columns_ if col in df.columns]
+
+        partitions = [
+            (p.select(columns_).unique().to_dicts()[0], p.drop(drop_columns))
+            for p in df.partition_by(
+                by=columns_,
+                as_dict=False,
+                maintain_order=True,
+            )
+        ]
+
+        return partitions
+
+    return [({}, df)]
+
+
 pl.DataFrame.unnest_all = unnest_all
 pl.DataFrame.explode_all = explode_all
 pl.DataFrame.opt_dtype = opt_dtype
@@ -313,6 +404,7 @@ pl.DataFrame.with_datepart_columns = with_datepart_columns
 pl.DataFrame.with_duration_columns = with_truncated_columns
 pl.DataFrame.with_striftime_columns = with_strftime_columns
 pl.DataFrame.delta = delta
+pl.DataFrame.partition_by_ext
 
 pl.LazyFrame.unnest_all = unnest_all
 pl.LazyFrame.explode_all = explode_all
@@ -322,3 +414,4 @@ pl.LazyFrame.with_datepart_columns = with_datepart_columns
 pl.LazyFrame.with_duration_columns = with_truncated_columns
 pl.LazyFrame.with_striftime_columns = with_strftime_columns
 pl.LazyFrame.delta = delta
+pl.LazyFrame.partition_by_ext = partition_by

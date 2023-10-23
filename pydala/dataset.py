@@ -1,6 +1,4 @@
-import datetime as dt
 import os
-import uuid
 import tqdm
 
 
@@ -15,11 +13,10 @@ from fsspec import AbstractFileSystem
 from .helpers.misc import (
     get_timestamp_column,
     humanized_size_to_bytes,
-    partition_by,
     run_parallel,
     str2pyarrow_filter,
 )
-from .helpers.io import read_table, write_table
+from .helpers.io import read_table, Writer
 from .helpers.polars_ext import pl as _pl
 
 from .metadata import ParquetDatasetMetadata, PydalaDatasetMetadata
@@ -88,8 +85,8 @@ class ParquetDataset(ParquetDatasetMetadata):
         ts_unit: str = "us",
         tz: str | None = None,
         use_large_string: bool = False,
-        sort: bool = False,
-        format_version: str = "1.0",
+        sort_schema: bool = False,
+        format_version: str = "2.6",
         **kwargs,
     ):
         """
@@ -118,7 +115,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                     ts_unit=ts_unit,
                     tz=tz,
                     use_large_string=use_large_string,
-                    sort=sort,
+                    sort=sort_schema,
                     format_version=format_version,
                     **kwargs,
                 )
@@ -143,8 +140,6 @@ class ParquetDataset(ParquetDatasetMetadata):
             if not hasattr(self, "_pyarrow_parquet_dataset"):
                 self.load()
             return self._pyarrow_parquet_dataset
-        
-            
 
     @property
     def is_loaded(self) -> bool:
@@ -512,7 +507,8 @@ class ParquetDataset(ParquetDatasetMetadata):
         Filters the pyarrow dataset based on a filter expression.
 
         Args:
-            filter_expr (str | pds.Expression): The filter expression to apply. It can be either a string or a pyarrow expression.
+            filter_expr (str | pds.Expression): The filter expression to apply. It can be either a string or a
+                pyarrow expression.
 
         Returns:
             pds.Dataset: The filtered pyarrow dataset.
@@ -554,7 +550,8 @@ class ParquetDataset(ParquetDatasetMetadata):
                 Defaults to "auto".
 
         Returns:
-            pds.FileSystemDataset | pds.Dataset | _duckdb.DuckDBPyRelation: The filtered dataset based on the specified parameters.
+            pds.FileSystemDataset | pds.Dataset | _duckdb.DuckDBPyRelation: The filtered dataset based on the
+                specified parameters.
         """
 
         if use == "pyarrow":
@@ -614,7 +611,8 @@ class ParquetDataset(ParquetDatasetMetadata):
         """
         Returns a Polars DataFrame containing information about the files in the dataset.
 
-        If the file catalog has not yet been generated, this method will call the `gen_file_catalog` method to generate it.
+        If the file catalog has not yet been generated, this method will call the `gen_file_catalog` method to
+            generate it.
 
         Returns:
             _pl.DataFrame: A Pandas DataFrame containing information about the files in the dataset.
@@ -651,12 +649,13 @@ class ParquetDataset(ParquetDatasetMetadata):
         Deletes the specified files from the dataset.
 
         Args:
-            files (str | list[str] | None, optional): The name(s) of the file(s) to delete. If None, all files in the dataset will be deleted. Defaults to None.
+            files (str | list[str] | None, optional): The name(s) of the file(s) to delete. If None,
+                all files in the dataset will be deleted. Defaults to None.
         """
         self._filesystem.rm(files, recursive=True)
         self.load(reload=True)
 
-    def _gen_delta_df(
+    def _get_delta_other_df(
         self,
         df: _pl.DataFrame | _pl.LazyFrame,
         delta_subset: str | list[str] | None = None,
@@ -706,10 +705,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             df0 = _pl.from_arrow(res.to_table())
         self.reset_scan()
 
-        if df0.shape[0] > 0:
-            return df.delta(df0, subset=delta_subset, eager=True)
-
-        return df
+        return df0
 
     def write_to_dataset(
         self,
@@ -724,8 +720,11 @@ class ParquetDataset(ParquetDatasetMetadata):
         row_group_size: int | None = None,
         compression: str = "zstd",
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
-        distinct: bool = False,
-        auto_optimize_dtypes: bool = True,
+        unique: bool | str | list[str] = False,
+        ts_unit: str = "us",
+        tz: str | None = None,
+        remove_tz: bool = False,
+        use_large_string: bool = False,
         delta_subset: str | list[str] | None = None,
         partitioning_columns: str | list[str] | None = None,
         use: str = "duckdb",
@@ -736,13 +735,14 @@ class ParquetDataset(ParquetDatasetMetadata):
         Write a DataFrame to the dataset.
 
         Args:
-            df: A DataFrame to write to the dataset. Can be a polars DataFrame, Arrow Table, Pandas DataFrame, or DuckDBPyConnection.
+            df: A DataFrame to write to the dataset. Can be a polars DataFrame, Arrow Table, Pandas DataFrame,
+                or DuckDBPyConnection.
             mode: The write mode. Can be "append", "delta", or "overwrite".
             num_rows: The number of rows per partition.
             row_group_size: The size of each row group.
             compression: The compression algorithm to use.
             sort_by: The column(s) to sort by.
-            distinct: Whether to write only distinct rows.
+            unique: Whether to write only unique rows.
             delta_subset: The subset of columns to use for delta updates.
             partitioning_columns: The column(s) to partition by.
             **kwargs: Additional arguments to pass to the write_table function.
@@ -750,93 +750,50 @@ class ParquetDataset(ParquetDatasetMetadata):
         Returns:
             None
         """
-        if isinstance(df, pd.DataFrame):
-            df = _pl.from_pandas(df)
-        elif isinstance(df, pa.Table):
-            df = _pl.from_arrow(df)
-        elif isinstance(df, _duckdb.DuckDBPyRelation):
-            df = df.pl()
 
-        if mode == "overwrite":
-            del_files = self._files.copy()
-            
-        elif mode == "delta" and self.has_files:
-            df = self._gen_delta_df(df=df, delta_subset=delta_subset, on=on, use=use)
-            
-        if df.shape[0]==0:
+        if df.shape[0] == 0:
             return
 
         if self.partitioning_names:
             partitioning_columns = self.partitioning_names.copy()
-        if base_name is not None:
-            _partitions = [df]
-            paths = [base_name.split(".")[0] + ".parquet"]
-        else:
-            _partitions = partition_by(
-                df=df, columns=partitioning_columns, num_rows=num_rows
-            )
-            paths = [
-                os.path.join(
-                    self._path,
-                    "/".join(
-                        (
-                            "=".join([k, str(v).lstrip("0")])
-                            for k, v in partition[0].items()
-                            if k != "row_nr"
-                        )
-                    ),
-                    f"data-{dt.datetime.now().strftime('%Y%m%d_%H%M%S%f')[:-3]}-{uuid.uuid4().hex[:16]}.parquet",
-                )
-                for partition in _partitions
-            ]
-        schema = self.file_schema if self.has_files else None
-        partitions = [partition[1] for partition in _partitions]
-        file_metadata = []
 
-        for _df, path in zip(partitions, paths):
-            
-            if isinstance(_df, _pl.LazyFrame):
-                _df = _df.collect()
-            
-            if _df.shape[0]==0:
-                return
-        
-                
-            metadata = write_table(
-                df=_df,
-                path=path,
-                schema=schema,
-                filesystem=self._filesystem,
-                row_group_size=row_group_size,
-                compression=compression,
-                sort_by=sort_by,
-                distinct=distinct,
-                auto_optimize_dtypes=auto_optimize_dtypes,
-                **kwargs,
+        writer = Writer(
+            data=df,
+            path=self._path,
+            filesystem=self._filesystem,
+            schema=self.file_schema,
+        )
+        writer.sort_data(by=sort_by).unique(columns=unique).cast_schema(
+            use_large_string=use_large_string,
+            ts_unit=ts_unit,
+            tz=tz,
+            remove_tz=remove_tz,
+        )
+        if mode == "overwrite":
+            del_files = self.files.copy()
+        elif mode == "delta":
+            other_df = self._get_delta_other_df(
+                writer.data, delta_subset=delta_subset, use=use, on=on
             )
-            file_metadata.append(metadata)
+            writer.delta(other_df=other_df, delta_subset=delta_subset, use=use, on=on)
+
+        file_metadata = (
+            writer.partition_by(columns=partitioning_columns, num_rows=num_rows)
+            .set_path(base_name=base_name)
+            .write(row_group_size=row_group_size, compression=compression, **kwargs)
+        )
 
         if len(file_metadata):
-            file_metadata = dict(file_metadata)
-            for f in file_metadata:
-                file_metadata[f].set_file_path(f.split(self._path)[-1].lstrip("/"))
-
             if hasattr(self, "file_metadata"):
                 self.file_metadata.update(file_metadata)
             else:
                 self.file_metadata = file_metadata
 
-            try:
-                self.load_metadata()
-            except:
-                self.load_metadata(reload=True)
-
-            self.update_metadata_table()
-
         if mode == "overwrite":
             self.delete_files(del_files)
-
-        self.load_metadata()
+            self.load(reload=True)
+        else:
+            self.load(update_metadata=True)
         self.update_metadata_table()
         self.clear_cache()
 
@@ -856,10 +813,14 @@ class ParquetDataset(ParquetDatasetMetadata):
         Args:
             target_size (str | int): The target size of the dataset in bytes or a human-readable string (e.g. '1GB').
             strict (bool, optional): Whether to strictly enforce the target size. Defaults to False.
-            sort_by_timestamp (bool | str, optional): Whether to sort the dataset by timestamp. If True, the dataset will be sorted by the first timestamp column. If a string is provided, the dataset will be sorted by the specified column. Defaults to True.
-            filter_expr (str | None, optional): An optional filter expression to apply to the dataset before optimizing. Defaults to None.
+            sort_by_timestamp (bool | str, optional): Whether to sort the dataset by timestamp. If True, the dataset
+                will be sorted by the first timestamp column. If a string is provided, the dataset will be sorted by
+                the specified column. Defaults to True.
+            filter_expr (str | None, optional): An optional filter expression to apply to the dataset before optimizing.
+                Defaults to None.
             lazy (bool, optional): Whether to lazily load the dataset. Defaults to True.
-            allow_smaller (bool, optional): Whether to allow the dataset to be smaller than the target size. Defaults to False.
+            allow_smaller (bool, optional): Whether to allow the dataset to be smaller than the target size. Defaults
+                to False.
             **kwargs: Additional keyword arguments to pass to `write_to_dataset`.
 
         Raises:

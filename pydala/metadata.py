@@ -104,7 +104,8 @@ class ParquetDatasetMetadata:
         Collects metadata for the specified files and updates the `file_metadata` attribute of the dataset object.
 
         Args:
-            files (list[str] | None): A list of file paths to collect metadata for. If None, metadata will be collected for all files in the dataset.
+            files (list[str] | None): A list of file paths to collect metadata for. If None, metadata will be
+                collected for all files in the dataset.
             **kwargs: Additional keyword arguments to pass to the `collect_metadata` function.
 
         Returns:
@@ -130,9 +131,9 @@ class ParquetDatasetMetadata:
         """
         Updates the metadata for files in the dataset.
 
-        This method reloads the files in the dataset and then updates the metadata for any files that have not yet been
-        processed. If the dataset already has file metadata, this method will only update the metadata for files that have
-        been added since the last time metadata was collected.
+        This method reloads the files in the dataset and then updates the metadata for any files that have
+        not yet been processed. If the dataset already has file metadata, this method will only update the
+        metadata for files that have been added since the last time metadata was collected.
 
         Args:
             **kwargs: Additional keyword arguments to pass to the `collect_file_metadata` method.
@@ -165,8 +166,10 @@ class ParquetDatasetMetadata:
 
         Args:
             format_version (str, optional): The format version to use for the unified schema. Defaults to "1.0".
-            update_file_metadata (bool, optional): Whether to update the file metadata before unifying the schemas. Defaults to True.
-            unify_schema_args (dict, optional): Additional arguments to pass to the `unify_schemas` function. Defaults to {}.
+            update_file_metadata (bool, optional): Whether to update the file metadata before unifying the schemas.
+                Defaults to True.
+            unify_schema_args (dict, optional): Additional arguments to pass to the `unify_schemas` function.
+                Defaults to {}.
             **kwargs: Additional keyword arguments to pass to the `update_file_metadata` and `repair_schema` methods.
 
         Returns:

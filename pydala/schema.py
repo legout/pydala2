@@ -88,7 +88,7 @@ def convert_timestamp(
     return schema
 
 
-def replace_dtype(schema: pa.Schema, field: str, dtype: pa.DataType) -> pa.Schema:
+def replace_field(schema: pa.Schema, field: str, dtype: pa.DataType) -> pa.Schema:
     """Replace the dtype of a field in a pyarrow schema.
 
     Args:
@@ -99,8 +99,86 @@ def replace_dtype(schema: pa.Schema, field: str, dtype: pa.DataType) -> pa.Schem
     Returns:
         pa.Schema: Pyarrow schema with replaced dtype.
     """
-    field_idx = schema.get_field_index(field)
-    return schema.remove(field_idx).insert(field_idx, pa.field(field, dtype))
+    if field in schema.names:
+        field_idx = schema.get_field_index(field)
+        return schema.remove(field_idx).insert(field_idx, pa.field(field, dtype))
+
+
+def append_field(schema: pa.Schema, field: str, dtype: pa.DataType) -> pa.Schema:
+    """
+    Append a new field to the given schema.
+
+    Args:
+        schema (pa.Schema): The schema to append the field to.
+        field (str): The name of the field to append.
+        dtype (pa.DataType): The data type of the field to append.
+
+    Returns:
+        pa.Schema: The updated schema with the new field appended.
+    """
+    if field not in schema.names:
+        return schema.append(pa.field(field, dtype))
+    return schema
+
+
+def modify_field(schema: pa.Schema, field: str, dtype: pa.DataType) -> pa.Schema:
+    """
+    Modify a field in the given schema.
+
+    Args:
+        schema (pa.Schema): The schema to modify the field in.
+        field (str): The name of the field to modify.
+        dtype (pa.DataType): The data type of the field to modify.
+
+    Returns:
+        pa.Schema: The updated schema with the field modified.
+    """
+    if field in schema.names:
+        return replace_field(schema, field, dtype)
+    return append_field(schema, field, dtype)
+
+
+def replace_schema(
+    table: pa.Table,
+    schema: pa.Schema | None = None,
+    field_dtype: dict | None = None,
+    exact: bool = False,
+) -> pa.Table:
+    """
+    Replaces the schema of a given table with a new schema.
+
+    Args:
+        table (pa.Table): The table to replace the schema of.
+        schema (pa.Schema | None): The new schema to replace with. If None, the existing schema is used.
+        field_dtype (dict | None): A dictionary mapping field names to new data types. If provided,
+            the schema will be modified accordingly.
+        exact (bool): If True, only the fields present in the new schema will be kept. If False,
+            missing fields will be added and non-matching fields will be dropped.
+
+    Returns:
+        pa.Table: The table with the replaced schema.
+    """
+    if field_dtype is not None:
+        schema = schema or table.schema
+        for field, dtype in field_dtype.items():
+            schema = modify_field(schema=schema, field=field, dtype=dtype)
+
+    schema = schema or table.schema
+
+    missing_fields = [
+        field for field in schema.names if field not in table.column_names
+    ]
+
+    for field in missing_fields:
+        table = table.append_column(
+            field, pa.array([None] * len(table), type=schema.field(field).type)
+        )
+    if exact:
+        table = table.drop(
+            [field for field in table.column_names if field not in schema.names]
+        )
+
+    return table.cast(schema)
 
 
 def _unify_schemas(

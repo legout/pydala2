@@ -1,6 +1,7 @@
 import polars as pl
-import polars.selectors as cs
 import pyarrow as pa
+import duckdb
+import pandas as pd
 
 # import pyarrow.csv as pc
 # import pyarrow.feather as pf
@@ -8,14 +9,21 @@ import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 from fsspec import filesystem as fsspec_filesystem
 
-from ..schema import unify_schemas
+from ..schema import (
+    replace_schema,
+    shrink_large_string,
+    convert_timestamp,
+)
 from .misc import get_partitions_from_path
+from .polars_ext import pl
+import os
+import datetime as dt
+import uuid
 
 
 def read_table(
     path: str,
     schema: pa.Schema | None = None,
-    # format: str | None = None,
     filesystem: AbstractFileSystem | None = None,
     partitioning: str | list[str] | None = None,
 ) -> pa.Table:
@@ -37,19 +45,7 @@ def read_table(
 
     filesystem.invalidate_cache()
 
-    # format = format or os.path.splitext(path)[-1]
-
-    # if re.sub("\.", "", format) == "parquet":
     table = pq.read_table(pa.BufferReader(filesystem.read_bytes(path)), schema=schema)
-
-    # elif re.sub("\.", "", format) == "csv":
-    #     table = pc.read_csv(pa.BufferReader(filesystem.read_bytes(path)), schema=schema)
-
-    # elif re.sub("\.", "", format) in ["arrow", "ipc", "feather"]:
-    #     table = pf.read_table(
-    #         pa.BufferReader(filesystem.read_bytes(path))
-    #     )  # , schema=schema
-    #     # )
 
     if partitioning is not None:
         partitions = get_partitions_from_path(path, partitioning=partitioning)
@@ -67,20 +63,11 @@ def read_table(
 
 
 def write_table(
-    df: pl.DataFrame,
+    table: pa.Table,
     path: str,
-    schema: pa.Schema | None = None,
-    # format: str | None = None,
     filesystem: AbstractFileSystem | None = None,
     row_group_size: int | None = None,
     compression: str = "zstd",
-    sort_by: str | list[str] | list[tuple[str, str]] | None = None,
-    distinct: bool | str | list[str] = False,
-    tz: str = None,
-    ts_unit: str = "us",
-    sort_schema: bool | list[str] = False,
-    use_large_string: bool = False,
-    auto_optimize_dtypes: bool = False,
     **kwargs,
 ) -> tuple[str, pq.FileMetaData]:
     """Write pyarrow table to the given file path.
@@ -106,48 +93,7 @@ def write_table(
         filesystem = fsspec_filesystem("file")
 
     filesystem.invalidate_cache()
-    # format = format or os.path.splitext(path)[-1]
 
-    df = df.with_columns(cs.by_dtype(pl.Null()).cast(pl.Int32())).unique(
-        maintain_order=True
-    )
-
-    if auto_optimize_dtypes:
-        df = df.opt_dtype(strict=False)
-
-    if distinct:
-        if isinstance(distinct, str | list):
-            df = df.unique(distinct)
-        else:
-            df = df.unique()
-
-    table = df.to_arrow()
-
-    if schema is not None:
-        for col in schema.names:
-            if col not in table.column_names:
-                # print(col)
-                table = table.append_column(col, pa.nulls(table.shape[0]))
-
-        table = table.select(schema.names)
-
-        schema, _ = unify_schemas(
-            [schema, table.schema],
-            use_large_string=use_large_string,
-            ts_unit=ts_unit,
-            tz=tz,
-            sort=sort_schema,
-        )
-
-        table = table.cast(schema)
-
-    if sort_by is not None:
-        if isinstance(sort_by, list):
-            if isinstance(sort_by[0], str):
-                sort_by = [(c, "descending") for c in sort_by]
-        table = table.sort_by(sorting=sort_by)
-
-    # if re.sub("\.", "", format) == "parquet":
     metadata = []
     pq.write_table(
         table,
@@ -159,5 +105,152 @@ def write_table(
         **kwargs,
     )
     metadata = metadata[0]
-
+    # metadata.set_file_path(path)
     return path, metadata
+
+
+class Writer:
+    def __init__(
+        self,
+        data: pa.Table
+        | pl.DataFrame
+        | pl.LazyFrame
+        | pd.DataFrame
+        | duckdb.DuckDBPyRelation,
+        path: str,
+        schema: pa.Schema | None,
+        filesystem: AbstractFileSystem | None = None,
+    ):
+        self.schema = schema
+        self.data = data
+        self.base_path = path
+        self.path = None
+        self.filesystem = filesystem
+
+    def _to_polars(self):
+        if isinstance(self.data, pa.Table):
+            self.data = pl.from_arrow(self.data)
+        elif isinstance(self.data, pd.DataFrame):
+            self.data = pl.from_pandas(self.data)
+        elif isinstance(self.data, duckdb.DuckDBPyRelation):
+            self.data = self.data.pl()
+
+    def _to_arrow(self):
+        if isinstance(self.data, pl.DataFrame):
+            self.data = self.data.to_arrow()
+        elif isinstance(self.data, pl.LazyFrame):
+            self.data = self.data.collect().to_arrow()
+        elif isinstance(self.data, pd.DataFrame):
+            self.data = pa.Table.from_pandas(self.data)
+        elif isinstance(self.data, duckdb.DuckDBPyRelation):
+            self.data = self.data.to_arrow()
+
+    def _set_schema(self):
+        self._to_arrow()
+        self.schema = self.schema or self.data.schema
+
+    def sort_data(self, by: str | list[str] | list[tuple[str, str]] | None = None):
+        if by is not None:
+            self._to_arrow()
+            self.data = self.data.sort_by(by)
+
+    def unique(self, columns: bool | str | list[str] = False):
+        if columns is not None:
+            self._to_polars()
+            if isinstance(columns, bool):
+                columns = None
+            self.data = self.data.unique(columns, maintain_order=True)
+
+    def cast_schema(
+        self,
+        use_large_string: bool = False,
+        tz: str = None,
+        ts_unit: str = None,
+        remove_tz: bool = False,
+    ):
+        self._to_arrow()
+        self._set_schema()
+        self._use_large_string = use_large_string
+        if not use_large_string:
+            self.schema = shrink_large_string(self.schema)
+
+        if tz is not None or ts_unit is not None or remove_tz:
+            self.schema = convert_timestamp(
+                self.schema,
+                tz=tz,
+                ts_unit=ts_unit,
+                remove_tz=remove_tz,
+            )
+
+        self.data = replace_schema(self.data, self.schema)
+
+    def delta(
+        self,
+        other: pl.DataFrame | pl.LazyFrame,
+        subset: str | list[str] | None = None,
+    ):
+        self._to_polars()
+        self.data = self.data.delta(other, subset=subset)
+
+    def partition_by(
+        self,
+        columns: str | list[str] | None = None,
+        num_rows: int | None = None,
+        strftime: str | list[str] | None = None,
+        timedelta: str | list[str] | None = None,
+    ):
+        self._to_polars()
+        self.data = self.data.partition_by_ext(
+            columns=columns,
+            strftime=strftime,
+            timedelta=timedelta,
+            num_rows=num_rows,
+        )
+
+    def set_path(self, base_name: str | None = None):
+        if base_name is None:
+            base_name = f"data-{dt.datetime.now().strftime('%Y%m%d_%H%M%S%f')[:-3]}"
+        self.path = [
+            os.path.join(
+                self.base_path,
+                "/".join(
+                    (
+                        "=".join([k, str(v).lstrip("0")])
+                        for k, v in partition[0].items()
+                        if k != "row_nr"
+                    )
+                ),
+                f"{base_name}-{num}-{uuid.uuid4().hex[:16]}.parquet",
+            )
+            for num, partition in enumerate(self.data)
+        ]
+
+    def write(
+        self, row_group_size: int | None = None, compression: str = "zstd", **kwargs
+    ):
+        if self.path is None:
+            raise ValueError("No path set. Call set_path() first.")
+        if not isinstance(self, list):
+            self._to_arrow()
+            self.data = [self.data]
+        file_metadata = []
+        for path, part in zip(self.path, self.data):
+            part = part[1].to_arrow()
+            if self._use_large_string:
+                part = part.cast(shrink_large_string(part.schema))
+
+            metadata = write_table(
+                table=part,
+                path=path,
+                filesystem=self.filesystem,
+                row_group_size=row_group_size,
+                compression=compression,
+                **kwargs,
+            )
+            file_metadata.append(metadata)
+
+        file_metadata = dict(file_metadata)
+        for f in file_metadata:
+            file_metadata[f].set_file_path(f.split(self.base_path)[-1].lstrip("/"))
+
+        return file_metadata

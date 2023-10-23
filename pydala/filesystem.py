@@ -1,9 +1,8 @@
 import os
 
 from fsspec import AbstractFileSystem
-from fsspec import filesystem 
+from fsspec import filesystem
 from fsspec.implementations import cached as cachedfs
-from fsspec.implementations import dirfs
 
 
 import datetime as dt
@@ -532,7 +531,7 @@ AbstractFileSystem.sync_folder = sync_folder
 
 def FileSystem(
     bucket: str | None = None,
-    fs:AbstractFileSystem | None=None,
+    fs: AbstractFileSystem | None = None,
     profile: str | None = None,
     key: str | None = None,
     endpoint_url: str | None = None,
