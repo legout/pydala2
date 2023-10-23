@@ -796,6 +796,8 @@ class ParquetDataset(ParquetDatasetMetadata):
                 filter_expr.append(
                     f"{col}<='{f_max}' AND {col}>='{f_min}'".replace("'None'", "NULL")
                 )
+        if filter_expr == []:
+            return
 
         res = self.scan(" AND ".join(filter_expr)).filter(
             " AND ".join(filter_expr), use=use, on=on
@@ -886,7 +888,10 @@ class ParquetDataset(ParquetDatasetMetadata):
             other_df = self._get_delta_other_df(
                 writer.data, delta_subset=delta_subset, use=use, on=on
             )
-            writer.delta(other_df=other_df, delta_subset=delta_subset, use=use, on=on)
+            if other_df is not None:
+                writer.delta(
+                    other_df=other_df, delta_subset=delta_subset, use=use, on=on
+                )
 
         writer.partition_by(columns=partitioning_columns, num_rows=num_rows)
         writer.set_path(base_name=base_name)
