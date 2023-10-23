@@ -29,12 +29,12 @@ def str2pyarrow_filter(string: str, schema: pa.Schema):
 
         if pa.types.is_time(type_):
             val = timestamp_from_string(val, exact=True)
-            if isinstance(pdl.DateTime):
+            if isinstance(val, pdl.DateTime):
                 val = val.time()
 
         elif pa.types.is_date(type_):
             val = timestamp_from_string(val, exact=True)
-            if isinstance(pdl.DateTime):
+            if isinstance(val, pdl.DateTime):
                 val = val.date()
 
         elif pa.types.is_timestamp(type_):
