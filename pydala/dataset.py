@@ -162,9 +162,10 @@ class ParquetDataset(ParquetDatasetMetadata):
         Returns:
             list: A list of column names.
         """
-        if not hasattr(self, "_columns"):
-            self._columns = self.schema.names + self.partitioning_names
-        return self._columns
+        if self.has_files:
+            if not hasattr(self, "_columns"):
+                self._columns = self.schema.names + self.partitioning_names
+            return self._columns
 
     @property
     def count_rows(self) -> int:
@@ -883,7 +884,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         )
         if mode == "overwrite":
             del_files = self.files.copy()
-        elif mode == "delta":
+        elif mode == "delta" and self.has_files:
             other_df = self._get_delta_other_df(
                 writer.data, delta_subset=delta_subset, use=use, on=on
             )
