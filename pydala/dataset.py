@@ -695,7 +695,10 @@ class ParquetDataset(ParquetDatasetMetadata):
         Update the metadata table.
 
         This function updates the metadata table by creating a new instance of the `PydalaDatasetMetadata` class
-        if it does not already exist. The `PydalaDatasetMetadata` class is initialized with the `metadata` and `_partitioning` attributes of the current instance. The `gen_metadata_table` method of the `PydalaDatasetMetadata` instance is then called with the `metadata` and `_partitioning` attributes as arguments to generate the metadata table.
+        if it does not already exist. The `PydalaDatasetMetadata` class is initialized with the `metadata` and
+        `_partitioning` attributes of the current instance. The `gen_metadata_table` method of the
+        `PydalaDatasetMetadata` instance is then called with the `metadata` and `_partitioning` attributes as
+        arguments to generate the metadata table.
 
 
         Returns:
@@ -769,7 +772,8 @@ class ParquetDataset(ParquetDatasetMetadata):
 
         Parameters:
             df (_pl.DataFrame | _pl.LazyFrame): The input DataFrame or LazyFrame.
-            delta_subset (str | list[str] | None, optional): Columns to consider for filtering. Default is None, which means all columns are considered.
+            delta_subset (str | list[str] | None, optional): Columns to consider for filtering. Default is None,
+                which means all columns are considered.
             use (str, optional): Specify how to handle filtering conditions. Default is "auto".
             on (str, optional): Specify how to handle filtering conditions. Default is "auto".
 
@@ -834,7 +838,8 @@ class ParquetDataset(ParquetDatasetMetadata):
         Writes the given DataFrame or Table to the dataset.
 
         Args:
-            df (_pl.DataFrame | _pl.LazyFrame | pa.Table | pd.DataFrame | _duckdb.DuckDBPyConnection): The DataFrame or Table to write.
+            df (_pl.DataFrame | _pl.LazyFrame | pa.Table | pd.DataFrame | _duckdb.DuckDBPyConnection): The DataFrame
+                or Table to write.
             base_name (str | None): The base name for the dataset files. Defaults to None.
             mode (str): The write mode. Can be "append", "delta", or "overwrite". Defaults to "append".
             num_rows (int | None): The number of rows per file. Defaults to 100_000_000.
