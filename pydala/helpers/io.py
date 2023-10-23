@@ -248,7 +248,7 @@ class Writer:
             self.schema = convert_timestamp(
                 self.schema,
                 tz=tz,
-                ts_unit=ts_unit,
+                unit=ts_unit,
                 remove_tz=remove_tz,
             )
 
