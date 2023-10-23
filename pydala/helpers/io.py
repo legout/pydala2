@@ -342,7 +342,7 @@ class Writer:
         """
         if self.path is None:
             raise ValueError("No path set. Call set_path() first.")
-        if not isinstance(self, list):
+        if not isinstance(self.data, list):
             self._to_arrow()
             self.data = [self.data]
         file_metadata = []
