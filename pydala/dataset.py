@@ -90,18 +90,18 @@ class ParquetDataset(ParquetDatasetMetadata):
         **kwargs,
     ):
         """
-        Load the dataset.
+        Loads the data from the dataset.
 
         Args:
-            reload (bool, optional): Reload the dataset even if it is already loaded. Defaults to False.
-            update (bool, optional): Update the dataset metadata. Defaults to False.
-            schema (pa.Schema | None, optional): Arrow schema to use for the dataset. Defaults to None.
-            ts_unit (str, optional): Timestamp unit to use for the dataset. Defaults to "us".
-            tz (str | None, optional): Timezone to use for the dataset. Defaults to None.
-            use_large_string (bool, optional): Use large string type for the dataset. Defaults to False.
-            sort (bool, optional): Sort the dataset. Defaults to False.
-            format_version (str, optional): Format version to use for the dataset. Defaults to "1.0".
-            **kwargs: Additional keyword arguments to pass to the update method.
+            update_metadata (bool, optional): Whether to update the metadata. Defaults to False.
+            reload_metadata (bool, optional): Whether to reload the metadata. Defaults to False.
+            schema (pa.Schema | None, optional): The schema of the data. Defaults to None.
+            ts_unit (str, optional): The unit of the timestamp. Defaults to "us".
+            tz (str | None, optional): The timezone. Defaults to None.
+            use_large_string (bool, optional): Whether to use large string. Defaults to False.
+            sort_schema (bool, optional): Whether to sort the schema. Defaults to False.
+            format_version (str, optional): The version of the data format. Defaults to "2.6".
+            **kwargs: Additional keyword arguments.
 
         Returns:
             None
@@ -121,25 +121,31 @@ class ParquetDataset(ParquetDatasetMetadata):
                 )
                 self.update_metadata_table()
 
-            self._pyarrow_parquet_dataset = pds.parquet_dataset(
+            self._arrow_parquet_dataset = pds.parquet_dataset(
                 self.metadata_file,
                 partitioning=self._partitioning,
                 filesystem=self._filesystem,
             )
 
-            if len(self._pyarrow_parquet_dataset.files):
+            if len(self._arrow_parquet_dataset.files):
                 self.ddb_con.register(
-                    "pyarrow_parquet_dataset", self._pyarrow_parquet_dataset
+                    "arrow_parquet_dataset", self._arrow_parquet_dataset
                 )
 
                 self._timestamp_columns = get_timestamp_column(self.pl().head(1))
 
     # @property
     def arrow_parquet_dataset(self) -> pds.FileSystemDataset:
+        """
+        Return the arrow parquet dataset if it exists, otherwise load the dataset and return it.
+
+        Returns:
+            pds.FileSystemDataset: The arrow parquet dataset.
+        """
         if self.has_files:
-            if not hasattr(self, "_pyarrow_parquet_dataset"):
+            if not hasattr(self, "_arrow_parquet_dataset"):
                 self.load()
-            return self._pyarrow_parquet_dataset
+            return self._arrow_parquet_dataset
 
     @property
     def is_loaded(self) -> bool:
@@ -200,8 +206,10 @@ class ParquetDataset(ParquetDatasetMetadata):
     @property
     def schema(self) -> pa.Schema:
         """
-        Returns the schema of the dataset, which is a unified schema
-        of the file schema and partitioning schema (if present).
+        Returns the schema of the data source.
+
+        Returns:
+            pyarrow.Schema: A pyarrow.Schema object representing the schema of the data source.
         """
         if self.has_files:
             if not hasattr(self, "_schema"):
@@ -214,15 +222,12 @@ class ParquetDataset(ParquetDatasetMetadata):
     @property
     def partitioning_names(self) -> list:
         """
-        Returns a list of partitioning names for the dataset.
-
-        If the partitioning names have not been loaded yet, this method will attempt to load them.
-        If the dataset has not been loaded yet, this method will return an empty list and print a message
-        instructing the user to load the dataset first.
+        Returns a list of partitioning names.
 
         Returns:
-            A list of partitioning names for the dataset.
+            list: A list of partitioning names.
         """
+
         if self.has_files:
             if not hasattr(self, "_partitioning_names"):
                 if self.is_loaded:
@@ -233,11 +238,36 @@ class ParquetDataset(ParquetDatasetMetadata):
             return self._partitioning_names
 
     def gen_metadata_table(self):
+        """
+        Generate the metadata table for the dataset.
+
+        This function calls the `gen_metadata_table` method of the `pydala_dataset_metadata` object
+        to generate the metadata table for the dataset. It takes two parameters:
+
+        - `metadata`: The metadata object containing information about the dataset.
+        - `_partitioning`: The partitioning object containing information about the dataset partitioning.
+
+        This function does not return anything.
+
+        Example usage:
+        ```
+        self.gen_metadata_table()
+        ```
+        """
         self.pydala_dataset_metadata.gen_metadata_table(
             self.metadata, self._partitioning
         )
 
     def scan(self, filter_expr: str | None = None) -> ParquetDatasetMetadata:
+        """
+        Scans the Parquet dataset metadata.
+
+        Args:
+            filter_expr (str, optional): An optional filter expression to apply to the metadata.
+
+        Returns:
+            ParquetDatasetMetadata: The ParquetDatasetMetadata object.
+        """
         self.pydala_dataset_metadata.scan(filter_expr=filter_expr)
         return self
 
@@ -245,60 +275,77 @@ class ParquetDataset(ParquetDatasetMetadata):
         self,
     ) -> pds.Dataset:
         """
-        Converts the current Pydala object to a PyArrow Dataset object.
-
+        Converts the current object to an Arrow dataset.
 
         Returns:
-            pds.Dataset: The PyArrow Dataset object.
-        """
-        if self.has_files:
-            if hasattr(self, "_pyarrow_dataset"):
-                if sorted(self._pyarrow_dataset.files) == sorted(self.scan_files):
-                    return self._pyarrow_dataset
+            pds.Dataset: The converted Arrow dataset.
 
-                self._pyarrow_dataset = pds.dataset(
+        """
+
+        if self.has_files:
+            if hasattr(self, "_arrow_dataset"):
+                if sorted(self._arrow_dataset.files) == sorted(self.scan_files):
+                    return self._arrow_dataset
+
+                self._arrow_dataset = pds.dataset(
                     self.scan_files,
                     partitioning=self._partitioning,
                     filesystem=self._filesystem,
                 )
             else:
-                self._pyarrow_dataset = pds.dataset(
+                self._arrow_dataset = pds.dataset(
                     self.scan_files,
                     partitioning=self._partitioning,
                     filesystem=self._filesystem,
                 )
-            if len(self._pyarrow_dataset.files):
-                self.ddb_con.register("pyarrow_dataset", self._pyarrow_dataset)
+            if len(self._arrow_dataset.files):
+                self.ddb_con.register("arrow_dataset", self._arrow_dataset)
 
-            return self._pyarrow_dataset
+            return self._arrow_dataset
 
     # @property
     def arrow_dataset(self) -> pds.Dataset:
         """
-        Returns a PyArrow Dataset object representing the data in this instance.
+        Generates a `pds.Dataset` representation of the object.
+
+        Returns:
+            pds.Dataset: The `pds.Dataset` representation of the object.
         """
-        # if not hasattr(self, "_pyarrow_dataset"):
+
+        # if not hasattr(self, "_arrow_dataset"):
         return self.to_arrow_dataset()
-        # return self._pyarrow_dataset
+        # return self._arrow_dataset
 
     def to_arrow(self, **kwargs) -> pa.Table:
         """
-        Converts the dataset to a PyArrow table by reading the data from disk.
+        Convert the dataset to an Apache Arrow table.
+
+        Args:
+            **kwargs: Additional keyword arguments.
 
         Returns:
-            A PyArrow table containing the data from the dataset.
+            pa.Table: The converted Apache Arrow table.
 
+        Notes:
+            - If the dataset has already been converted to an Apache Arrow table,
+              and the files used to create the table have not changed, the cached
+              table will be returned.
+            - If the dataset has not been converted to an Apache Arrow table, or
+              the files used to create the table have changed, the dataset will be
+              read and converted to an Apache Arrow table. The conversion will be
+              performed in parallel.
         """
-        if hasattr(self, "_pyarrow_table"):
+
+        if hasattr(self, "_arrow_table"):
             if sorted(self._table_files) == sorted(self.scan_files):
-                return self._pyarrow_table
+                return self._arrow_table
 
             else:
-                self._pyarrow_table = pa.concat_tables(
+                self._arrow_table = pa.concat_tables(
                     run_parallel(
                         read_table,
                         self.scan_files,
-                        schema=self.schema,
+                        schema=self.file_schema,
                         filesystem=self._filesystem,
                         partitioning=self._partitioning,
                         **kwargs,
@@ -306,7 +353,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                 )
 
         else:
-            self._pyarrow_table = pa.concat_tables(
+            self._arrow_table = pa.concat_tables(
                 run_parallel(
                     read_table,
                     self.scan_files,
@@ -319,36 +366,36 @@ class ParquetDataset(ParquetDatasetMetadata):
         self._table_files = self.scan_files.copy()
 
         if len(self._table_files):
-            self.ddb_con.register("pyarrow_table", self._pyarrow_table)
+            self.ddb_con.register("arrow_table", self._arrow_table)
 
-        return self._pyarrow_table
+        return self._arrow_table
 
     # @property
     def arrow(self) -> pa.Table:
         """
-        Returns a PyArrow Table representation of the dataset.
+        Converts the object to a PyArrow table and returns it.
+
+        Args:
+            self: The object instance.
 
         Returns:
-            pa.Table: A PyArrow Table representation of the dataset.
+           pa.Table: The PyArrow table.
+
         """
-        # if not hasattr(self, "_pyarrow_table"):
         return self.to_arrow()
-        # return self._pyarrow_table
 
     def to_duckdb(
         self,
         lazy: bool = True,
     ) -> _duckdb.DuckDBPyRelation:
         """
-        Converts the dataset to a DuckDBPyRelation object.
+        Converts the current object to a DuckDBPyRelation object.
 
         Args:
-            filter_expr (str | None): An optional filter expression to apply to the dataset.
-            lazy (bool): If True, the dataset is lazily loaded. If False, the dataset is eagerly loaded.
-            from_ (str): The source of the dataset. Can be either "scan_files" or "files". Defaults to "scan_files".
+            lazy (bool): A boolean indicating whether the conversion should be lazy or not. Default is True.
 
         Returns:
-            _duckdb.DuckDBPyRelation: A DuckDBPyRelation object representing the dataset.
+            DuckDBPyRelation: A DuckDBPyRelation object representing the converted object.
         """
 
         if lazy:
@@ -364,25 +411,26 @@ class ParquetDataset(ParquetDatasetMetadata):
 
     def duckdb(self, lazy: bool = True) -> _duckdb.DuckDBPyRelation:
         """
-        Converts the dataset to a DuckDBPyRelation object.
+        A description of the entire function, its parameters, and its return types.
 
         Args:
-            filter_expr (str | None): An optional filter expression to apply to the dataset.
-            lazy (bool): If True, the dataset is lazily loaded. If False, the dataset is eagerly loaded.
-            from_ (str): The source of the dataset. Can be either "scan_files" or "files". Defaults to "scan_files".
+            lazy (bool): A boolean value indicating if the function should be lazy.
 
         Returns:
-            _duckdb.DuckDBPyRelation: A DuckDBPyRelation object representing the dataset.
+            _duckdb.DuckDBPyRelation: An instance of _duckdb.DuckDBPyRelation.
         """
         return self.to_duckdb(lazy=lazy)
 
     # @property
     def ddb(self) -> _duckdb.DuckDBPyRelation:
         """
-        Converts the dataset to a DuckDBPyRelation object.
+        A description of the entire function, its parameters, and its return types.
+
+        Args:
+            lazy (bool): A boolean value indicating if the function should be lazy.
 
         Returns:
-            _duckdb.DuckDBPyRelation: A DuckDBPyRelation object representing the dataset.
+            _duckdb.DuckDBPyRelation: An instance of _duckdb.DuckDBPyRelation.
         """
         # if not hasattr(self, "_ddb"):
         return self.to_duckdb()
@@ -393,15 +441,14 @@ class ParquetDataset(ParquetDatasetMetadata):
         lazy: bool = True,
     ) -> _pl.DataFrame:
         """
-        Converts the dataset to a Polars DataFrame.
+        Converts the current object to a Polars DataFrame.
 
         Args:
-            filter_expr (str | None): An optional filter expression to apply to the dataset.
-            lazy (bool): If True, the dataset is lazily loaded. If False, the dataset is eagerly loaded.
-            from_ (str): The source of the dataset. Can be either "scan_files" or "files". Defaults to "scan_files".
+            lazy (bool, optional): If set to True, the conversion will be lazy, meaning that
+                the DataFrame will not be materialized immediately. Defaults to True.
 
         Returns:
-            _pl.DataFrame: A Polars DataFrame representing the dataset.
+            _pl.DataFrame: The converted Polars DataFrame.
         """
         if lazy:
             self._pl = _pl.scan_pyarrow_dataset(self.arrow_dataset())
@@ -412,26 +459,27 @@ class ParquetDataset(ParquetDatasetMetadata):
 
     def to_pl(self, lazy: bool = True) -> _pl.DataFrame:
         """
-        Converts the dataset to a Polars DataFrame.
+        Convert the DataFrame to a Polars DataFrame.
 
         Args:
-            filter_expr (str | None): An optional filter expression to apply to the dataset.
-            lazy (bool): If True, the dataset is lazily loaded. If False, the dataset is eagerly loaded.
-            from_ (str): The source of the dataset. Can be either "scan_files" or "files". Defaults to "scan_files".
+            lazy (bool, optional): Whether to perform the conversion lazily. Defaults to True.
 
         Returns:
-            _pl.DataFrame: A Polars DataFrame representing the dataset.
+            _pl.DataFrame: The converted Polars DataFrame.
         """
+
         return self.to_polars(lazy=lazy)
 
     # @property
     def pl(self) -> _pl.DataFrame:
         """
-        Convert the dataset to a Polars DataFrame.
+        Generate a function comment for the given function body.
 
         Returns:
-            _pl.DataFrame: A Polars DataFrame representing the dataset.
+            _pl.DataFrame: The result of calling `to_polars` if `self._pl` does not exist,
+                otherwise returns `self._pl`.
         """
+
         # if not hasattr(self, "_pl"):
         return self.to_polars()
         # return self._pl
@@ -441,60 +489,63 @@ class ParquetDataset(ParquetDatasetMetadata):
         lazy: bool = True,
     ) -> pd.DataFrame:
         """
-        Convert the dataset to a pandas DataFrame.
+        Convert the current object to a pandas DataFrame.
 
         Args:
-            filter_expr (str | None): An optional filter expression to apply to the dataset.
-            lazy (bool): If True, the dataset is lazily loaded. If False, the dataset is eagerly loaded.
-            from_ (str): The source of the dataset. Can be either "scan_files" or "files". Defaults to "scan_files".
+            lazy (bool, optional): Whether to execute the conversion lazily. Defaults to True.
+
         Returns:
-            pd.DataFrame: A pandas DataFrame containing the dataset.
+            pd.DataFrame: The converted pandas DataFrame.
         """
+
         self._df = self.to_duckdb(lazy=lazy).df()
         return self._df
 
     def to_df(self, lazy: bool = True) -> pd.DataFrame:
         """
-        Convert the dataset to a pandas DataFrame.
+        Convert the object to a pandas DataFrame.
 
         Args:
-            filter_expr (str | None): An optional filter expression to apply to the dataset.
-            lazy (bool): If True, the dataset is lazily loaded. If False, the dataset is eagerly loaded.
-            from_ (str): The source of the dataset. Can be either "scan_files" or "files". Defaults to "scan_files".
+            lazy (bool): Whether to perform the conversion lazily. Defaults to True.
+
         Returns:
-            pd.DataFrame: A pandas DataFrame containing the dataset.
+            pd.DataFrame: The converted pandas DataFrame.
         """
+
         return self.to_pandas(lazy=lazy)
 
     # @property
     def df(self) -> pd.DataFrame:
         """
-        Returns a pandas DataFrame representation of the dataset.
+        Returns a pandas DataFrame.
+
 
         Returns:
-            pd.DataFrame: A pandas DataFrame representation of the dataset.
+            pd.DataFrame: The pandas DataFrame.
         """
+
         # if not hasattr(self, "_df"):
         return self.to_pandas()
         # return self._df
 
     def sql(self, sql: str) -> _duckdb.DuckDBPyRelation:
         """
-        Executes an SQL query on the DuckDBPy connection.
+        Executes an SQL query on the DuckDBPyRelation object.
 
         Args:
             sql (str): The SQL query to be executed.
 
         Returns:
-            _duckdb.DuckDBPyRelation: The result of the SQL query as a DuckDBPyRelation object.
+            DuckDBPyRelation: The result of the SQL query execution.
         """
+
         return self.ddb_con.sql(sql)
 
     def _filter_duckdb(self, filter_expr: str) -> _duckdb.DuckDBPyRelation:
         """
         Filter the DuckDBPyRelation based on a given filter expression.
 
-        Parameters:
+        Args:
             filter_expr (str): The filter expression to apply.
 
         Returns:
@@ -502,7 +553,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         """
         return self.ddb().filter(filter_expr)
 
-    def _filter_pyarrow_dataset(self, filter_expr: str | pds.Expression) -> pds.Dataset:
+    def _filter_arrow_dataset(self, filter_expr: str | pds.Expression) -> pds.Dataset:
         """
         Filters the pyarrow dataset based on a filter expression.
 
@@ -518,7 +569,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                 filter_expr = str2pyarrow_filter(filter_expr, self.schema)
             return self.arrow_dataset().filter(filter_expr)
 
-    def _filter_pyarrow_parquet_dataset(
+    def _filter_arrow_parquet_dataset(
         self, filter_expr: str | pds.Expression
     ) -> pds.FileSystemDataset:
         """
@@ -537,33 +588,55 @@ class ParquetDataset(ParquetDatasetMetadata):
             return self.arrow_parquet_dataset().filter(filter_expr)
 
     def filter(
-        self, filter_expr: str | pds.Expression, use: str = "pyarrow", on: str = "auto"
+        self, filter_expr: str | pds.Expression, use: str = "auto", on: str = "auto"
     ) -> pds.FileSystemDataset | pds.Dataset | _duckdb.DuckDBPyRelation:
         """
         Filters the dataset based on the given filter expression.
 
         Args:
             filter_expr (str | pds.Expression): The filter expression to apply.
-            use (str, optional): The library to use for filtering. Options are "pyarrow" and "duckdb".
-                Defaults to "pyarrow".
-            on (str, optional): The dataset type to filter on. Options are "parquet_dataset", "dataset" or "auto".
-                Defaults to "auto".
+            use (str): The engine to use for filtering. Default is "auto".
+            on (str): The type of dataset to filter. Default is "auto".
 
         Returns:
-            pds.FileSystemDataset | pds.Dataset | _duckdb.DuckDBPyRelation: The filtered dataset based on the
-                specified parameters.
+            pds.FileSystemDataset | pds.Dataset | _duckdb.DuckDBPyRelation: The filtered dataset.
+
+        Note:
+            If filtering with PyArrow fails, DuckDB will be used as a fallback.
+
+
         """
 
-        if use == "pyarrow":
+        if use == "auto":
+            try:
+                if on == "auto":
+                    if sorted(self.files) == sorted(self.scan_files):
+                        return self._filter_arrow_parquet_dataset(filter_expr)
+                    else:
+                        return self._filter_arrow_dataset(filter_expr)
+                elif on == "parquet_dataset":
+                    return self._filter_arrow_parquet_dataset(filter_expr)
+                elif on == "dataset":
+                    return self._filter_arrow_dataset(filter_expr)
+            except Exception as e:
+                e.add_note("Note: Filtering with PyArrow failed. Using DuckDB.")
+                print(e)
+                if on == "parquet_dataset":
+                    self.reset_scan()
+                    return self._filter_duckdb(filter_expr)
+                else:
+                    return self._filter_duckdb(filter_expr)
+
+        elif use == "pyarrow":
             if on == "auto":
                 if sorted(self.files) == sorted(self.scan_files):
-                    return self._filter_pyarrow_parquet_dataset(filter_expr)
+                    return self._filter_arrow_parquet_dataset(filter_expr)
                 else:
-                    return self._filter_pyarrow_dataset(filter_expr)
+                    return self._filter_arrow_dataset(filter_expr)
             elif on == "parquet_dataset":
-                return self._filter_pyarrow_parquet_dataset(filter_expr)
+                return self._filter_arrow_parquet_dataset(filter_expr)
             elif on == "dataset":
-                return self._filter_pyarrow_dataset(filter_expr)
+                return self._filter_arrow_dataset(filter_expr)
 
         elif use == "duckdb":
             if on == "parquet_dataset":
@@ -588,7 +661,7 @@ class ParquetDataset(ParquetDatasetMetadata):
 
         This function calls the `reset_scan` method of the `pydala_dataset_metadata` object.
 
-        Parameters:
+        Args:
             self (object): The instance of the class.
 
         Returns:
@@ -596,7 +669,38 @@ class ParquetDataset(ParquetDatasetMetadata):
         """
         self.pydala_dataset_metadata.reset_scan()
 
+    def reset_duckdb(self):
+        """
+        Resets the DuckDB connection and registers the necessary tables and datasets.
+
+        Returns:
+            None
+        """
+        self.ddb_con = _duckdb.connect()
+        if len(self._table_files):
+            self.ddb_con.register("arrow_table", self._arrow_table)
+
+        if hasattr(self, "_arrow_dataset"):
+            if len(self._arrow_dataset.files):
+                self.ddb_con.register("arrow_dataset", self._arrow_dataset)
+
+        if hasattr(self, "_arrow_parquet_dataset"):
+            if len(self._arrow_parquet_dataset.files):
+                self.ddb_con.register(
+                    "arrow_parquet_dataset", self._arrow_parquet_dataset
+                )
+
     def update_metadata_table(self):
+        """
+        Update the metadata table.
+
+        This function updates the metadata table by creating a new instance of the `PydalaDatasetMetadata` class
+        if it does not already exist. The `PydalaDatasetMetadata` class is initialized with the `metadata` and `_partitioning` attributes of the current instance. The `gen_metadata_table` method of the `PydalaDatasetMetadata` instance is then called with the `metadata` and `_partitioning` attributes as arguments to generate the metadata table.
+
+
+        Returns:
+            None
+        """
         if not hasattr(self, "pydala_dataset_metadata"):
             self.pydala_dataset_metadata = PydalaDatasetMetadata(
                 metadata=self.metadata,
@@ -609,13 +713,11 @@ class ParquetDataset(ParquetDatasetMetadata):
     @property
     def metadata_table(self) -> pa.Table:
         """
-        Returns a Polars DataFrame containing information about the files in the dataset.
-
-        If the file catalog has not yet been generated, this method will call the `gen_file_catalog` method to
-            generate it.
+        A description of the entire function, its parameters, and its return types.
 
         Returns:
-            _pl.DataFrame: A Pandas DataFrame containing information about the files in the dataset.
+            pa.Table: A pyarrow Table containing the metadata of the dataset.
+
         """
         return self.pydala_dataset_metadata.metadata_table
 
@@ -659,24 +761,21 @@ class ParquetDataset(ParquetDatasetMetadata):
         self,
         df: _pl.DataFrame | _pl.LazyFrame,
         delta_subset: str | list[str] | None = None,
-        use: str = "duckdb",
+        use: str = "auto",
         on: str = "auto",
     ):
         """
-        Generates a delta DataFrame by comparing the input DataFrame with the current
-        state of the Dataset object. The delta DataFrame contains only the rows that
-        have changed since the last scan.
+        Retrieves a subset of dataset based on the input DataFrame.
 
-        Args:
-            df: A polars DataFrame or LazyFrame to compare with the current state of the
-                Dataset object.
-            delta_subset: A string or list of strings representing the subset of columns
-                to consider when computing the delta. If None, all columns are used.
+        Parameters:
+            df (_pl.DataFrame | _pl.LazyFrame): The input DataFrame or LazyFrame.
+            delta_subset (str | list[str] | None, optional): Columns to consider for filtering. Default is None, which means all columns are considered.
+            use (str, optional): Specify how to handle filtering conditions. Default is "auto".
+            on (str, optional): Specify how to handle filtering conditions. Default is "auto".
 
         Returns:
-            A polars DataFrame containing the rows that have changed since the last scan.
+            _pl.DataFrame: A subset of the input DataFrame that satisfies the filtering conditions.
         """
-
         if isinstance(df, _pl.LazyFrame):
             df = df.collect()
 
@@ -732,20 +831,26 @@ class ParquetDataset(ParquetDatasetMetadata):
         **kwargs,
     ):
         """
-        Write a DataFrame to the dataset.
+        Writes the given DataFrame or Table to the dataset.
 
         Args:
-            df: A DataFrame to write to the dataset. Can be a polars DataFrame, Arrow Table, Pandas DataFrame,
-                or DuckDBPyConnection.
-            mode: The write mode. Can be "append", "delta", or "overwrite".
-            num_rows: The number of rows per partition.
-            row_group_size: The size of each row group.
-            compression: The compression algorithm to use.
-            sort_by: The column(s) to sort by.
-            unique: Whether to write only unique rows.
-            delta_subset: The subset of columns to use for delta updates.
-            partitioning_columns: The column(s) to partition by.
-            **kwargs: Additional arguments to pass to the write_table function.
+            df (_pl.DataFrame | _pl.LazyFrame | pa.Table | pd.DataFrame | _duckdb.DuckDBPyConnection): The DataFrame or Table to write.
+            base_name (str | None): The base name for the dataset files. Defaults to None.
+            mode (str): The write mode. Can be "append", "delta", or "overwrite". Defaults to "append".
+            num_rows (int | None): The number of rows per file. Defaults to 100_000_000.
+            row_group_size (int | None): The row group size for Parquet files. Defaults to None.
+            compression (str): The compression algorithm to use. Defaults to "zstd".
+            sort_by (str | list[str] | list[tuple[str, str]] | None): The column(s) to sort by. Defaults to None.
+            unique (bool | str | list[str]): Whether to make the dataset unique. Defaults to False.
+            ts_unit (str): The unit of the timestamp column. Defaults to "us".
+            tz (str | None): The time zone of the timestamp column. Defaults to None.
+            remove_tz (bool): Whether to remove the time zone from the timestamp column. Defaults to False.
+            use_large_string (bool): Whether to use large string data type. Defaults to False.
+            delta_subset (str | list[str] | None): The subset of columns to use for delta encoding. Defaults to None.
+            partitioning_columns (str | list[str] | None): The column(s) to partition by. Defaults to None.
+            use (str): The backend to use. Defaults to "duckdb".
+            on (str): The object to write on. Defaults to "dataset".
+            **kwargs: Additional keyword arguments to pass to the writer.
 
         Returns:
             None

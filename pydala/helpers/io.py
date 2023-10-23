@@ -70,24 +70,19 @@ def write_table(
     compression: str = "zstd",
     **kwargs,
 ) -> tuple[str, pq.FileMetaData]:
-    """Write pyarrow table to the given file path.
+    """
+    Writes a PyArrow table to Parquet format.
 
     Args:
-        df (pl.DataFrame): Polars DataFrame.
-        path (str): File path.
-        schema (pa.Schema | None, optional): Pyarrow schwma. Defaults to None.
-        filesystem (AbstractFileSystem | None, optional): _description_. Defaults to None.
-        row_group_size (int | None, optional): Row group size of the parquet or arrow
-            file. Defaults to None.
-        compression (str, optional): Compression of the parquet or arrow file. Defaults
-            to "zstd".
-        sort_by (str | list[str] | list[tuple[str,str]] | None, optional): Name of the
-            column to use to sort (ascending) or a list of multiple sorting conditions
-            where each entry is a tuple with column name and sorting order ("ascending"
-            or "descending").  Defaults to None.
-        distinct (bool, optional): Wheter to write a table with distinct rows. When the
-            value is a str or list[str], than only this columns are taken into account.
-            Defaults to false.
+        table (pa.Table): The PyArrow table to write.
+        path (str): The path to write the Parquet file to.
+        filesystem (AbstractFileSystem | None, optional): The filesystem to use for writing the file. Defaults to None.
+        row_group_size (int | None, optional): The size of each row group in the Parquet file. Defaults to None.
+        compression (str, optional): The compression algorithm to use. Defaults to "zstd".
+        **kwargs: Additional keyword arguments to pass to `pq.write_table`.
+
+    Returns:
+        tuple[str, pq.FileMetaData]: A tuple containing the file path and the metadata of the written Parquet file.
     """
     if filesystem is None:
         filesystem = fsspec_filesystem("file")
@@ -121,6 +116,20 @@ class Writer:
         schema: pa.Schema | None,
         filesystem: AbstractFileSystem | None = None,
     ):
+        """
+        Initialize the object with the given data, path, schema, and filesystem.
+
+        Parameters:
+            data (pa.Table | pl.DataFrame | pl.LazyFrame | pd.DataFrame | duckdb.DuckDBPyRelation):
+                The input data, which can be one of the following types: pa.Table, pl.DataFrame, pl.LazyFrame,
+                pd.DataFrame, duckdb.DuckDBPyRelation.
+            path (str): The path of the data.
+            schema (pa.Schema | None): The schema of the data, if available.
+            filesystem (AbstractFileSystem | None, optional): The filesystem to use, defaults to None.
+
+        Returns:
+            None
+        """
         self.schema = schema
         self.data = data
         self.base_path = path
@@ -128,6 +137,14 @@ class Writer:
         self.filesystem = filesystem
 
     def _to_polars(self):
+        """
+        Convert the data attribute to a Polars DataFrame.
+
+        This function checks the type of the data attribute and converts it to a Polars DataFrame if it is not
+        already one.
+        It supports conversion from Arrow tables, Pandas DataFrames, and DuckDBPyRelations.
+
+        """
         if isinstance(self.data, pa.Table):
             self.data = pl.from_arrow(self.data)
         elif isinstance(self.data, pd.DataFrame):
@@ -136,6 +153,12 @@ class Writer:
             self.data = self.data.pl()
 
     def _to_arrow(self):
+        """
+        Convert the data in the DataFrame to Arrow format.
+
+        This method checks the type of the data and converts it to Arrow format accordingly.
+        It supports conversion from Polars DataFrames, Polars LazyFrames, Pandas DataFrames, and DuckDBPyRelations.
+        """
         if isinstance(self.data, pl.DataFrame):
             self.data = self.data.to_arrow()
         elif isinstance(self.data, pl.LazyFrame):
@@ -146,15 +169,48 @@ class Writer:
             self.data = self.data.to_arrow()
 
     def _set_schema(self):
+        """
+        Sets the schema of the DataFrame.
+
+        This private method is called internally to set the schema of the DataFrame. It first converts the DataFrame
+        to an Arrow table using the `_to_arrow()` method. Then, it checks if a schema has already been set for the
+        DataFrame.
+        If not, it assigns the schema of the DataFrame's underlying data to the `schema` attribute.
+
+        """
         self._to_arrow()
         self.schema = self.schema or self.data.schema
 
     def sort_data(self, by: str | list[str] | list[tuple[str, str]] | None = None):
+        """
+        Sorts the data based on the given criteria.
+
+        Args:
+            by (str | list[str] | list[tuple[str, str]] | None): The criteria for sorting the data.
+                - If a single string is provided, the data will be sorted by that column name.
+                - If a list of strings is provided, the data will be sorted by multiple columns in the order they are
+                    listed.
+                - If a list of tuples is provided, each tuple should contain a column name and a sort order
+                    ('ascending' or 'descending').
+            If no criteria is provided, the data will not be sorted.
+
+        """
         if by is not None:
             self._to_arrow()
             self.data = self.data.sort_by(by)
 
     def unique(self, columns: bool | str | list[str] = False):
+        """
+        Generates a unique subset of the DataFrame based on the specified columns.
+
+        Args:
+            columns (bool | str | list[str], optional): The columns to use for determining uniqueness.
+                If set to False, uniqueness is determined based on all columns.
+                If set to a string, uniqueness is determined based on the specified column.
+                If set to a list of strings, uniqueness is determined based on the specified columns.
+                Defaults to False.
+
+        """
         if columns is not None:
             self._to_polars()
             if isinstance(columns, bool):
@@ -168,6 +224,17 @@ class Writer:
         ts_unit: str = None,
         remove_tz: bool = False,
     ):
+        """
+        Casts the schema of the current Table to self.schema.
+
+        Args:
+            use_large_string (bool, optional): Whether to use large string format. Defaults to False.
+            tz (str, optional): Timezone to use for timestamp conversion. Defaults to None.
+            ts_unit (str, optional): Unit to use for timestamp conversion. Defaults to None.
+            remove_tz (bool, optional): Whether to remove the timezone from timestamps. Defaults to False.
+
+
+        """
         self._to_arrow()
         self._set_schema()
         self._use_large_string = use_large_string
@@ -189,6 +256,15 @@ class Writer:
         other: pl.DataFrame | pl.LazyFrame,
         subset: str | list[str] | None = None,
     ):
+        """
+        Computes the difference between the current DataFrame and another DataFrame or LazyFrame.
+
+        Parameters:
+            other (DataFrame | LazyFrame): The DataFrame or LazyFrame to compute the difference with.
+            subset (str | list[str] | None, optional): The column(s) to compute the difference on. If `None`,
+                the difference is computed on all columns. Defaults to `None`.
+
+        """
         self._to_polars()
         self.data = self.data.delta(other, subset=subset)
 
@@ -199,6 +275,21 @@ class Writer:
         strftime: str | list[str] | None = None,
         timedelta: str | list[str] | None = None,
     ):
+        """
+        Partitions the data by the specified columns, number of rows, strftime format, and timedelta.
+
+        Parameters:
+            columns (str | list[str] | None): The column or columns to partition the data by. If None, the data
+                will not be partitioned.
+            num_rows (int | None): The maximum number of rows in each partition. If None, the data will not be
+                partitioned.
+            strftime (str | list[str] | None): The strftime format string or list of format strings to use for
+                partitioning the data by date or time. If None, the data will not be partitioned by date or time.
+            timedelta (str | list[str] | None): The timedelta string or list of timedelta strings to use for
+                partitioning the data by time interval. If None, the data will not be partitioned by time interval.
+
+
+        """
         self._to_polars()
         self.data = self.data.partition_by_ext(
             columns=columns,
@@ -208,6 +299,13 @@ class Writer:
         )
 
     def set_path(self, base_name: str | None = None):
+        """
+        Set the path for the data files.
+
+        Args:
+            base_name (str | None, optional): The base name for the data files. Defaults to None.
+
+        """
         if base_name is None:
             base_name = f"data-{dt.datetime.now().strftime('%Y%m%d_%H%M%S%f')[:-3]}"
         self.path = [
@@ -228,6 +326,17 @@ class Writer:
     def write(
         self, row_group_size: int | None = None, compression: str = "zstd", **kwargs
     ):
+        """
+        Writes the data to Parquet files.
+
+        Args:
+            row_group_size (int | None, optional): The number of rows in each row group. Defaults to None.
+            compression (str, optional): The compression algorithm to use. Defaults to "zstd".
+            **kwargs: Additional keyword arguments to pass to the underlying Parquet writer.
+
+        Returns:
+            dict: A dictionary mapping each file path to its corresponding Parquet metadata.
+        """
         if self.path is None:
             raise ValueError("No path set. Call set_path() first.")
         if not isinstance(self, list):
