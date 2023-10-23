@@ -873,7 +873,9 @@ class ParquetDataset(ParquetDatasetMetadata):
             filesystem=self._filesystem,
             schema=self.file_schema,
         )
-        writer.sort_data(by=sort_by).unique(columns=unique).cast_schema(
+        writer.sort_data(by=sort_by)
+        writer.unique(columns=unique)
+        writer.cast_schema(
             use_large_string=use_large_string,
             ts_unit=ts_unit,
             tz=tz,
@@ -887,10 +889,10 @@ class ParquetDataset(ParquetDatasetMetadata):
             )
             writer.delta(other_df=other_df, delta_subset=delta_subset, use=use, on=on)
 
-        file_metadata = (
-            writer.partition_by(columns=partitioning_columns, num_rows=num_rows)
-            .set_path(base_name=base_name)
-            .write(row_group_size=row_group_size, compression=compression, **kwargs)
+        writer.partition_by(columns=partitioning_columns, num_rows=num_rows)
+        writer.set_path(base_name=base_name)
+        file_metadata = writer.write(
+            row_group_size=row_group_size, compression=compression, **kwargs
         )
 
         if len(file_metadata):

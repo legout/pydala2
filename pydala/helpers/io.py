@@ -197,6 +197,9 @@ class Writer:
         """
         if by is not None:
             self._to_arrow()
+            if isinstance(by, list | tuple):
+                if isinstance(by[0], str):
+                    by = [(col, "ascending") for col, order in by]
             self.data = self.data.sort_by(by)
 
     def unique(self, columns: bool | str | list[str] = False):
