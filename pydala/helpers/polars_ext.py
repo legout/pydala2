@@ -404,7 +404,7 @@ pl.DataFrame.with_datepart_columns = with_datepart_columns
 pl.DataFrame.with_duration_columns = with_truncated_columns
 pl.DataFrame.with_striftime_columns = with_strftime_columns
 pl.DataFrame.delta = delta
-pl.DataFrame.partition_by_ext
+pl.DataFrame.partition_by_ext = partition_by
 
 pl.LazyFrame.unnest_all = unnest_all
 pl.LazyFrame.explode_all = explode_all
