@@ -907,9 +907,9 @@ class ParquetDataset(ParquetDatasetMetadata):
 
         if mode == "overwrite":
             self.delete_files(del_files)
-            self.load(reload=True)
+            self.load(reload=True, verbose=False)
         else:
-            self.load(update_metadata=True)
+            self.load(update_metadata=True, verbose=False)
         self.update_metadata_table()
         self.clear_cache()
 
