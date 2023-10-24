@@ -220,7 +220,7 @@ class Writer:
         if columns is not None:
             self._to_polars()
             self.data = self.data.with_columns(
-                [pl.col(col).cast(pl.Int64()) for col in cs.by_dtype(pl.Null())]
+                pl.col(cs.by_dtype(pl.Null()).cast(pl.Int64()))
             )
             if isinstance(columns, bool):
                 columns = None
