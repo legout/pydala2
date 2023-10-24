@@ -14,7 +14,7 @@ from ..schema import (
     shrink_large_string,
     convert_timestamp,
 )
-from .misc import get_partitions_from_path
+from .misc import get_partitions_from_path, run_parallel
 from .polars_ext import pl
 import os
 import datetime as dt
@@ -345,9 +345,11 @@ class Writer:
         if not isinstance(self.data, list):
             self._to_arrow()
             self.data = [self.data]
-        file_metadata = []
-        for path, part in zip(self.path, self.data):
-            part = part[1].to_arrow()
+        # file_metadata = []
+
+        def _write(path, part):
+            part = part.to_arrow()
+
             if self._use_large_string:
                 part = part.cast(shrink_large_string(part.schema))
 
@@ -359,7 +361,16 @@ class Writer:
                 compression=compression,
                 **kwargs,
             )
-            file_metadata.append(metadata)
+            return metadata
+
+            # file_metadata.append(metadata)
+
+        if len(self.data) == 1:
+            metadata = _write(self.path[0], self.data[0])
+            file_metadata = [metadata]
+
+        else:
+            file_metadata = run_parallel(_write, zip(self.path, self.data))
 
         file_metadata = dict(file_metadata)
         for f in file_metadata:
