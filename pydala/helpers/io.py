@@ -345,51 +345,51 @@ class Writer:
         if not isinstance(self.data, list):
             self._to_arrow()
             self.data = [self.data]
-        # file_metadata = []
 
-        # for path, part in zip(self.path, self.data):
-        #     part = part[1].to_arrow()
-        #     if not self._use_large_string:
-        #         part = part.cast(shrink_large_string(part.schema))
-
-        #     metadata = write_table(
-        #         table=part,
-        #         path=path,
-        #         filesystem=self.filesystem,
-        #         row_group_size=row_group_size,
-        #         compression=compression,
-        #         **kwargs,
-        #     )
-
-        #     file_metadata.append(metadata)
-
-        def _write(path_part, fs):
-            path, part = path_part
+        file_metadata = []
+        for path, part in zip(self.path, self.data):
             part = part[1].to_arrow()
-
             if not self._use_large_string:
                 part = part.cast(shrink_large_string(part.schema))
 
             metadata = write_table(
                 table=part,
                 path=path,
-                filesystem=fs,
+                filesystem=self.filesystem,
                 row_group_size=row_group_size,
                 compression=compression,
                 **kwargs,
             )
-            return metadata
 
-            # file_metadata.append(metadata)
+            file_metadata.append(metadata)
 
-        if len(self.data) == 1:
-            metadata = _write(list(zip(self.path[0], self.data[0])), self.filesystem)
-            file_metadata = [metadata]
+        # def _write(path_part, fs):
+        #     path, part = path_part
+        #     part = part[1].to_arrow()
 
-        else:
-            file_metadata = run_parallel(
-                _write, list(zip(self.path, self.data)), fs=self.filesystem
-            )
+        #     if not self._use_large_string:
+        #         part = part.cast(shrink_large_string(part.schema))
+
+        #     metadata = write_table(
+        #         table=part,
+        #         path=path,
+        #         filesystem=fs,
+        #         row_group_size=row_group_size,
+        #         compression=compression,
+        #         **kwargs,
+        #     )
+        #     return metadata
+
+        #     # file_metadata.append(metadata)
+
+        # if len(self.data) == 1:
+        #     metadata = _write(list(zip(self.path[0], self.data[0])), self.filesystem)
+        #     file_metadata = [metadata]
+
+        # else:
+        #     file_metadata = run_parallel(
+        #         _write, list(zip(self.path, self.data)), fs=self.filesystem
+        #     )
 
         file_metadata = dict(file_metadata)
         for f in file_metadata:
