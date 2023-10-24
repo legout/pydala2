@@ -178,7 +178,7 @@ def replace_schema(
             [field for field in table.column_names if field not in schema.names]
         )
 
-    return table.cast(schema)
+    return table.select(schema.names).cast(schema)
 
 
 def _unify_schemas(

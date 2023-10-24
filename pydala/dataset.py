@@ -909,7 +909,10 @@ class ParquetDataset(ParquetDatasetMetadata):
             self.delete_files(del_files)
             self.load(reload=True, verbose=False)
         else:
-            self.load(update_metadata=True, verbose=False)
+            try:
+                self.load(update_metadata=True, verbose=False)
+            except Exception as e:
+                self.load(reload=True, verbose=False)
         self.update_metadata_table()
         self.clear_cache()
 
