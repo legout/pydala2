@@ -347,7 +347,7 @@ class Writer:
             self.data = [self.data]
         # file_metadata = []
 
-        def _write(path_part):
+        def _write(path_part, fs):
             path, part = path_part
             part = part[1].to_arrow()
 
@@ -357,7 +357,7 @@ class Writer:
             metadata = write_table(
                 table=part,
                 path=path,
-                filesystem=self.filesystem,
+                filesystem=fs,
                 row_group_size=row_group_size,
                 compression=compression,
                 **kwargs,
@@ -367,11 +367,13 @@ class Writer:
             # file_metadata.append(metadata)
 
         if len(self.data) == 1:
-            metadata = _write(zip(self.path[0], self.data[0]))
+            metadata = _write(list(zip(self.path[0], self.data[0])))
             file_metadata = [metadata]
 
         else:
-            file_metadata = run_parallel(_write, zip(self.path, self.data))
+            file_metadata = run_parallel(
+                _write, list(zip(self.path, self.data)), filesystem=self.filesystem
+            )
 
         file_metadata = dict(file_metadata)
         for f in file_metadata:
