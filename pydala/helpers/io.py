@@ -3,8 +3,7 @@ import pyarrow as pa
 import duckdb
 import pandas as pd
 
-# import pyarrow.csv as pc
-# import pyarrow.feather as pf
+import polars.selectors as cs
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 from fsspec import filesystem as fsspec_filesystem
@@ -178,6 +177,10 @@ class Writer:
         If not, it assigns the schema of the DataFrame's underlying data to the `schema` attribute.
 
         """
+        if self.schema is None:
+            self._to_polars()
+            self.data = self.data.opt_dtype()
+
         self._to_arrow()
         self.schema = self.schema or self.data.schema
 
@@ -216,6 +219,9 @@ class Writer:
         """
         if columns is not None:
             self._to_polars()
+            self.data = self.data.with_columns(
+                [pl.col(col).cast(pl.Int64()) for col in self.data.columns]
+            )
             if isinstance(columns, bool):
                 columns = None
             self.data = self.data.unique(columns, maintain_order=True)
