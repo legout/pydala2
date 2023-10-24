@@ -367,12 +367,12 @@ class Writer:
             # file_metadata.append(metadata)
 
         if len(self.data) == 1:
-            metadata = _write(list(zip(self.path[0], self.data[0])))
+            metadata = _write(list(zip(self.path[0], self.data[0])), self.filesystem)
             file_metadata = [metadata]
 
         else:
             file_metadata = run_parallel(
-                _write, list(zip(self.path, self.data)), filesystem=self.filesystem
+                _write, list(zip(self.path, self.data)), fs=self.filesystem
             )
 
         file_metadata = dict(file_metadata)
