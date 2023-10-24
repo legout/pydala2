@@ -367,7 +367,7 @@ class Writer:
             # file_metadata.append(metadata)
 
         if len(self.data) == 1:
-            metadata = _write(self.path[0], self.data[0])
+            metadata = _write(zip(self.path[0], self.data[0]))
             file_metadata = [metadata]
 
         else:
