@@ -219,9 +219,7 @@ class Writer:
         """
         if columns is not None:
             self._to_polars()
-            self.data = self.data.with_columns(
-                pl.col(cs.by_dtype(pl.Null()).cast(pl.Int64()))
-            )
+            self.data = self.data.with_columns(cs.by_dtype(pl.Null().cast(pl.Int64())))
             if isinstance(columns, bool):
                 columns = None
             self.data = self.data.unique(columns, maintain_order=True)
