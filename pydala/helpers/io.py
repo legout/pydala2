@@ -348,7 +348,7 @@ class Writer:
         # file_metadata = []
 
         def _write(path, part):
-            part = part.to_arrow()
+            part = part[1].to_arrow()
 
             if self._use_large_string:
                 part = part.cast(shrink_large_string(part.schema))
