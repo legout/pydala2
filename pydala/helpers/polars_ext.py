@@ -379,13 +379,6 @@ def partition_by(
         columns_ += timedelta_columns
         drop_columns += timedelta_columns
 
-    if num_rows is not None:
-        df = df.with_row_count_ext(over=columns).with_columns(
-            (pl.col("row_nr") - 1) // num_rows
-        )
-        columns_ += ["row_nr"]
-        drop_columns += ["row_nr"]
-
     if columns_:
         datetime_columns = {
             col: col in [col.lower() for col in columns_]
@@ -410,6 +403,14 @@ def partition_by(
 
         columns_ = [col for col in columns_ if col in df.columns]
 
+    if num_rows is not None:
+        df = df.with_row_count_ext(over=columns_).with_columns(
+            (pl.col("row_nr") - 1) // num_rows
+        )
+        columns_ += ["row_nr"]
+        drop_columns += ["row_nr"]
+
+    if columns_:
         partitions = [
             (p.select(columns_).unique().to_dicts()[0], p.drop(drop_columns))
             for p in df.partition_by(
