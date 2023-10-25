@@ -13,7 +13,7 @@ from ..schema import (
     shrink_large_string,
     convert_timestamp,
 )
-from .misc import get_partitions_from_path, run_parallel
+from .misc import get_partitions_from_path, run_parallel, get_timestamp_column
 from .polars_ext import pl
 import os
 import datetime as dt

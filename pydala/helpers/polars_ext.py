@@ -143,10 +143,20 @@ def explode_all(df: pl.DataFrame | pl.LazyFrame):
 
 def with_strftime_columns(
     df: pl.DataFrame | pl.LazyFrame,
-    timestamp_column: str,
     strftime: str | list[str],
+    timestamp_column: str = "auto",
     column_names: str | list[str] | None = None,
 ):
+    if timestamp_column is None or timestamp_column == "auto":
+        timestamp_column = get_timestamp_column(df)
+        if len(timestamp_column):
+            timestamp_column = timestamp_column[0]
+
+        if timestamp_column is None:
+            raise ValueError(
+                "timestamp_column is not specified nor found in the dataframe"
+            )
+
     if isinstance(strftime, str):
         strftime = [strftime]
     if isinstance(column_names, str):
@@ -167,33 +177,44 @@ def with_strftime_columns(
 
 def with_truncated_columns(
     df: pl.DataFrame | pl.LazyFrame,
-    timestamp_column: str,
-    truncate: str | list[str],
+    truncate_by: str | list[str],
+    timestamp_column: str = "auto",
     column_names: str | list[str] | None = None,
 ):
-    if isinstance(truncate, str):
-        truncate = [truncate]
+    if timestamp_column is None or timestamp_column == "auto":
+        timestamp_column = get_timestamp_column(df)
+        if len(timestamp_column):
+            timestamp_column = timestamp_column[0]
+
+        if timestamp_column is None:
+            raise ValueError(
+                "timestamp_column is not specified nor found in the dataframe"
+            )
+    if isinstance(truncate_by, str):
+        truncate_by = [truncate_by]
 
     if isinstance(column_names, str):
         column_names = [column_names]
 
     if column_names is None:
         column_names = [
-            f"_truncated_{truncate_.replace(' ', '_')}_" for truncate_ in truncate
+            f"_truncated_{truncate_.replace(' ', '_')}_" for truncate_ in truncate_by
         ]
 
-    truncate = [get_timedelta_str(truncate_, to="polars") for truncate_ in truncate]
+    truncate_by = [
+        get_timedelta_str(truncate_, to="polars") for truncate_ in truncate_by
+    ]
     return df.with_columns(
         [
             pl.col(timestamp_column).dt.truncate(truncate_).alias(column_name)
-            for truncate_, column_name in zip(truncate, column_names)
+            for truncate_, column_name in zip(truncate_by, column_names)
         ]
     )
 
 
 def with_datepart_columns(
     df: pl.DataFrame | pl.LazyFrame,
-    timestamp_column: str | None = None,
+    timestamp_column: str = "auto",
     year: bool = False,
     month: bool = False,
     week: bool = False,
@@ -202,8 +223,15 @@ def with_datepart_columns(
     weekday: bool = False,
     strftime: str | None = None,
 ):
-    if not timestamp_column:
+    if timestamp_column is None or timestamp_column == "auto":
         timestamp_column = get_timestamp_column(df)
+        if len(timestamp_column):
+            timestamp_column = timestamp_column[0]
+
+        if timestamp_column is None:
+            raise ValueError(
+                "timestamp_column is not specified nor found in the dataframe"
+            )
 
     if strftime:
         if isinstance(strftime, str):
@@ -340,7 +368,7 @@ def partition_by(
         columns_ += strftime_columns
         drop_columns += strftime_columns
 
-    if timedelta:
+    if timedelta is not None:
         if isinstance(timedelta, str):
             timedelta = [timedelta]
 
@@ -351,7 +379,7 @@ def partition_by(
         columns_ += timedelta_columns
         drop_columns += timedelta_columns
 
-    if num_rows:
+    if num_rows is not None:
         df = df.with_row_count_ext(over=columns).with_columns(
             (pl.col("row_nr") - 1) // num_rows
         )
@@ -372,7 +400,7 @@ def partition_by(
             ]
             if col not in [table_col.lower() for table_col in df.columns]
         }
-        if len(datetime_columns) and timestamp_column:
+        if len(datetime_columns):
             df = df.with_datepart_columns(
                 timestamp_column=timestamp_column, **datetime_columns
             )

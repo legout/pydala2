@@ -912,6 +912,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             try:
                 self.load(update_metadata=True, verbose=False)
             except Exception as e:
+                _ = e
                 self.load(reload=True, verbose=False)
         self.update_metadata_table()
         self.clear_cache()
