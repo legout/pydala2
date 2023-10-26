@@ -894,6 +894,10 @@ class ParquetDataset(ParquetDatasetMetadata):
             if other_df is not None:
                 writer.delta(other=other_df, subset=delta_subset)
             print("delta", writer.data.shape)
+        if writer.data.shape[0] == 0:
+            print("No new data to write.")
+            return
+
         writer.partition_by(columns=partitioning_columns, num_rows=num_rows)
         writer.set_path(base_name=base_name)
         file_metadata = writer.write(
