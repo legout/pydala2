@@ -1,24 +1,20 @@
 import os
-import tqdm
-
 
 import duckdb as _duckdb
 import pandas as pd
 import pyarrow as pa
 import pyarrow.dataset as pds
-
+import tqdm
 from fsspec import AbstractFileSystem
 
-
+from .helpers.io import Writer, read_table
 from .helpers.misc import (
     get_timestamp_column,
     humanized_size_to_bytes,
     run_parallel,
     str2pyarrow_filter,
 )
-from .helpers.io import read_table, Writer
 from .helpers.polars_ext import pl as _pl
-
 from .metadata import ParquetDatasetMetadata, PydalaDatasetMetadata
 
 
@@ -887,7 +883,9 @@ class ParquetDataset(ParquetDatasetMetadata):
             data=df,
             path=self._path,
             filesystem=self._filesystem,
-            schema=self.file_schema,
+            schema=self.schema
+            if sorted(df.columns) == sorted(self.schema.names)
+            else self.file_schema,
         )
         writer.sort_data(by=sort_by)
         writer.unique(columns=unique)
