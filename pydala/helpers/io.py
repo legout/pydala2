@@ -13,7 +13,7 @@ from ..schema import (
     shrink_large_string,
     convert_timestamp,
 )
-from .misc import get_partitions_from_path, run_parallel, get_timestamp_column
+from .misc import get_partitions_from_path, run_parallel
 from .polars_ext import pl
 import os
 import datetime as dt
@@ -315,6 +315,7 @@ class Writer:
         """
         if base_name is None:
             base_name = f"data-{dt.datetime.now().strftime('%Y%m%d_%H%M%S%f')[:-3]}"
+
         self.path = [
             os.path.join(
                 self.base_path,
