@@ -800,14 +800,14 @@ class ParquetDataset(ParquetDatasetMetadata):
         if filter_expr == []:
             return _pl.DataFrame(schema=df.schema)
 
-        if use != "parquet_dataset":
+        if on != "parquet_dataset":
             self.scan(" AND ".join(filter_expr))
 
             if len(self.scan_files):
                 res = self.filter(" AND ".join(filter_expr), use=use, on=on)
             else:
                 res = self.filter(
-                    " AND ".join(filter_expr), use="parquet_dataset", on=on
+                    " AND ".join(filter_expr), on="parquet_dataset", use=use
                 )
 
         else:
@@ -846,8 +846,8 @@ class ParquetDataset(ParquetDatasetMetadata):
         delta_subset: str | list[str] | None = None,
         delta_other_df_filter_columns: str | list[str] | None = None,
         partitioning_columns: str | list[str] | None = None,
-        use: str = "duckdb",
-        on: str = "dataset",
+        use: str = "pyarrow",
+        on: str = "parquet_dataset",
         **kwargs,
     ):
         """
