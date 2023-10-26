@@ -57,7 +57,7 @@ def unnest_all(df: pl.DataFrame, seperator="_", fields: list[str] | None = None)
     return df
 
 
-def _opt_dtype_(s: pl.Series, strict: bool = True) -> pl.Series:
+def _opt_dtype(s: pl.Series, strict: bool = True) -> pl.Series:
     try:
         if (
             s.str.contains("^[0-9,\.-]{1,}$") | s.is_null() | s.str.contains("^$")
@@ -119,8 +119,8 @@ def _opt_dtype_(s: pl.Series, strict: bool = True) -> pl.Series:
 def opt_dtype(
     df: pl.DataFrame, exclude: str | list[str] | None = None, strict: bool = True
 ) -> pl.DataFrame:
-    _opt_dtype_strict = partial(_opt_dtype_, strict=strict)
-    _opt_dtype_not_strict = partial(_opt_dtype_, strict=False)
+    _opt_dtype_strict = partial(_opt_dtype, strict=strict)
+    _opt_dtype_not_strict = partial(_opt_dtype, strict=False)
     return (
         df.with_columns(
             pl.all()
