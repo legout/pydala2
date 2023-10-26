@@ -885,14 +885,15 @@ class ParquetDataset(ParquetDatasetMetadata):
         if mode == "overwrite":
             del_files = self.files.copy()
         elif mode == "delta" and self.has_files:
+            print("Mode: delta")
+            writer._to_polars()
             other_df = self._get_delta_other_df(
                 writer.data, delta_subset=delta_subset, use=use, on=on
             )
+            print("other_df", other_df.shape)
             if other_df is not None:
-                writer.delta(
-                    other_df=other_df, delta_subset=delta_subset, use=use, on=on
-                )
-
+                writer.delta(other=other_df, subset=delta_subset)
+            print("delta", writer.data.shape)
         writer.partition_by(columns=partitioning_columns, num_rows=num_rows)
         writer.set_path(base_name=base_name)
         file_metadata = writer.write(
