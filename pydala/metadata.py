@@ -540,7 +540,7 @@ class PydalaDatasetMetadata:
         is_date = False
         is_timestamp = False
         res = re.findall(
-            r"[<,>=!]\'[1,2]{1}\d{3}-\d{1,2}-\d{1,2}(?:[\s,T]\d{2}:\d{2}:{0,2}\d{0,2})?\'"
+            r"[<>=!]\'[1,2]{1}\d{3}-\d{1,2}-\d{1,2}(?:[\s,T]\d{2}:\d{2}:{0,2}\d{0,2})?\'",
             filter_expr,
         )
         if len(res):
