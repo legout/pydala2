@@ -762,28 +762,29 @@ class ParquetDataset(ParquetDatasetMetadata):
     def _get_delta_other_df(
         self,
         df: _pl.DataFrame | _pl.LazyFrame,
-        delta_subset: str | list[str] | None = None,
+        filter_columns: str | list[str] | None = None,
         use: str = "auto",
         on: str = "auto",
     ):
         """
-        Retrieves a subset of dataset based on the input DataFrame.
+        Generate the delta dataframe based on the given dataframe, columns, use, and on parameters.
 
         Parameters:
-            df (_pl.DataFrame | _pl.LazyFrame): The input DataFrame or LazyFrame.
-            delta_subset (str | list[str] | None, optional): Columns to consider for filtering. Default is None,
-                which means all columns are considered.
-            use (str, optional): Specify how to handle filtering conditions. Default is "auto".
-            on (str, optional): Specify how to handle filtering conditions. Default is "auto".
+            df (_pl.DataFrame | _pl.LazyFrame): The input dataframe or lazyframe.
+            filter_columns (str | list[str] | None, optional): The columns to consider. Defaults to None.
+            use (str, optional): The use parameter. Defaults to "auto".
+            on (str, optional): The on parameter. Defaults to "auto".
 
         Returns:
-            _pl.DataFrame: A subset of the input DataFrame that satisfies the filtering conditions.
+            _pl.DataFrame: The delta dataframe.
         """
+        if len(self.files) == 0:
+            return _pl.DataFrame(schema=df.schema)
         if isinstance(df, _pl.LazyFrame):
             df = df.collect()
 
         filter_expr = []
-        for col in delta_subset or df.columns:
+        for col in filter_columns or df.columns:
             if col in self.columns:
                 f_max = df.select(_pl.col(col).max())[0, 0]
                 if isinstance(f_max, str):
@@ -799,14 +800,23 @@ class ParquetDataset(ParquetDatasetMetadata):
         if filter_expr == []:
             return _pl.DataFrame(schema=df.schema)
 
-        self.scan(" AND ".join(filter_expr))
-        if len(self.scan_files):
+        if use != "parquet_dataset":
+            self.scan(" AND ".join(filter_expr))
+
+            if len(self.scan_files):
+                res = self.filter(" AND ".join(filter_expr), use=use, on=on)
+            else:
+                res = self.filter(
+                    " AND ".join(filter_expr), use="parquet_dataset", on=on
+                )
+
+        else:
             res = self.filter(" AND ".join(filter_expr), use=use, on=on)
 
-            if isinstance(res, _duckdb.DuckDBPyRelation):
-                df0 = res.pl()
-            else:
-                df0 = _pl.from_arrow(res.to_table())
+        if isinstance(res, _duckdb.DuckDBPyRelation):
+            df0 = res.pl()
+        elif isinstance(res, pds.Dataset | pds.FileSystemDataset):
+            df0 = _pl.from_arrow(res.to_table())
 
         else:
             df0 = _pl.DataFrame(schema=df.schema)
@@ -834,6 +844,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         remove_tz: bool = False,
         use_large_string: bool = False,
         delta_subset: str | list[str] | None = None,
+        delta_other_df_filter_columns: str | list[str] | None = None,
         partitioning_columns: str | list[str] | None = None,
         use: str = "duckdb",
         on: str = "dataset",
@@ -892,7 +903,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             print("Mode: delta")
             writer._to_polars()
             other_df = self._get_delta_other_df(
-                writer.data, delta_subset=delta_subset, use=use, on=on
+                writer.data, columns=delta_other_df_filter_columns, use=use, on=on
             )
             print("other_df", other_df.shape)
             if other_df is not None:
