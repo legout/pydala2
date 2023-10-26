@@ -799,14 +799,18 @@ class ParquetDataset(ParquetDatasetMetadata):
         if filter_expr == []:
             return
 
-        res = self.scan(" AND ".join(filter_expr)).filter(
-            " AND ".join(filter_expr), use=use, on=on
-        )
+        self.scan(" AND ".join(filter_expr))
+        if len(self.scan_files):
+            res = self.filter(" AND ".join(filter_expr), use=use, on=on)
 
-        if isinstance(res, _duckdb.DuckDBPyRelation):
-            df0 = res.pl()
+            if isinstance(res, _duckdb.DuckDBPyRelation):
+                df0 = res.pl()
+            else:
+                df0 = _pl.from_arrow(res.to_table())
+
         else:
-            df0 = _pl.from_arrow(res.to_table())
+            df0 = _pl.DataFrame(schema=df.schema)
+
         self.reset_scan()
 
         return df0
