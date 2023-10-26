@@ -538,38 +538,67 @@ class PydalaDatasetMetadata:
         # chech if filter_expr is a date string
         filter_expr_mod = []
         is_date = False
-        res = re.search("(\d{4}-\d{1,2}-\d{1,2})", filter_expr)
-        if res:
-            if res.end() + 1 == res.endpos:
-                is_date = True
+        is_timestamp = False
+        res = re.findall(
+            r"[1,2]{1}\d{3}-\d{1,2}-\d{1,2}(?:[\s,T]\d{2}:\d{2}:{0,2}\d{0,2})?",
+            filter_expr,
+        )
+        if len(res):
+            is_date = len(res[0]) <= 10
+            is_timestamp = len(res[0]) > 10
+
         # print(is_date)
         if ">" in filter_expr:
-            filter_expr_mod.append(
-                f"({filter_expr.replace('>', '.max::DATE>')} OR {filter_expr.split('>')[0]}.max::DATE IS NULL)"
-            ) if is_date else filter_expr_mod.append(
-                f"({filter_expr.replace('>', '.max>')} OR {filter_expr.split('>')[0]}.max IS NULL)"
-            )
-
+            filter_expr = f"({filter_expr.replace('>', '.max>')} OR {filter_expr.split('>')[0]}.max IS NULL)"
         elif "<" in filter_expr:
-            filter_expr_mod.append(
-                f"({filter_expr.replace('<', '.min::DATE<')} OR {filter_expr.split('<')[0]}.min::DATE IS NULL)"
-            ) if is_date else filter_expr_mod.append(
-                f"({filter_expr.replace('<', '.min<')} OR {filter_expr.split('<')[0]}.min IS NULL)"
+            filter_expr = f"({filter_expr.replace('<', '.min<')} OR {filter_expr.split('<')[0]}.min IS NULL)"
+        elif "=" in filter_expr:
+            filter_expr = (
+                f"({filter_expr.replace('=', '.min<=')} OR {filter_expr.split('=')[0]}.min IS NULL) "
+                + f"AND ({filter_expr.replace('=', '.max>=')} OR {filter_expr.split('=')[0]}.max IS NULL)"
             )
 
-        elif "=" in filter_expr:
-            filter_expr_mod.append(
-                f"({filter_expr.replace('=', '.min::DATE<=')} OR {filter_expr.split('=')[0]}.min::DATE IS NULL)"
-            ) if is_date else filter_expr_mod.append(
-                f"({filter_expr.replace('=', '.min<=')} OR {filter_expr.split('=')[0]}.min IS NULL)"
+        if is_date:
+            filter_expr = (
+                filter_expr.replace(">", "::DATE>")
+                .replace("<", "::DATE<")
+                .replace(" IS NULL", "::DATE IS NULL")
             )
-            filter_expr_mod.append(
-                f"({filter_expr.replace('=', '.max::DATE>=')} OR {filter_expr.split('=')[0]}.max::DATE IS NULL)"
-            ) if is_date else filter_expr_mod.append(
-                f"({filter_expr.replace('=', '.max>=')} OR {filter_expr.split('=')[0]}.max IS NULL)"
+        elif is_timestamp:
+            filter_expr = (
+                filter_expr.replace(">", "::TIMESTAMP>")
+                .replace("<", "::TIMESTAMP<")
+                .replace(" IS NULL", "::TIMESTAMP IS NULL")
             )
-        else:
-            filter_expr_mod.append(filter_expr)
+
+        filter_expr_mod.append(filter_expr)
+
+        #     filter_expr_mod.append(
+        #         f"({filter_expr.replace('>', '.max::DATE>')} OR {filter_expr.split('>')[0]}.max::DATE IS NULL)"
+        #     ) if is_date else filter_expr_mod.append(
+        #         f"({filter_expr.replace('>', '.max>')} OR {filter_expr.split('>')[0]}.max IS NULL)"
+        #     )
+
+        # elif "<" in filter_expr:
+        #     filter_expr_mod.append(
+        #         f"({filter_expr.replace('<', '.min::DATE<')} OR {filter_expr.split('<')[0]}.min::DATE IS NULL)"
+        #     ) if is_date else filter_expr_mod.append(
+        #         f"({filter_expr.replace('<', '.min<')} OR {filter_expr.split('<')[0]}.min IS NULL)"
+        #     )
+
+        # elif "=" in filter_expr:
+        #     filter_expr_mod.append(
+        #         f"({filter_expr.replace('=', '.min::DATE<=')} OR {filter_expr.split('=')[0]}.min::DATE IS NULL)"
+        #     ) if is_date else filter_expr_mod.append(
+        #         f"({filter_expr.replace('=', '.min<=')} OR {filter_expr.split('=')[0]}.min IS NULL)"
+        #     )
+        #     filter_expr_mod.append(
+        #         f"({filter_expr.replace('=', '.max::DATE>=')} OR {filter_expr.split('=')[0]}.max::DATE IS NULL)"
+        #     ) if is_date else filter_expr_mod.append(
+        #         f"({filter_expr.replace('=', '.max>=')} OR {filter_expr.split('=')[0]}.max IS NULL)"
+        #     )
+        # else:
+        #     filter_expr_mod.append(filter_expr)
 
         return filter_expr_mod
 
