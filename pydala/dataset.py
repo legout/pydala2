@@ -797,7 +797,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                     f"{col}<='{f_max}' AND {col}>='{f_min}'".replace("'None'", "NULL")
                 )
         if filter_expr == []:
-            return
+            return _pl.DataFrame(schema=df.schema)
 
         self.scan(" AND ".join(filter_expr))
         if len(self.scan_files):
