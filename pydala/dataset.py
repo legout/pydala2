@@ -903,7 +903,10 @@ class ParquetDataset(ParquetDatasetMetadata):
             print("Mode: delta")
             writer._to_polars()
             other_df = self._get_delta_other_df(
-                writer.data, columns=delta_other_df_filter_columns, use=use, on=on
+                writer.data,
+                filter_columns=delta_other_df_filter_columns,
+                use=use,
+                on=on,
             )
             print("other_df", other_df.shape)
             if other_df is not None:
