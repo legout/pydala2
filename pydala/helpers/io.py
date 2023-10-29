@@ -224,7 +224,7 @@ class Writer:
                 columns = None
             self.data = self.data.unique(columns, maintain_order=True)
 
-    def add_datepart_columns(self, timestamp_column: str):
+    def add_datepart_columns(self, timestamp_column: str|None=None):
         """
         Adds datepart columns to the data.
 
@@ -234,17 +234,18 @@ class Writer:
         Returns:
             None
         """
-        
-        self._set_schema()
-        self._to_polars()
-        datepart_columns = {
-            col: True
-            for col in self.schema.names
-            if col in ["year", "month", "week", "yearday", "monthday", "weekday"]
-        }
-        self.data.with_datepart_columns(
-            timestamp_column=timestamp_column, **datepart_columns
-        )
+        if timestamp_column is not None:
+            
+            self._set_schema()
+            self._to_polars()
+            datepart_columns = {
+                col: True
+                for col in self.schema.names
+                if col in ["year", "month", "week", "yearday", "monthday", "weekday"]
+            }
+            self.data.with_datepart_columns(
+                timestamp_column=timestamp_column, **datepart_columns
+            )
 
     def cast_schema(
         self,

@@ -26,6 +26,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         bucket: str | None = None,
         partitioning: str | list[str] | None = None,
         cached: bool = False,
+        timestamp_column:str|None=None,
         **caching_options,
     ):
         """
@@ -72,6 +73,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             )
 
         self.ddb_con = _duckdb.connect()
+        self._timestamp_columns = timestamp_column
 
     def load(
         self,
@@ -127,8 +129,9 @@ class ParquetDataset(ParquetDatasetMetadata):
                 self.ddb_con.register(
                     "arrow_parquet_dataset", self._arrow_parquet_dataset
                 )
-
-                self._timestamp_columns = get_timestamp_column(self.pl().head(1))
+                if self._timestamp_column is None:
+                    self._timestamp_columns = get_timestamp_column(self.pl().head(1))
+                    self._timestamp_column = self._timestamp_columns[0]
 
     # @property
     def arrow_parquet_dataset(self) -> pds.FileSystemDataset:
