@@ -27,6 +27,9 @@ dev = [
     # "python-lsp-ruff>=1.5.1",
     # "python-lsp-server[all]>=1.7.4",
     "flake8>=6.1.0",
+    "ruff>=0.1.2",
+    "sqlparser>=0.0.9",
+    "sqlparse>=0.4.4",
 ]
 
 [build-system]
