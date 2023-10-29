@@ -882,27 +882,6 @@ class ParquetDataset(ParquetDatasetMetadata):
         if self.partitioning_names:
             partitioning_columns = self.partitioning_names.copy()
             
-        # if partitioning_columns:
-        #     datetime_columns = {
-        #     col: col in [col.lower() for col in partitioning_columns]
-        #     for col in [
-        #         "year",
-        #         "month",
-        #         "week",
-        #         "yearday",
-        #         "monthday",
-        #         "weekday",
-        #         "strftime",
-        #     ]
-        #     if col not in [table_col.lower() for table_col in df.columns]
-        # }
-        
-        #     df = df.with_datepart_columns(
-        #         timestamp_column=self._timestamp_columns[0], **datetime_columns
-        #     )
-
-        #if len(df.columns) >= len(self.schema.names)
-            
         writer = Writer(
             data=df,
             path=self._path,
@@ -912,7 +891,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         )
         writer.sort_data(by=sort_by)
         writer.unique(columns=unique)
-        writer.add_datepart_columns(timestamp_column=self._timestamp_columns[0])
+        writer.add_datepart_columns(timestamp_column=self._timestamp_column)
         writer.cast_schema(
             use_large_string=use_large_string,
             ts_unit=ts_unit,
