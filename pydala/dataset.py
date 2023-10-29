@@ -73,7 +73,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             )
 
         self.ddb_con = _duckdb.connect()
-        self._timestamp_columns = timestamp_column
+        self._timestamp_column = timestamp_column
 
     def load(
         self,
