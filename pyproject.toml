@@ -12,6 +12,7 @@ dependencies = [
     "pandas>=2.0.3",
     "polars>=0.18.15",
     "pendulum>=2.1.2",
+    "msgspec>=0.18.4",
 ]
 requires-python = ">=3.10"
 readme = "README.md"
