@@ -83,6 +83,9 @@ def write_table(
     Returns:
         tuple[str, pq.FileMetaData]: A tuple containing the file path and the metadata of the written Parquet file.
     """
+    if not filesystem.exists(os.path.dirname(path)):
+        filesystem.makedirs(os.path.dirname(path), exist_ok=True)
+        
     if filesystem is None:
         filesystem = fsspec_filesystem("file")
 

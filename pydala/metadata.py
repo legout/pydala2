@@ -77,7 +77,9 @@ class ParquetDatasetMetadata:
             bucket=bucket, fs=filesystem, cached=cached, **caching_options
         )
         self._caching_options = caching_options
-
+        if not self._filesystem.exists(self._path):
+            self._filesystem.mkdir(self._path)
+            
         self._files = sorted(self._filesystem.glob(os.path.join(path, "**.parquet")))
 
         self._file = os.path.join(path, "_metadata")
