@@ -1,6 +1,6 @@
 [project]
 name = "pydala2"
-version = "0.2"
+version = "0.2.1"
 description = "poor man´s datalake"
 authors = [{ name = "Volker Lorrmann", email = "ligno.blades@gmail.com" }]
 dependencies = [
@@ -14,11 +14,17 @@ dependencies = [
     "pendulum>=2.1.2",
     "msgspec>=0.18.4",
 ]
+
+
 requires-python = ">=3.10"
 readme = "README.md"
 license = { text = "MIT" }
 
 [project.optional-dependencies]
+lts_cpu = ["polars-lts-cpu>=0.18.15"]
+
+
+[tool.pdm.dev-dependencies]
 dev = [
     "memory-profiler>=0.61.0",
     "black>=23.9.1",
