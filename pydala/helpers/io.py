@@ -84,8 +84,11 @@ def write_table(
         tuple[str, pq.FileMetaData]: A tuple containing the file path and the metadata of the written Parquet file.
     """
     if not filesystem.exists(os.path.dirname(path)):
-        filesystem.makedirs(os.path.dirname(path), exist_ok=True)
-        
+        try:
+            filesystem.makedirs(os.path.dirname(path), exist_ok=True)
+        except Exception:
+            pass
+
     if filesystem is None:
         filesystem = fsspec_filesystem("file")
 
@@ -227,7 +230,7 @@ class Writer:
                 columns = None
             self.data = self.data.unique(columns, maintain_order=True)
 
-    def add_datepart_columns(self, timestamp_column: str|None=None):
+    def add_datepart_columns(self, timestamp_column: str | None = None):
         """
         Adds datepart columns to the data.
 
@@ -238,7 +241,6 @@ class Writer:
             None
         """
         if timestamp_column is not None:
-            
             self._set_schema()
             self._to_polars()
             datepart_columns = {
