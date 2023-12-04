@@ -101,7 +101,7 @@ class ParquetDatasetMetadata:
             None
         """
         self._files = sorted(
-            self._filesystem.glob(os.path.join(self._path, "**.parquet"))
+            self._filesystem.glob(os.path.join(self._path, "**/*.parquet"))
         )
 
     def _collect_file_metadata(self, files: list[str] | None = None, **kwargs) -> None:
