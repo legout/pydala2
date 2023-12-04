@@ -26,7 +26,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         bucket: str | None = None,
         partitioning: str | list[str] | None = None,
         cached: bool = False,
-        timestamp_column:str|None=None,
+        timestamp_column: str | None = None,
         **caching_options,
     ):
         """
@@ -881,13 +881,9 @@ class ParquetDataset(ParquetDatasetMetadata):
 
         if self.partitioning_names:
             partitioning_columns = self.partitioning_names.copy()
-            
+
         writer = Writer(
-            data=df,
-            path=self._path,
-            filesystem=self._filesystem,
-            schema=self.schema
-            
+            data=df, path=self._path, filesystem=self._filesystem, schema=self.schema
         )
         writer.sort_data(by=sort_by)
         writer.unique(columns=unique)
