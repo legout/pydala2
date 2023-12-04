@@ -83,7 +83,7 @@ class ParquetDatasetMetadata:
             except Exception:
                 pass  # raise FileNotFoundError(f"Directory {self._path} does not exist.")
 
-        self._files = sorted(self._filesystem.glob(os.path.join(path, "**.parquet")))
+        self._files = sorted(self._filesystem.glob(os.path.join(path, "**/*.parquet")))
 
         self._file = os.path.join(path, "_metadata")
         if self.has_metadata_file:
