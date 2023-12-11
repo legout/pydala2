@@ -303,6 +303,7 @@ class Writer:
     def partition_by(
         self,
         columns: str | list[str] | None = None,
+        timestamp_column: str | None = None,
         num_rows: int | None = None,
         strftime: str | list[str] | None = None,
         timedelta: str | list[str] | None = None,
@@ -325,6 +326,7 @@ class Writer:
         self._to_polars()
         self.data = self.data.partition_by_ext(
             columns=columns,
+            timestamp_column=timestamp_column,
             strftime=strftime,
             timedelta=timedelta,
             num_rows=num_rows,
