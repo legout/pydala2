@@ -245,7 +245,7 @@ class Writer:
                 if col in ["year", "month", "week", "yearday", "monthday", "weekday"]
             }
 
-            self.data.with_datepart_columns(
+            self.data = self.data.with_datepart_columns(
                 timestamp_column=timestamp_column, **datepart_columns
             )
 
