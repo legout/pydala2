@@ -244,6 +244,7 @@ class Writer:
                 for col in self.schema.names
                 if col in ["year", "month", "week", "yearday", "monthday", "weekday"]
             }
+            print("timestamp_column", timestamp_column)
             self.data.with_datepart_columns(
                 timestamp_column=timestamp_column, **datepart_columns
             )
