@@ -152,10 +152,8 @@ def with_strftime_columns(
         if len(timestamp_column):
             timestamp_column = timestamp_column[0]
 
-        if timestamp_column is None:
-            raise ValueError(
-                "timestamp_column is not specified nor found in the dataframe"
-            )
+    if timestamp_column is None:
+        raise ValueError("timestamp_column is not specified nor found in the dataframe")
 
     if isinstance(strftime, str):
         strftime = [strftime]
@@ -167,6 +165,7 @@ def with_strftime_columns(
             f"_strftime_{strftime_.replace('%', '').replace('-', '_')}_"
             for strftime_ in strftime
         ]
+    print("timestamp_column, with_strftime_columns", timestamp_column)
     return df.with_columns(
         [
             pl.col(timestamp_column).dt.strftime(strftime_).alias(column_name)
@@ -214,7 +213,7 @@ def with_truncated_columns(
 
 def with_datepart_columns(
     df: pl.DataFrame | pl.LazyFrame,
-    timestamp_column: str = None,
+    timestamp_column: str = "auto",
     year: bool = False,
     month: bool = False,
     week: bool = False,
@@ -223,16 +222,6 @@ def with_datepart_columns(
     weekday: bool = False,
     strftime: str | None = None,
 ):
-    if timestamp_column is None or timestamp_column == "auto":
-        timestamp_column = get_timestamp_column(df)
-        if len(timestamp_column):
-            timestamp_column = timestamp_column[0]
-
-        if timestamp_column is None:
-            raise ValueError(
-                "timestamp_column is not specified nor found in the dataframe"
-            )
-
     if strftime:
         if isinstance(strftime, str):
             strftime = [strftime]
@@ -262,7 +251,7 @@ def with_datepart_columns(
     if weekday:
         strftime.append("%a")
         column_names.append("week_day")
-
+    print("timestamp_column, with_datepart_columns", timestamp_column)
     return with_strftime_columns(
         df=df,
         timestamp_column=timestamp_column,
