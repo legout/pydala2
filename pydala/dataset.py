@@ -916,7 +916,11 @@ class ParquetDataset(ParquetDatasetMetadata):
             # print("No new data to write.")
             return
         print("partition")
-        writer.partition_by(columns=partitioning_columns, num_rows=num_rows)
+        writer.partition_by(
+            columns=partitioning_columns,
+            timestamp_column=self._timestamp_column,
+            num_rows=num_rows,
+        )
         print("set_path")
         writer.set_path(base_name=base_name)
         print("write")

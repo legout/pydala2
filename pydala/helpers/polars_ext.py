@@ -251,6 +251,8 @@ def with_datepart_columns(
     if weekday:
         strftime.append("%a")
         column_names.append("week_day")
+
+    column_names = [col for col in column_names if col not in df.columns]
     print("timestamp_column, with_datepart_columns", timestamp_column)
     return with_strftime_columns(
         df=df,
@@ -330,11 +332,6 @@ def partition_by(
     timedelta: str | list[str] | None = None,
     num_rows: int | None = None,
 ) -> list[tuple[dict, pl.DataFrame | pl.LazyFrame]]:
-    if timestamp_column is None:
-        timestamp_column = get_timestamp_column(df)
-        if len(timestamp_column):
-            timestamp_column = timestamp_column[0]
-
     if columns is not None:
         if isinstance(columns, str):
             columns = [columns]
