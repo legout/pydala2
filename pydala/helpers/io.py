@@ -13,7 +13,7 @@ from ..schema import (
     shrink_large_string,
     convert_timestamp,
 )
-from .misc import get_partitions_from_path, run_parallel
+from .misc import get_partitions_from_path
 from .polars_ext import pl
 import os
 import datetime as dt
@@ -183,10 +183,6 @@ class Writer:
         If not, it assigns the schema of the DataFrame's underlying data to the `schema` attribute.
 
         """
-        if self.schema is None:
-            self._to_polars()
-            self.data = self.data.opt_dtype()
-
         self._to_arrow()
         self.schema = self.schema or self.data.schema
 
@@ -258,6 +254,7 @@ class Writer:
         tz: str = None,
         ts_unit: str = None,
         remove_tz: bool = False,
+        auto_optimize_dtype: bool = False,
     ):
         """
         Casts the schema of the current Table to self.schema.
@@ -271,7 +268,7 @@ class Writer:
 
         """
         self._to_arrow()
-        self._set_schema()
+        self._set_schema(auto_optimize_dtype=auto_optimize_dtype)
         self._use_large_string = use_large_string
         if not use_large_string:
             self.schema = shrink_large_string(self.schema)
