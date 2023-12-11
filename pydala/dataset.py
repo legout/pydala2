@@ -131,7 +131,8 @@ class ParquetDataset(ParquetDatasetMetadata):
                 )
                 if self._timestamp_column is None:
                     self._timestamp_columns = get_timestamp_column(self.pl().head(1))
-                    self._timestamp_column = self._timestamp_columns[0]
+                    if len(self._timestamp_columns) > 1:
+                        self._timestamp_column = self._timestamp_columns[0]
 
     # @property
     def arrow_parquet_dataset(self) -> pds.FileSystemDataset:
@@ -897,7 +898,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         if mode == "overwrite":
             del_files = self.files.copy()
         elif mode == "delta" and self.has_files:
-            print("Mode: delta")
+            # print("Mode: delta")
             writer._to_polars()
             other_df = self._get_delta_other_df(
                 writer.data,
@@ -905,12 +906,12 @@ class ParquetDataset(ParquetDatasetMetadata):
                 use=use,
                 on=on,
             )
-            print("other_df", other_df.shape)
+            # print("other_df", other_df.shape)
             if other_df is not None:
                 writer.delta(other=other_df, subset=delta_subset)
-            print("delta", writer.data.shape)
+            # print("delta", writer.data.shape)
         if writer.data.shape[0] == 0:
-            print("No new data to write.")
+            # print("No new data to write.")
             return
 
         writer.partition_by(columns=partitioning_columns, num_rows=num_rows)
