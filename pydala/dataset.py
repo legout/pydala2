@@ -888,7 +888,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         )
         writer.sort_data(by=sort_by)
         writer.unique(columns=unique)
-        # writer.add_datepart_columns(timestamp_column=self._timestamp_column)
+        writer.add_datepart_columns(timestamp_column=self._timestamp_column)
         writer.cast_schema(
             use_large_string=use_large_string,
             ts_unit=ts_unit,
