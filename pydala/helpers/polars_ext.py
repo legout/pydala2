@@ -414,7 +414,7 @@ def partition_by(
 
         if isinstance(df, pl.LazyFrame):
             df = df.collect()
-
+        print(df.columns)
         columns_ = [col for col in columns_ if col in df.columns]
 
     if num_rows is not None:
