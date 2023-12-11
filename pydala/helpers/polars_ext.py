@@ -366,8 +366,37 @@ def partition_by(
         drop_columns += timedelta_columns
 
     if columns_:
+        # datetime_columns = {
+        #     col: col in [col.lower() for col in columns_]
+        #     for col in [
+        #         "year",
+        #         "month",
+        #         "week",
+        #         "yearday",
+        #         "monthday",
+        #         "weekday",
+        #         "strftime",
+        #     ]
+        #     if col not in [table_col.lower() for table_col in df.columns]
+        # }
+        datetime_columns = [
+            col.lower()
+            for col in columns_
+            if col
+            in [
+                "year",
+                "month",
+                "week",
+                "yearday",
+                "monthday",
+                "weekday",
+                "strftime",
+            ]
+            and col not in df.columns
+        ]
+
         datetime_columns = {
-            col: col in [col.lower() for col in columns_]
+            col: col in datetime_columns
             for col in [
                 "year",
                 "month",
@@ -377,9 +406,8 @@ def partition_by(
                 "weekday",
                 "strftime",
             ]
-            if col not in [table_col.lower() for table_col in df.columns]
         }
-        if len(datetime_columns):
+        if any(datetime_columns.values()):
             df = df.with_datepart_columns(
                 timestamp_column=timestamp_column, **datetime_columns
             )
