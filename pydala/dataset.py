@@ -896,6 +896,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             tz=tz,
             remove_tz=remove_tz,
         )
+        print("mode")
         if mode == "overwrite":
             del_files = self.files.copy()
         elif mode == "delta" and self.has_files:
@@ -914,9 +915,11 @@ class ParquetDataset(ParquetDatasetMetadata):
         if writer.data.shape[0] == 0:
             # print("No new data to write.")
             return
-
+        print("partition")
         writer.partition_by(columns=partitioning_columns, num_rows=num_rows)
+        print("set_path")
         writer.set_path(base_name=base_name)
+        print("write")
         file_metadata = writer.write(
             row_group_size=row_group_size, compression=compression, **kwargs
         )
