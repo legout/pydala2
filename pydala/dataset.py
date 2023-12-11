@@ -888,19 +888,17 @@ class ParquetDataset(ParquetDatasetMetadata):
         )
         writer.sort_data(by=sort_by)
         writer.unique(columns=unique)
-        writer.add_datepart_columns(timestamp_column=self._timestamp_column)
-        print("timestamp_column, write_to_dataset", self._timestamp_column)
+        # writer.add_datepart_columns(timestamp_column=self._timestamp_column)
         writer.cast_schema(
             use_large_string=use_large_string,
             ts_unit=ts_unit,
             tz=tz,
             remove_tz=remove_tz,
         )
-        print("mode")
+
         if mode == "overwrite":
             del_files = self.files.copy()
         elif mode == "delta" and self.has_files:
-            # print("Mode: delta")
             writer._to_polars()
             other_df = self._get_delta_other_df(
                 writer.data,
@@ -908,22 +906,18 @@ class ParquetDataset(ParquetDatasetMetadata):
                 use=use,
                 on=on,
             )
-            # print("other_df", other_df.shape)
             if other_df is not None:
                 writer.delta(other=other_df, subset=delta_subset)
             # print("delta", writer.data.shape)
         if writer.data.shape[0] == 0:
             # print("No new data to write.")
             return
-        print("partition")
         writer.partition_by(
             columns=partitioning_columns,
             timestamp_column=self._timestamp_column,
             num_rows=num_rows,
         )
-        print("set_path")
         writer.set_path(base_name=base_name)
-        print("write")
         file_metadata = writer.write(
             row_group_size=row_group_size, compression=compression, **kwargs
         )

@@ -165,7 +165,7 @@ def with_strftime_columns(
             f"_strftime_{strftime_.replace('%', '').replace('-', '_')}_"
             for strftime_ in strftime
         ]
-    print("timestamp_column, with_strftime_columns", timestamp_column)
+    # print("timestamp_column, with_strftime_columns", timestamp_column)
     return df.with_columns(
         [
             pl.col(timestamp_column).dt.strftime(strftime_).alias(column_name)
@@ -253,7 +253,7 @@ def with_datepart_columns(
         column_names.append("week_day")
 
     column_names = [col for col in column_names if col not in df.columns]
-    print("timestamp_column, with_datepart_columns", timestamp_column)
+    # print("timestamp_column, with_datepart_columns", timestamp_column)
     return with_strftime_columns(
         df=df,
         timestamp_column=timestamp_column,
@@ -414,7 +414,6 @@ def partition_by(
 
         if isinstance(df, pl.LazyFrame):
             df = df.collect()
-        print(df.columns)
         columns_ = [col for col in columns_ if col in df.columns]
 
     if num_rows is not None:
