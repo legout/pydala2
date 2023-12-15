@@ -439,7 +439,7 @@ class ParquetDatasetMetadata:
         """
         if not hasattr(self, "_files"):
             self._files = sorted(
-                self._filesystem.glob(os.path.join(self._path, "**.parquet"))
+                self._filesystem.glob(os.path.join(self._path, "**/*.parquet"))
             )
         return self._files
 
