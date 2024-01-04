@@ -18,6 +18,57 @@ from .helpers.polars_ext import pl as _pl
 from .metadata import ParquetDatasetMetadata, PydalaDatasetMetadata
 
 
+class FilterResult:
+    def __init__(
+        self,
+        result: pds.Dataset | _duckdb.DuckDBPyRelation,
+        ddb_con: _duckdb.DuckDBPyConnection | None = None,
+    ):
+        if ddb_con is None:
+            self.ddb_con = _duckdb.connect()
+        else:
+            self.ddb_con = ddb_con
+
+        self.result = result
+        self._type = (
+            "duckdb" if isinstance(result, _duckdb.DuckDBPyRelation) else "pyarrow"
+        )
+
+    def to_polars(self, lazy: bool = True):
+        if self._type == "pyarrow":
+            if lazy:
+                return _pl.scan_pyarrow_dataset(self.result)
+            return _pl.from_arrow(self.result.to_table())
+
+        return self.result.pl()
+
+    def to_duckdb(self, lazy: bool = True):
+        if self._type == "pyarrow":
+            if lazy:
+                return self.ddb_con.from_arrow(self.result)
+            return self.ddb_con.from_arrow(self.result.to_table())
+
+        return self.result
+
+    def to_arrow(self):
+        if self._type == "pyarrow":
+            return self.result.to_table()
+        return self.result.arrow()
+
+    def to_pandas(self):
+        if self._type == "pyarrow":
+            return self.result.to_table().to_pandas()
+        return self.result.df()
+    
+    def __repr__(self):
+        if self._type == "pyarrow":
+            return self.to_polars().head(10).collect().__repr__()
+        return self.result.limit(10).__repr__()
+    
+    def __call__(self):
+        return self.result
+    
+
 class ParquetDataset(ParquetDatasetMetadata):
     def __init__(
         self,
@@ -180,7 +231,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         else:
             # print(f"No dataset loaded yet. Run {self}.load()")
             return 0
-    
+
     @property
     def num_rows(self) -> int:
         """
@@ -196,7 +247,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         else:
             # print(f"No dataset loaded yet. Run {self}.load()")
             return 0
-        
+
     @property
     def num_columns(self) -> int:
         """
@@ -414,7 +465,7 @@ class ParquetDataset(ParquetDatasetMetadata):
 
         """
         return self.to_arrow()
-    
+
     @property
     def arrow_table(self):
         """
@@ -426,7 +477,6 @@ class ParquetDataset(ParquetDatasetMetadata):
         if not hasattr(self, "_arrow_table"):
             return self.to_arrow()
         return self._arrow_table
-            
 
     def to_duckdb(
         self,
@@ -569,6 +619,9 @@ class ParquetDataset(ParquetDatasetMetadata):
             return self.to_pandas()
         return self._df
 
+    def __repr__(self):
+        return self.ddb_con.from_arrow(self.arrow_parquet_dataset.head(10)).__repr__()
+
     def sql(self, sql: str) -> _duckdb.DuckDBPyRelation:
         """
         Executes an SQL query on the DuckDBPyRelation object.
@@ -629,7 +682,12 @@ class ParquetDataset(ParquetDatasetMetadata):
             return self.arrow_parquet_dataset.filter(filter_expr)
 
     def filter(
-        self, filter_expr: str | pds.Expression, use: str = "auto", on: str = "auto", return_type: str|None = None, lazy: bool = True
+        self,
+        filter_expr: str | pds.Expression,
+        use: str = "auto",
+        on: str = "auto",
+        return_type: str | None = None,
+        lazy: bool = True,
     ) -> pds.FileSystemDataset | pds.Dataset | _duckdb.DuckDBPyRelation:
         """
         Filters the dataset based on the given filter expression.
@@ -649,7 +707,6 @@ class ParquetDataset(ParquetDatasetMetadata):
         """
         if any([s in filter_expr for s in ["%", "like", "similar to", "*"]]):
             use = "duckdb"
-        
 
         if use == "auto":
             try:
@@ -657,12 +714,12 @@ class ParquetDataset(ParquetDatasetMetadata):
                     if sorted(self.files) == sorted(self.scan_files):
                         res = self._filter_arrow_dataset(filter_expr)
                     else:
-                        res =self._filter_arrow_dataset(filter_expr)
+                        res = self._filter_arrow_dataset(filter_expr)
                 elif on == "parquet_dataset":
                     res = self._filter_arrow_parquet_dataset(filter_expr)
                 elif on == "dataset":
                     res = self._filter_arrow_dataset(filter_expr)
-                
+
             except Exception as e:
                 e.add_note("Note: Filtering with PyArrow failed. Using DuckDB.")
                 print(e)
@@ -671,7 +728,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                     res = self._filter_duckdb(filter_expr)
                 else:
                     res = self._filter_duckdb(filter_expr)
-                    
+
         elif use == "pyarrow":
             if on == "auto":
                 if sorted(self.files) == sorted(self.scan_files):
@@ -689,40 +746,9 @@ class ParquetDataset(ParquetDatasetMetadata):
                 res = self._filter_duckdb(filter_expr)
             else:
                 res = self._filter_duckdb(filter_expr)
-                
-        if isinstance(res, _duckdb.DuckDBPyRelation):
-           
-            if return_type is None or return_type == "duckdb" or return_type == "ddb":
-                return res
-            elif return_type == "pl" or return_type == "polars":
-                return res.pl()
-            elif return_type == "pandas" or return_type == "df":
-                return res.df()
-            elif return_type == "table" or return_type == "arrow":
-                return res.arrow()
-        else:
-            if return_type is None or return_type == "dataset":
-                if lazy:
-                    return res
-                return res.to_table()
-            
-            elif return_type == "table" or return_type == "arrow":
-                return res.to_table()
-            
-            elif return_type == "duckdb" or return_type == "ddb":
-                if lazy:
-                    return self.ddb_con.from_arrow(res)
-                return self.ddb_con.from_arrow(res.to_table())
-            
-            elif return_type == "pl" or return_type == "polars":
-                if lazy:
-                    return _pl.scan_pyarrow_dataset(res)
-                return _pl.from_arrow(res.to_table())
-            
-            elif return_type == "pandas" or return_type == "df":
-                return res.to_table().to_pandas()
-        
-        return res
+
+      
+        return FilterResult(result=res, ddb_con=self.ddb_con)
 
     @property
     def registered_tables(self) -> list[str]:
