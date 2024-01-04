@@ -15,9 +15,31 @@ from .datetime import timestamp_from_string
 
 
 def str2pyarrow_filter(string: str, schema: pa.Schema):
+    """
+    Generates a filter expression for PyArrow based on a given string and schema.
+
+    Parameters:
+        string (str): The string containing the filter expression.
+        schema (pa.Schema): The PyArrow schema used to validate the filter expression.
+
+    Returns:
+        PyArrow.Expression: The generated filter expression.
+
+    """
+
+
     def _parse_part(part):
         split_pattern = (
-            "<=|<|>=|>|=|!=|\s+[i,I][n,N]\s+|\s+[i,I][s,S] [n,N][u,U][l,L]{2}\s+"
+            "<=|"
+            "<|"
+            ">=|"
+            ">|"
+            "=|"
+            "!=|"
+            "[n,N][o,O][t,T]\s+[i,I][n,N]|"
+            "[i,I][n,N]|"
+            "[i,I][s,S]\s+[n,N][o,O][t,T]\s+[n,N][u,U][l,L]{2}|"
+            "[i,I][s,S]\s+[n,N][u,U][l,L]{2}"
         )
         sign = re.findall(split_pattern, part)[0]
         # print(sign)
@@ -66,17 +88,27 @@ def str2pyarrow_filter(string: str, schema: pa.Schema):
             return pc.field(field) != val
         elif sign.lower() == "in":
             return pc.field(field).isin(val)
+        elif sign.lower() == "not in":
+            return ~pc.field(field).isin(val)
         elif sign.lower() == "is null":
             return pc.field(field).is_null(nan_is_null=True)
+        elif sign.lower() == "is not null":
+            return ~pc.field(field).is_null(nan_is_null=True)
 
     parts = re.split(
-        "\s+[a,A][n,N][d,D] [n,N][o,O][t,T]\s+|\s+[a,A][n,N][d,D]\s+|\s+[o,O][r,R] [n,N][o,O][t,T]\s+|\s+[o,O][r,R]\s+",
+        ("\s+[a,A][n,N][d,D] [n,N][o,O][t,T]\s+|"
+        "\s+[a,A][n,N][d,D]\s+|"
+        "\s+[o,O][r,R] [n,N][o,O][t,T]\s+|"
+        "\s+[o,O][r,R]\s+"),
         string,
     )
     operators = [
         op.strip()
         for op in re.findall(
-            "\s+[a,A][n,N][d,D] [n,N][o,O][t,T]\s+|\s+[a,A][n,N][d,D]|[o,O][r,R] [n,N][o,O][t,T]\s+|\s+[o,O][r,R]\s+",
+            ("\s+[a,A][n,N][d,D] [n,N][o,O][t,T]\s+|"
+            "\s+[a,A][n,N][d,D]|"
+            "[o,O][r,R] [n,N][o,O][t,T]\s+|"
+            "\s+[o,O][r,R]\s+|"),
             string,
         )
     ]

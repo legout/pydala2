@@ -130,7 +130,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                     "arrow_parquet_dataset", self._arrow_parquet_dataset
                 )
                 if self._timestamp_column is None:
-                    self._timestamp_columns = get_timestamp_column(self.pl().head(1))
+                    self._timestamp_columns = get_timestamp_column(self.pl.head(1))
                     if len(self._timestamp_columns) > 1:
                         self._timestamp_column = self._timestamp_columns[0]
 
@@ -176,7 +176,39 @@ class ParquetDataset(ParquetDatasetMetadata):
             int: The number of rows in the dataset.
         """
         if self.is_loaded:
-            return self.arrow_parquet_dataset().count_rows
+            return self.arrow_parquet_dataset.count_rows
+        else:
+            # print(f"No dataset loaded yet. Run {self}.load()")
+            return 0
+    
+    @property
+    def num_rows(self) -> int:
+        """
+        Returns the number of rows in the dataset.
+
+        If the dataset is not loaded, it prints an error message and returns 0.
+
+        Returns:
+            int: The number of rows in the dataset.
+        """
+        if self.is_loaded:
+            return self.arrow_parquet_dataset.count_rows
+        else:
+            # print(f"No dataset loaded yet. Run {self}.load()")
+            return 0
+        
+    @property
+    def num_columns(self) -> int:
+        """
+        Returns the number of columns in the dataset.
+
+        If the dataset is not loaded, it prints an error message and returns 0.
+
+        Returns:
+            int: The number of columns in the dataset.
+        """
+        if self.is_loaded:
+            return len(self.columns)
         else:
             # print(f"No dataset loaded yet. Run {self}.load()")
             return 0
@@ -195,7 +227,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             if not hasattr(self, "_partitioning_schema"):
                 if self.is_loaded:
                     self._partitioning_schema = (
-                        self.arrow_parquet_dataset().partitioning.schema
+                        self.arrow_parquet_dataset.partitioning.schema
                     )
                 else:
                     # print(f"No dataset loaded yet. Run {self}.load()")
@@ -302,7 +334,7 @@ class ParquetDataset(ParquetDatasetMetadata):
 
             return self._arrow_dataset
 
-    # @property
+    @property
     def arrow_dataset(self) -> pds.Dataset:
         """
         Generates a `pds.Dataset` representation of the object.
@@ -311,9 +343,9 @@ class ParquetDataset(ParquetDatasetMetadata):
             pds.Dataset: The `pds.Dataset` representation of the object.
         """
 
-        # if not hasattr(self, "_arrow_dataset"):
-        return self.to_arrow_dataset()
-        # return self._arrow_dataset
+        if not hasattr(self, "_arrow_dataset"):
+            return self.to_arrow_dataset()
+        return self._arrow_dataset
 
     def to_arrow(self, **kwargs) -> pa.Table:
         """
@@ -382,6 +414,19 @@ class ParquetDataset(ParquetDatasetMetadata):
 
         """
         return self.to_arrow()
+    
+    @property
+    def arrow_table(self):
+        """
+        Returns the arrow table representation of the data.
+
+        Returns:
+            arrow.Table: The arrow table representation of the data.
+        """
+        if not hasattr(self, "_arrow_table"):
+            return self.to_arrow()
+        return self._arrow_table
+            
 
     def to_duckdb(
         self,
@@ -399,9 +444,9 @@ class ParquetDataset(ParquetDatasetMetadata):
 
         if lazy:
             if sorted(self.files) == sorted(self.scan_files):
-                self._ddb = self.ddb_con.from_arrow(self.arrow_parquet_dataset())
+                self._ddb = self.ddb_con.from_arrow(self.arrow_parquet_dataset)
             else:
-                self._ddb = self.ddb_con.from_arrow(self.arrow_dataset())
+                self._ddb = self.ddb_con.from_arrow(self.arrow_dataset)
 
         else:
             self._ddb = self.ddb_con.from_arrow(self.arrow())
@@ -420,20 +465,17 @@ class ParquetDataset(ParquetDatasetMetadata):
         """
         return self.to_duckdb(lazy=lazy)
 
-    # @property
+    @property
     def ddb(self) -> _duckdb.DuckDBPyRelation:
         """
-        A description of the entire function, its parameters, and its return types.
-
-        Args:
-            lazy (bool): A boolean value indicating if the function should be lazy.
+        Returns the DuckDBPyRelation object associated with the current instance.
 
         Returns:
-            _duckdb.DuckDBPyRelation: An instance of _duckdb.DuckDBPyRelation.
+            The DuckDBPyRelation object.
         """
-        # if not hasattr(self, "_ddb"):
-        return self.to_duckdb()
-        # return self._ddb
+        if not hasattr(self, "_ddb"):
+            return self.to_duckdb()
+        return self._ddb
 
     def to_polars(
         self,
@@ -450,7 +492,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             _pl.DataFrame: The converted Polars DataFrame.
         """
         if lazy:
-            self._pl = _pl.scan_pyarrow_dataset(self.arrow_dataset())
+            self._pl = _pl.scan_pyarrow_dataset(self.arrow_dataset)
         else:
             self._pl = _pl.from_arrow(self.arrow())
 
@@ -469,7 +511,7 @@ class ParquetDataset(ParquetDatasetMetadata):
 
         return self.to_polars(lazy=lazy)
 
-    # @property
+    @property
     def pl(self) -> _pl.DataFrame:
         """
         Generate a function comment for the given function body.
@@ -479,9 +521,9 @@ class ParquetDataset(ParquetDatasetMetadata):
                 otherwise returns `self._pl`.
         """
 
-        # if not hasattr(self, "_pl"):
-        return self.to_polars()
-        # return self._pl
+        if not hasattr(self, "_pl"):
+            return self.to_polars()
+        return self._pl
 
     def to_pandas(
         self,
@@ -513,7 +555,7 @@ class ParquetDataset(ParquetDatasetMetadata):
 
         return self.to_pandas(lazy=lazy)
 
-    # @property
+    @property
     def df(self) -> pd.DataFrame:
         """
         Returns a pandas DataFrame.
@@ -523,9 +565,9 @@ class ParquetDataset(ParquetDatasetMetadata):
             pd.DataFrame: The pandas DataFrame.
         """
 
-        # if not hasattr(self, "_df"):
-        return self.to_pandas()
-        # return self._df
+        if not hasattr(self, "_df"):
+            return self.to_pandas()
+        return self._df
 
     def sql(self, sql: str) -> _duckdb.DuckDBPyRelation:
         """
@@ -550,7 +592,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         Returns:
             _duckdb.DuckDBPyRelation: The filtered DuckDBPyRelation object.
         """
-        return self.ddb().filter(filter_expr)
+        return self.ddb.filter(filter_expr)
 
     def _filter_arrow_dataset(self, filter_expr: str | pds.Expression) -> pds.Dataset:
         """
@@ -566,7 +608,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         if self.has_files:
             if isinstance(filter_expr, str):
                 filter_expr = str2pyarrow_filter(filter_expr, self.schema)
-            return self.arrow_dataset().filter(filter_expr)
+            return self.arrow_dataset.filter(filter_expr)
 
     def _filter_arrow_parquet_dataset(
         self, filter_expr: str | pds.Expression
@@ -584,7 +626,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         if self.has_files:
             if isinstance(filter_expr, str):
                 filter_expr = str2pyarrow_filter(filter_expr, self.schema)
-            return self.arrow_parquet_dataset().filter(filter_expr)
+            return self.arrow_parquet_dataset.filter(filter_expr)
 
     def filter(
         self, filter_expr: str | pds.Expression, use: str = "auto", on: str = "auto"
@@ -605,6 +647,9 @@ class ParquetDataset(ParquetDatasetMetadata):
 
 
         """
+        if any([s in filter_expr for s in ["%", "like", "similar to", "*"]]):
+            use = "duckdb"
+            
 
         if use == "auto":
             try:
