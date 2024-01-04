@@ -105,10 +105,10 @@ def str2pyarrow_filter(string: str, schema: pa.Schema):
     operators = [
         op.strip()
         for op in re.findall(
-            ("\s+[a,A][n,N][d,D] [n,N][o,O][t,T]\s+|"
-            "\s+[a,A][n,N][d,D]|"
-            "[o,O][r,R] [n,N][o,O][t,T]\s+|"
-            "\s+[o,O][r,R]\s+|"),
+            ("\s+[a,A][n,N][d,D]\s+[n,N][o,O][t,T]\s+|"
+            "\s+[a,A][n,N][d,D]\s+|"
+            "[o,O][r,R]\s+[n,N][o,O][t,T]\s+|"
+            "\s+[o,O][r,R]\s+"),
             string,
         )
     ]
