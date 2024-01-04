@@ -629,7 +629,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             return self.arrow_parquet_dataset.filter(filter_expr)
 
     def filter(
-        self, filter_expr: str | pds.Expression, use: str = "auto", on: str = "auto"
+        self, filter_expr: str | pds.Expression, use: str = "auto", on: str = "auto", return_type: str|None = None, lazy: bool = True
     ) -> pds.FileSystemDataset | pds.Dataset | _duckdb.DuckDBPyRelation:
         """
         Filters the dataset based on the given filter expression.
@@ -649,45 +649,80 @@ class ParquetDataset(ParquetDatasetMetadata):
         """
         if any([s in filter_expr for s in ["%", "like", "similar to", "*"]]):
             use = "duckdb"
-            
+        
 
         if use == "auto":
             try:
                 if on == "auto":
                     if sorted(self.files) == sorted(self.scan_files):
-                        return self._filter_arrow_parquet_dataset(filter_expr)
+                        res = self._filter_arrow_dataset(filter_expr)
                     else:
-                        return self._filter_arrow_dataset(filter_expr)
+                        res =self._filter_arrow_dataset(filter_expr)
                 elif on == "parquet_dataset":
-                    return self._filter_arrow_parquet_dataset(filter_expr)
+                    res = self._filter_arrow_parquet_dataset(filter_expr)
                 elif on == "dataset":
-                    return self._filter_arrow_dataset(filter_expr)
+                    res = self._filter_arrow_dataset(filter_expr)
+                
             except Exception as e:
                 e.add_note("Note: Filtering with PyArrow failed. Using DuckDB.")
                 print(e)
                 if on == "parquet_dataset":
                     self.reset_scan()
-                    return self._filter_duckdb(filter_expr)
+                    res = self._filter_duckdb(filter_expr)
                 else:
-                    return self._filter_duckdb(filter_expr)
-
+                    res = self._filter_duckdb(filter_expr)
+                    
         elif use == "pyarrow":
             if on == "auto":
                 if sorted(self.files) == sorted(self.scan_files):
-                    return self._filter_arrow_parquet_dataset(filter_expr)
+                    res = self._filter_arrow_parquet_dataset(filter_expr)
                 else:
-                    return self._filter_arrow_dataset(filter_expr)
+                    res = self._filter_arrow_dataset(filter_expr)
             elif on == "parquet_dataset":
-                return self._filter_arrow_parquet_dataset(filter_expr)
+                res = self._filter_arrow_parquet_dataset(filter_expr)
             elif on == "dataset":
-                return self._filter_arrow_dataset(filter_expr)
+                res = self._filter_arrow_dataset(filter_expr)
 
         elif use == "duckdb":
             if on == "parquet_dataset":
                 self.reset_scan()
-                return self._filter_duckdb(filter_expr)
+                res = self._filter_duckdb(filter_expr)
             else:
-                return self._filter_duckdb(filter_expr)
+                res = self._filter_duckdb(filter_expr)
+                
+        if isinstance(res, _duckdb.DuckDBPyRelation):
+           
+            if return_type is None or return_type == "duckdb" or return_type == "ddb":
+                return res
+            elif return_type == "pl" or return_type == "polars":
+                return res.pl()
+            elif return_type == "pandas" or return_type == "df":
+                return res.df()
+            elif return_type == "table" or return_type == "arrow":
+                return res.arrow()
+        else:
+            if return_type is None or return_type == "dataset":
+                if lazy:
+                    return res
+                return res.to_table()
+            
+            elif return_type == "table" or return_type == "arrow":
+                return res.to_table()
+            
+            elif return_type == "duckdb" or return_type == "ddb":
+                if lazy:
+                    return self.ddb_con.from_arrow(res)
+                return self.ddb_con.from_arrow(res.to_table())
+            
+            elif return_type == "pl" or return_type == "polars":
+                if lazy:
+                    return _pl.scan_pyarrow_dataset(res)
+                return _pl.from_arrow(res.to_table())
+            
+            elif return_type == "pandas" or return_type == "df":
+                return res.to_table().to_pandas()
+        
+        return res
 
     @property
     def registered_tables(self) -> list[str]:
