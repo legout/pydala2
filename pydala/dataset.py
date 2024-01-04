@@ -134,7 +134,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                     if len(self._timestamp_columns) > 1:
                         self._timestamp_column = self._timestamp_columns[0]
 
-    # @property
+    @property
     def arrow_parquet_dataset(self) -> pds.FileSystemDataset:
         """
         Return the arrow parquet dataset if it exists, otherwise load the dataset and return it.
