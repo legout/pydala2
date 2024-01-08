@@ -42,6 +42,9 @@ class FilterResult:
 
         return self.result.pl()
 
+    def pl(self, lazy: bool = True):
+        return self.to_polars(lazy)
+
     def to_duckdb(self, lazy: bool = True):
         if self._type == "pyarrow":
             if lazy:
@@ -58,10 +61,22 @@ class FilterResult:
     def to_table(self):
         return self.to_arrow()
 
+    def arrow(self):
+        return self.to_arrow()
+
+    def to_arrow_table(self):
+        return self.to_arrow()
+
     def to_pandas(self):
         if self._type == "pyarrow":
             return self.result.to_table().to_pandas()
         return self.result.df()
+
+    def to_df(self):
+        return self.to_pandas()
+
+    def df(self):
+        return self.to_pandas()
 
     def __repr__(self):
         if self._type == "pyarrow":
