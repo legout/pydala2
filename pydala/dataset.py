@@ -55,19 +55,22 @@ class FilterResult:
             return self.result.to_table()
         return self.result.arrow()
 
+    def to_table(self):
+        return self.to_arrow()
+
     def to_pandas(self):
         if self._type == "pyarrow":
             return self.result.to_table().to_pandas()
         return self.result.df()
-    
+
     def __repr__(self):
         if self._type == "pyarrow":
             return self.to_polars().head(10).collect().__repr__()
         return self.result.limit(10).__repr__()
-    
+
     def __call__(self):
         return self.result
-    
+
 
 class ParquetDataset(ParquetDatasetMetadata):
     def __init__(
@@ -747,7 +750,6 @@ class ParquetDataset(ParquetDatasetMetadata):
             else:
                 res = self._filter_duckdb(filter_expr)
 
-      
         return FilterResult(result=res, ddb_con=self.ddb_con)
 
     @property
