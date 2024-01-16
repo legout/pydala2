@@ -15,19 +15,17 @@ dependencies = [
     "msgspec>=0.18.4",
 ]
 
-[project.optional-dependencies]
-#standard = [
-#  "polars>=0.20.0",
-#]
-legacy = [
-  "polars-lts-cpu>=0.20.0"
-]
+
 
 requires-python = ">=3.10,<3.13"
 readme = "README.md"
 license = { text = "MIT" }
 
 
+[project.optional-dependencies]
+legacy = [
+    "polars-lts-cpu>=0.20.4",
+]
 [tool.pdm.dev-dependencies]
 dev = [
     "memory-profiler>=0.61.0",
