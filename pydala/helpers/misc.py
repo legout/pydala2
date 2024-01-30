@@ -27,7 +27,6 @@ def str2pyarrow_filter(string: str, schema: pa.Schema):
 
     """
 
-
     def _parse_part(part):
         split_pattern = (
             "<=|"
@@ -63,10 +62,20 @@ def str2pyarrow_filter(string: str, schema: pa.Schema):
             val = timestamp_from_string(val, exact=True)
 
         elif pa.types.is_integer_value(type_) or pa.types.is_integer(type_):
-            val = int(val.strip("'").replace(",", "."))
+            if isinstance(val, str):
+                val = int(val.strip("'").replace(",", "."))
+            elif isinstance(val, tuple):
+                val = tuple([int(val_.strip(",").replace(",", ".")) for val_ in val])
+            elif isinstance(val, list):
+                val = [int(val_.strip("'").replace(",", ".")) for val_ in val]
 
         elif pa.types.is_float_value(type_) or pa.types.is_floating(type_):
-            val = float(val.strip("'").replace(",", "."))
+            if isinstance(val, str):
+                val = float(val.strip("'").replace(",", "."))
+            elif isinstance(val, tuple):
+                val = tuple([float(val_.strip(",").replace(",", ".")) for val_ in val])
+            elif isinstance(val, list):
+                val = [float(val_.strip("'").replace(",", ".")) for val_ in val]
 
         elif pa.types.is_boolean(type_):
             val = bool(val.strip("'").replace(",", "."))
@@ -96,19 +105,23 @@ def str2pyarrow_filter(string: str, schema: pa.Schema):
             return ~pc.field(field).is_null(nan_is_null=True)
 
     parts = re.split(
-        ("\s+[a,A][n,N][d,D] [n,N][o,O][t,T]\s+|"
-        "\s+[a,A][n,N][d,D]\s+|"
-        "\s+[o,O][r,R] [n,N][o,O][t,T]\s+|"
-        "\s+[o,O][r,R]\s+"),
+        (
+            "\s+[a,A][n,N][d,D] [n,N][o,O][t,T]\s+|"
+            "\s+[a,A][n,N][d,D]\s+|"
+            "\s+[o,O][r,R] [n,N][o,O][t,T]\s+|"
+            "\s+[o,O][r,R]\s+"
+        ),
         string,
     )
     operators = [
         op.strip()
         for op in re.findall(
-            ("\s+[a,A][n,N][d,D]\s+[n,N][o,O][t,T]\s+|"
-            "\s+[a,A][n,N][d,D]\s+|"
-            "[o,O][r,R]\s+[n,N][o,O][t,T]\s+|"
-            "\s+[o,O][r,R]\s+"),
+            (
+                "\s+[a,A][n,N][d,D]\s+[n,N][o,O][t,T]\s+|"
+                "\s+[a,A][n,N][d,D]\s+|"
+                "[o,O][r,R]\s+[n,N][o,O][t,T]\s+|"
+                "\s+[o,O][r,R]\s+"
+            ),
             string,
         )
     ]
