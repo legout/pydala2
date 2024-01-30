@@ -68,7 +68,7 @@ def str2pyarrow_filter(string: str, schema: pa.Schema):
                 val = tuple(
                     [
                         int(val_.strip(",").replace(",", "."))
-                        if isinstnace(val_, str)
+                        if isinstance(val_, str)
                         else val_
                         for val_ in val
                     ]
@@ -76,7 +76,7 @@ def str2pyarrow_filter(string: str, schema: pa.Schema):
             elif isinstance(val, list):
                 val = [
                     int(val_.strip("'").replace(",", "."))
-                    if isinstnace(val_, str)
+                    if isinstance(val_, str)
                     else val_
                     for val_ in val
                 ]
@@ -88,7 +88,7 @@ def str2pyarrow_filter(string: str, schema: pa.Schema):
                 val = tuple(
                     [
                         float(val_.strip(",").replace(",", "."))
-                        if isinstnace(val_, str)
+                        if isinstance(val_, str)
                         else val_
                         for val_ in val
                     ]
@@ -96,7 +96,7 @@ def str2pyarrow_filter(string: str, schema: pa.Schema):
             elif isinstance(val, list):
                 val = [
                     float(val_.strip("'").replace(",", "."))
-                    if isinstnace(val_, str)
+                    if isinstance(val_, str)
                     else val_
                     for val_ in val
                 ]
