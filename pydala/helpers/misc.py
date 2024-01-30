@@ -65,17 +65,41 @@ def str2pyarrow_filter(string: str, schema: pa.Schema):
             if isinstance(val, str):
                 val = int(val.strip("'").replace(",", "."))
             elif isinstance(val, tuple):
-                val = tuple([int(val_.strip(",").replace(",", ".")) for val_ in val])
+                val = tuple(
+                    [
+                        int(val_.strip(",").replace(",", "."))
+                        if isinstnace(val_, str)
+                        else val_
+                        for val_ in val
+                    ]
+                )
             elif isinstance(val, list):
-                val = [int(val_.strip("'").replace(",", ".")) for val_ in val]
+                val = [
+                    int(val_.strip("'").replace(",", "."))
+                    if isinstnace(val_, str)
+                    else val_
+                    for val_ in val
+                ]
 
         elif pa.types.is_float_value(type_) or pa.types.is_floating(type_):
             if isinstance(val, str):
                 val = float(val.strip("'").replace(",", "."))
             elif isinstance(val, tuple):
-                val = tuple([float(val_.strip(",").replace(",", ".")) for val_ in val])
+                val = tuple(
+                    [
+                        float(val_.strip(",").replace(",", "."))
+                        if isinstnace(val_, str)
+                        else val_
+                        for val_ in val
+                    ]
+                )
             elif isinstance(val, list):
-                val = [float(val_.strip("'").replace(",", ".")) for val_ in val]
+                val = [
+                    float(val_.strip("'").replace(",", "."))
+                    if isinstnace(val_, str)
+                    else val_
+                    for val_ in val
+                ]
 
         elif pa.types.is_boolean(type_):
             val = bool(val.strip("'").replace(",", "."))
