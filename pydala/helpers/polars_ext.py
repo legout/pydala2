@@ -64,7 +64,7 @@ def _opt_dtype(s: pl.Series, strict: bool = True) -> pl.Series:
         ).all() and s.dtype != pl.Date():
             s = (
                 s.str.replace_all(",", ".")
-                .str.replace_all("^0*$", "+0")
+                .str.replace_all("^0{1,}$", "+0")
                 .str.strip_chars_start("0")
                 .str.replace_all("\.0*$", "")
             )
