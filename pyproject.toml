@@ -1,6 +1,6 @@
 [project]
 name = "pydala2"
-version = "0.2.4.2"
+version = "0.2.4.3"
 description = "poor man´s datalake"
 authors = [{ name = "Volker Lorrmann", email = "ligno.blades@gmail.com" }]
 dependencies = [
@@ -23,7 +23,7 @@ license = { text = "MIT" }
 
 [project.optional-dependencies]
 standard = [
-    "polars>=0.20.0",
+    "polars>=0.20.4",
 ]
 legacy = [
     "polars-lts-cpu>=0.20.4",
