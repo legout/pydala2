@@ -971,6 +971,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         partitioning_columns: str | list[str] | None = None,
         use: str = "pyarrow",
         on: str = "parquet_dataset",
+        update_metadata:bool=False,
         **kwargs,
     ):
         """
@@ -1053,14 +1054,17 @@ class ParquetDataset(ParquetDatasetMetadata):
 
         if mode == "overwrite":
             self.delete_files(del_files)
-            self.load(reload=True, verbose=False)
-        else:
-            try:
-                self.load(update_metadata=True, verbose=False)
-            except Exception as e:
-                _ = e
+            if update_metadata:
                 self.load(reload=True, verbose=False)
-        self.update_metadata_table()
+        else:
+            if update_metadata:
+                try:
+                    self.load(update_metadata=True, verbose=False)
+                except Exception as e:
+                    _ = e
+                    self.load(reload=True, verbose=False)
+        if update_metadata: 
+            self.update_metada_table()
         self.clear_cache()
 
     def _optimize_by_file_size(
