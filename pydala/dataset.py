@@ -909,7 +909,6 @@ class ParquetDataset(ParquetDatasetMetadata):
 
         filter_expr = []
         for col in filter_columns or df.columns:
-
             if col in self.columns and df.columns:
                 f_max = df.select(_pl.col(col).max())
 
@@ -1048,7 +1047,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             if other_df is not None:
                 writer.delta(other=other_df, subset=delta_subset)
             # print("delta", writer.data.shape)
-        if writer.data.shape[0] == 0:
+        if writer.shape[0] == 0:
             # print("No new data to write.")
             return
         writer.partition_by(

@@ -358,6 +358,11 @@ class Writer:
             for num, partition in enumerate(self.data)
         ]
 
+    def shape(self):
+        if isinstance(self.data, pl.LazyFrame):
+            self.data = self.data.collect()
+        return self.data.shape()
+
     def write(
         self, row_group_size: int | None = None, compression: str = "zstd", **kwargs
     ):
