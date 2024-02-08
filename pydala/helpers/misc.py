@@ -35,14 +35,18 @@ def str2pyarrow_filter(string: str, schema: pa.Schema):
             ">|"
             "=|"
             "!=|"
-            "[n,N][o,O][t,T]\s+[i,I][n,N]|"
-            "[i,I][n,N]|"
-            "[i,I][s,S]\s+[n,N][o,O][t,T]\s+[n,N][u,U][l,L]{2}|"
-            "[i,I][s,S]\s+[n,N][u,U][l,L]{2}"
+            "\s+[n,N][o,O][t,T]\s+[i,I][n,N]\s+|"
+            "\s+[i,I][n,N]\s+|"
+            "\s+[i,I][s,S]\s+[n,N][o,O][t,T]\s+[n,N][u,U][l,L]{2}\s+|"
+            "\s+[i,I][s,S]\s+[n,N][u,U][l,L]{2}\s+"
         )
         sign = re.findall(split_pattern, part)[0]
         # print(sign)
+        # if "<" in sign or ">" in sign or "=" in sign or "!" in sign:
         field, val = [p.strip() for p in re.split(f"\s*{sign}\s*", part)]
+        # else:
+        #    field, val = [p.strip() for p in re.split(f"\s+{sign}\s+", part)]
+
         # print(field, val)
         type_ = schema.field(field).type
         if "(" in val:
@@ -67,17 +71,21 @@ def str2pyarrow_filter(string: str, schema: pa.Schema):
             elif isinstance(val, tuple):
                 val = tuple(
                     [
-                        int(val_.strip(",").replace(",", "."))
-                        if isinstance(val_, str)
-                        else val_
+                        (
+                            int(val_.strip(",").replace(",", "."))
+                            if isinstance(val_, str)
+                            else val_
+                        )
                         for val_ in val
                     ]
                 )
             elif isinstance(val, list):
                 val = [
-                    int(val_.strip("'").replace(",", "."))
-                    if isinstance(val_, str)
-                    else val_
+                    (
+                        int(val_.strip("'").replace(",", "."))
+                        if isinstance(val_, str)
+                        else val_
+                    )
                     for val_ in val
                 ]
 
@@ -87,17 +95,21 @@ def str2pyarrow_filter(string: str, schema: pa.Schema):
             elif isinstance(val, tuple):
                 val = tuple(
                     [
-                        float(val_.strip(",").replace(",", "."))
-                        if isinstance(val_, str)
-                        else val_
+                        (
+                            float(val_.strip(",").replace(",", "."))
+                            if isinstance(val_, str)
+                            else val_
+                        )
                         for val_ in val
                     ]
                 )
             elif isinstance(val, list):
                 val = [
-                    float(val_.strip("'").replace(",", "."))
-                    if isinstance(val_, str)
-                    else val_
+                    (
+                        float(val_.strip("'").replace(",", "."))
+                        if isinstance(val_, str)
+                        else val_
+                    )
                     for val_ in val
                 ]
 
