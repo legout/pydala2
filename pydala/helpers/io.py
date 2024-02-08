@@ -358,6 +358,7 @@ class Writer:
             for num, partition in enumerate(self.data)
         ]
 
+    @property
     def shape(self):
         if isinstance(self.data, pl.LazyFrame):
             self.data = self.data.collect()
