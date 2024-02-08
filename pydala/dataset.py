@@ -901,19 +901,33 @@ class ParquetDataset(ParquetDatasetMetadata):
         Returns:
             _pl.DataFrame: The delta dataframe.
         """
+        collect = False
         if len(self.files) == 0:
             return _pl.DataFrame(schema=df.schema)
         if isinstance(df, _pl.LazyFrame):
-            df = df.collect()
+            collect = True
 
         filter_expr = []
         for col in filter_columns or df.columns:
-            if col in self.columns:
-                f_max = df.select(_pl.col(col).max())[0, 0]
+
+            if col in self.columns and df.columns:
+                f_max = df.select(_pl.col(col).max())
+
+                if collect:
+                    f_max = f_max.collect()[0, 0]
+                else:
+                    f_max = f_max[0, 0]
+
                 if isinstance(f_max, str):
                     f_max = f_max.strip("'").replace(",", "")
 
-                f_min = df.select(_pl.col(col).min())[0, 0]
+                f_min = df.select(_pl.col(col).min())
+
+                if collect:
+                    f_min = f_min.collect()[0, 0]
+                else:
+                    f_min = f_min[0, 0]
+
                 if isinstance(f_min, str):
                     f_min = f_min.strip("'").replace(",", "")
 
@@ -924,37 +938,38 @@ class ParquetDataset(ParquetDatasetMetadata):
             return _pl.DataFrame(schema=df.schema)
 
         if on != "parquet_dataset":
-            self.scan(" AND ".join(filter_expr))
+            # self.scan(" AND ".join(filter_expr))
 
-            if len(self.scan_files):
-                res = self.filter(" AND ".join(filter_expr), use=use, on=on)
-            else:
-                res = self.filter(
-                    " AND ".join(filter_expr), on="parquet_dataset", use=use
-                )
+            # if len(self.scan_files):
+            #    res = self.filter(" AND ".join(filter_expr), use=use, on=on)
+            # else:
+            res = self.filter(" AND ".join(filter_expr), on=on, use=use)
 
         else:
             res = self.filter(" AND ".join(filter_expr), use=use, on=on)
 
-        if isinstance(res, _duckdb.DuckDBPyRelation):
-            df0 = res.pl()
-        elif isinstance(res, pds.Dataset | pds.FileSystemDataset):
-            df0 = _pl.from_arrow(res.to_table())
+        # if isinstance(res, _duckdb.DuckDBPyRelation):
+        #    df0 = res.pl()
+        # elif isinstance(res, pds.Dataset | pds.FileSystemDataset):
+        #    df0 = _pl.from_arrow(res.to_table())
 
-        else:
-            df0 = _pl.DataFrame(schema=df.schema)
+        df0 = res.to_polars()
+        # else:
+        #    df0 = _pl.DataFrame(schema=df.schema)
 
-        self.reset_scan()
+        # self.reset_scan()
 
         return df0
 
     def write_to_dataset(
         self,
-        df: _pl.DataFrame
-        | _pl.LazyFrame
-        | pa.Table
-        | pd.DataFrame
-        | _duckdb.DuckDBPyConnection,
+        df: (
+            _pl.DataFrame
+            | _pl.LazyFrame
+            | pa.Table
+            | pd.DataFrame
+            | _duckdb.DuckDBPyConnection
+        ),
         base_name: str | None = None,
         mode: str = "append",  # "delta", "overwrite"
         num_rows: int | None = 100_000_000,
@@ -967,11 +982,11 @@ class ParquetDataset(ParquetDatasetMetadata):
         remove_tz: bool = False,
         use_large_string: bool = False,
         delta_subset: str | list[str] | None = None,
-        delta_other_df_filter_columns: str | list[str] | None = None,
+        other_df_filter_columns: str | list[str] | None = None,
         partitioning_columns: str | list[str] | None = None,
         use: str = "pyarrow",
         on: str = "parquet_dataset",
-        update_metadata:bool=False,
+        update_metadata: bool = False,
         **kwargs,
     ):
         """
@@ -1026,7 +1041,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             writer._to_polars()
             other_df = self._get_delta_other_df(
                 writer.data,
-                filter_columns=delta_other_df_filter_columns,
+                filter_columns=other_df_filter_columns,
                 use=use,
                 on=on,
             )
@@ -1063,7 +1078,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                 except Exception as e:
                     _ = e
                     self.load(reload=True, verbose=False)
-        if update_metadata: 
+        if update_metadata:
             self.update_metada_table()
         self.clear_cache()
 
