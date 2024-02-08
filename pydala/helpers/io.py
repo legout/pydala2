@@ -281,7 +281,7 @@ class Writer:
                 remove_tz=remove_tz,
             )
 
-        self.data = replace_schema(self.data, self.schema, exact=True)
+        self.data = replace_schema(self.data, self.schema, exact=False)
 
     def delta(
         self,
