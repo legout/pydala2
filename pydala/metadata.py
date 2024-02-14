@@ -90,16 +90,19 @@ class ParquetDatasetMetadata:
             files=files, filesystem=self._filesystem, **kwargs
         )
 
-        if file_metadata:
-            for f in file_metadata:
-                file_metadata[f].set_file_path(f.split(self._path)[-1].lstrip("/"))
+        # if file_metadata:
+        for f in file_metadata:
+            file_metadata[f].set_file_path(f.split(self._path)[-1].lstrip("/"))
 
-            if hasattr(self, "file_metadata"):
-                self.file_metadata.update(file_metadata)
-            else:
-                self.file_metadata = file_metadata
+        if hasattr(self, "file_metadata"):
+            self.file_metadata.update(file_metadata)
+        else:
+            self.file_me: os.walktadata = file_metadata
 
     def _rm_file_metadata(self):
+        """
+        Removes file metadata for files that are no longer in the dataset.
+        """
         rm_file_metadata = [f for f in self.file_metadata.keys() if f not in self.files]
         for f in rm_file_metadata:
             self.file_metadata.pop(f)
