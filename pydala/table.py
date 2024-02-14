@@ -10,7 +10,7 @@ import pyarrow as pa
 import pandas as pd
 
 
-class PyDalaTable:
+class PydalaTable:
     def __init__(
         self,
         result: pds.Dataset | _duckdb.DuckDBPyRelation,
