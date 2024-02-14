@@ -1,6 +1,8 @@
 import os
+from turtle import up
 
 import duckdb as _duckdb
+from numpy import isin
 import pandas as pd
 import pyarrow as pa
 import pyarrow.dataset as pds
@@ -16,86 +18,20 @@ from .helpers.misc import (
 )
 from .helpers.polars_ext import pl as _pl
 from .metadata import ParquetDatasetMetadata, PydalaDatasetMetadata
-
-
-class FilterResult:
-    def __init__(
-        self,
-        result: pds.Dataset | _duckdb.DuckDBPyRelation,
-        ddb_con: _duckdb.DuckDBPyConnection | None = None,
-    ):
-        if ddb_con is None:
-            self.ddb_con = _duckdb.connect()
-        else:
-            self.ddb_con = ddb_con
-
-        self.result = result
-        self._type = (
-            "duckdb" if isinstance(result, _duckdb.DuckDBPyRelation) else "pyarrow"
-        )
-
-    def to_polars(self, lazy: bool = True):
-        if self._type == "pyarrow":
-            if lazy:
-                return _pl.scan_pyarrow_dataset(self.result)
-            return _pl.from_arrow(self.result.to_table())
-
-        return self.result.pl()
-
-    def pl(self, lazy: bool = True):
-        return self.to_polars(lazy)
-
-    def to_duckdb(self, lazy: bool = True):
-        if self._type == "pyarrow":
-            if lazy:
-                return self.ddb_con.from_arrow(self.result)
-            return self.ddb_con.from_arrow(self.result.to_table())
-
-        return self.result
-
-    def to_arrow(self):
-        if self._type == "pyarrow":
-            return self.result.to_table()
-        return self.result.arrow()
-
-    def to_table(self):
-        return self.to_arrow()
-
-    def arrow(self):
-        return self.to_arrow()
-
-    def to_arrow_table(self):
-        return self.to_arrow()
-
-    def to_pandas(self):
-        if self._type == "pyarrow":
-            return self.result.to_table().to_pandas()
-        return self.result.df()
-
-    def to_df(self):
-        return self.to_pandas()
-
-    def df(self):
-        return self.to_pandas()
-
-    def __repr__(self):
-        if self._type == "pyarrow":
-            return self.to_polars().head(10).collect().__repr__()
-        return self.result.limit(10).__repr__()
-
-    def __call__(self):
-        return self.result
+from .table import PydalaTable
 
 
 class ParquetDataset(ParquetDatasetMetadata):
     def __init__(
         self,
         path: str,
+        name: str | None = None,
         filesystem: AbstractFileSystem | None = None,
         bucket: str | None = None,
         partitioning: str | list[str] | None = None,
         cached: bool = False,
         timestamp_column: str | None = None,
+        ddb_con: _duckdb.DuckDBPyConnection | None = None,
         **caching_options,
     ):
         """
@@ -123,6 +59,8 @@ class ParquetDataset(ParquetDatasetMetadata):
             cached=cached,
             **caching_options,
         )
+        if name is None:
+            self.name = os.path.basename(path)
 
         if self.has_files:
             if partitioning == "ignore":
@@ -140,8 +78,10 @@ class ParquetDataset(ParquetDatasetMetadata):
                 metadata=self.metadata,
                 partitioning=partitioning,
             )
+        if ddb_con is None:
+            ddb_con = _duckdb.connect()
 
-        self.ddb_con = _duckdb.connect()
+        self.ddb_con = ddb_con
         self._timestamp_column = timestamp_column
 
     def load(
@@ -173,7 +113,10 @@ class ParquetDataset(ParquetDatasetMetadata):
         Returns:
             None
         """
-
+        if kwargs.pop("udate", None):
+            update_meatadata = True
+        if kwargs.pop("reload", None):
+            reload_metadata = True
         if self.has_files:
             if update_metadata or reload_metadata or not self.has_metadata_file:
                 self.update(
@@ -194,14 +137,15 @@ class ParquetDataset(ParquetDatasetMetadata):
                 filesystem=self._filesystem,
             )
 
-            if len(self._arrow_parquet_dataset.files):
-                self.ddb_con.register(
-                    "arrow_parquet_dataset", self._arrow_parquet_dataset
-                )
-                if self._timestamp_column is None:
-                    self._timestamp_columns = get_timestamp_column(self.pl.head(1))
-                    if len(self._timestamp_columns) > 1:
-                        self._timestamp_column = self._timestamp_columns[0]
+            self.table = PydalaTable(
+                table=self._arrow_parquet_dataset, ddb_con=self.ddb_con
+            )
+
+            self.ddb_con.register(f"{self.name}_dataset", self._arrow_parquet_dataset)
+            if self._timestamp_column is None:
+                self._timestamp_columns = get_timestamp_column(self.pl.head(1))
+                if len(self._timestamp_columns) > 1:
+                    self._timestamp_column = self._timestamp_columns[0]
 
     @property
     def arrow_parquet_dataset(self) -> pds.FileSystemDataset:
@@ -232,7 +176,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             list: A list of column names.
         """
         if self.has_files:
-            return self.schema.names + self.partitioning_names
+            return self.schema.names + self.partition_names
 
     @property
     def count_rows(self) -> int:
@@ -245,13 +189,13 @@ class ParquetDataset(ParquetDatasetMetadata):
             int: The number of rows in the dataset.
         """
         if self.is_loaded:
-            return self.arrow_parquet_dataset.count_rows
+            return self.metadata.n_rows
         else:
             # print(f"No dataset loaded yet. Run {self}.load()")
             return 0
 
     @property
-    def num_rows(self) -> int:
+    def n_rows(self) -> int:
         """
         Returns the number of rows in the dataset.
 
@@ -261,7 +205,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             int: The number of rows in the dataset.
         """
         if self.is_loaded:
-            return self.arrow_parquet_dataset.count_rows
+            return self.metadata.n_rows
         else:
             # print(f"No dataset loaded yet. Run {self}.load()")
             return 0
@@ -277,10 +221,26 @@ class ParquetDataset(ParquetDatasetMetadata):
             int: The number of columns in the dataset.
         """
         if self.is_loaded:
-            return len(self.columns)
+            return self.metadata.num_columnselse
         else:
             # print(f"No dataset loaded yet. Run {self}.load()")
             return 0
+
+    @property
+    def schema(self) -> pa.Schema:
+        """
+        Returns the schema of the data source.
+
+        Returns:
+            pyarrow.Schema: A pyarrow.Schema object representing the schema of the data source.
+        """
+        if self.has_files:
+            if not hasattr(self, "_schema"):
+                # if self._partitioning is not None and self._partitioning!="ignore":
+                self._schema = pa.unify_schemas(
+                    [self.file_schema, self.partitioning_schema]
+                )
+            return self._schema
 
     @property
     def partitioning_schema(self) -> pa.Schema:
@@ -304,23 +264,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             return self._partitioning_schema
 
     @property
-    def schema(self) -> pa.Schema:
-        """
-        Returns the schema of the data source.
-
-        Returns:
-            pyarrow.Schema: A pyarrow.Schema object representing the schema of the data source.
-        """
-        if self.has_files:
-            if not hasattr(self, "_schema"):
-                # if self._partitioning is not None and self._partitioning!="ignore":
-                self._schema = pa.unify_schemas(
-                    [self.file_schema, self.partitioning_schema]
-                )
-            return self._schema
-
-    @property
-    def partitioning_names(self) -> list:
+    def partition_names(self) -> list:
         """
         Returns a list of partitioning names.
 
@@ -329,13 +273,49 @@ class ParquetDataset(ParquetDatasetMetadata):
         """
 
         if self.has_files:
-            if not hasattr(self, "_partitioning_names"):
+            if not hasattr(self, "_partition_names"):
                 if self.is_loaded:
-                    self._partitioning_names = self.partitioning_schema.names
+                    self._partition_names = self.partitioning_schema.names
                 else:
                     # print(f"No dataset loaded yet. Run {self}.load()")
                     return []
-            return self._partitioning_names
+            return self._partition_names
+
+    @property
+    def partition_values(self) -> dict:
+        """
+        Returns a list of partitioning values.
+        Returns:
+            list: A list of partitioning values.
+        """
+        if self.has_files:
+            if not hasattr(self, "_partition_values"):
+                if self.is_loaded:
+                    self._partition_values = dict(zip(self.partition_names,[
+                        pa_list.to_pylist()
+                        for pa_list in self.arrow_parquet_dataset.partitioning.dictionaries
+                    ]))
+            else:
+                # print(f"No dataset loaded yet. Run {self}.load()")
+                return []
+            return self._partition_values
+
+    def partitions(self) -> dict:
+        """
+        Returns a dictionary of partitioning values.
+
+        Returns:
+            dict: A dictionary of partitioning values.
+        """
+        if self.has_files:
+            if not hasattr(self, "_partitions"):
+                if self.is_loaded:
+                    self._partitions = _pl.from_arrow(self.metadata_table.select(["type","market","exchange"]))
+
+            else:
+                # print(f"No dataset loaded yet. Run {self}.load()")
+                return {}
+            return self._partitions
 
     def gen_metadata_table(self):
         """
@@ -369,7 +349,15 @@ class ParquetDataset(ParquetDatasetMetadata):
             ParquetDatasetMetadata: The ParquetDatasetMetadata object.
         """
         self.pydala_dataset_metadata.scan(filter_expr=filter_expr)
-        return self
+
+        return PydalaTable(
+            table=pds.dataset(
+                self.scan_files,
+                filesystem=self._filesystem,
+                partitioning=self._partitioning,
+            ),
+            ddb_con=self.ddb_con,
+        )
 
     def to_arrow_dataset(
         self,
@@ -381,27 +369,27 @@ class ParquetDataset(ParquetDatasetMetadata):
             pds.Dataset: The converted Arrow dataset.
 
         """
-
-        if self.has_files:
-            if hasattr(self, "_arrow_dataset"):
-                if sorted(self._arrow_dataset.files) == sorted(self.scan_files):
-                    return self._arrow_dataset
-
-                self._arrow_dataset = pds.dataset(
-                    self.scan_files,
-                    partitioning=self._partitioning,
-                    filesystem=self._filesystem,
-                )
-            else:
-                self._arrow_dataset = pds.dataset(
-                    self.scan_files,
-                    partitioning=self._partitioning,
-                    filesystem=self._filesystem,
-                )
-            if len(self._arrow_dataset.files):
-                self.ddb_con.register("arrow_dataset", self._arrow_dataset)
-
-            return self._arrow_dataset
+        return self.table.to_arrow_dataset()
+        # if self.has_files:
+        #     if hasattr(self, "_arrow_dataset"):
+        #         if sorted(self._arrow_dataset.files) == sorted(self.scan_files):
+        #             return self._arrow_dataset
+        #
+        #         self._arrow_dataset = pds.dataset(
+        #             self.scan_files,
+        #             partitioning=self._partitioning,
+        #             filesystem=self._filesystem,
+        #         )
+        #     else:
+        #         self._arrow_dataset = pds.dataset(
+        #             self.scan_files,
+        #             partitioning=self._partitioning,
+        #             filesystem=self._filesystem,
+        #         )
+        #     if len(self._arrow_dataset.files):
+        #         self.ddb_con.register("arrow_dataset", self._arrow_dataset)
+        #
+        #     return self._arrow_dataset
 
     @property
     def arrow_dataset(self) -> pds.Dataset:
@@ -413,10 +401,15 @@ class ParquetDataset(ParquetDatasetMetadata):
         """
 
         if not hasattr(self, "_arrow_dataset"):
-            return self.to_arrow_dataset()
+            self._arrow_dataset = self.to_arrow_dataset()
         return self._arrow_dataset
 
-    def to_arrow(self, **kwargs) -> pa.Table:
+    def to_arrow(
+        self,
+        columns: str | list[str] | None = None,
+        batch_size: int | None = None,
+        **kwargs,
+    ) -> pa.Table:
         """
         Convert the dataset to an Apache Arrow table.
 
@@ -435,43 +428,49 @@ class ParquetDataset(ParquetDatasetMetadata):
               read and converted to an Apache Arrow table. The conversion will be
               performed in parallel.
         """
+        return self.table.to_arrow(columns=columns, batch_size=batch_size, **kwargs)
 
-        if hasattr(self, "_arrow_table"):
-            if sorted(self._table_files) == sorted(self.scan_files):
-                return self._arrow_table
-
-            else:
-                self._arrow_table = pa.concat_tables(
-                    run_parallel(
-                        read_table,
-                        self.scan_files,
-                        schema=self.file_schema,
-                        filesystem=self._filesystem,
-                        partitioning=self._partitioning,
-                        **kwargs,
-                    )
-                )
-
-        else:
-            self._arrow_table = pa.concat_tables(
-                run_parallel(
-                    read_table,
-                    self.scan_files,
-                    schema=self.schema,
-                    filesystem=self._filesystem,
-                    partitioning=self._partitioning,
-                    **kwargs,
-                )
-            )
-        self._table_files = self.scan_files.copy()
-
-        if len(self._table_files):
-            self.ddb_con.register("arrow_table", self._arrow_table)
-
-        return self._arrow_table
+        # if hasattr(self, "_arrow_table"):
+        #     if sorted(self._table_files) == sorted(self.scan_files):
+        #         return self._arrow_table
+        #
+        #     else:
+        #         self._arrow_table = pa.concat_tables(
+        #             run_parallel(
+        #                 read_table,
+        #                 self.scan_files,
+        #                 schema=self.file_schema,
+        #                 filesystem=self._filesystem,
+        #                 partitioning=self._partitioning,
+        #                 **kwargs,
+        #             )
+        #         )
+        #
+        # else:
+        #     self._arrow_table = pa.concat_tables(
+        #         run_parallel(
+        #             read_table,
+        #             self.scan_files,
+        #             schema=self.schema,
+        #             filesystem=self._filesystem,
+        #             partitioning=self._partitioning,
+        #             **kwargs,
+        #         )
+        #     )
+        # self._table_files = self.scan_files.copy()
+        #
+        # if len(self._table_files):
+        #     self.ddb_con.register("arrow_table", self._arrow_table)
+        #
+        # return self._arrow_table
 
     # @property
-    def arrow(self) -> pa.Table:
+    def arrow_table(
+        self,
+        columns: str | list[str] | None = None,
+        batch_size: int | None = None,
+        **kwargs,
+    ) -> pa.Table:
         """
         Converts the object to a PyArrow table and returns it.
 
@@ -482,10 +481,10 @@ class ParquetDataset(ParquetDatasetMetadata):
            pa.Table: The PyArrow table.
 
         """
-        return self.to_arrow()
+        return self.to_arrow(columns=columns, batch_size=batch_size, **kwargs)
 
     @property
-    def arrow_table(self):
+    def arrow(self):
         """
         Returns the arrow table representation of the data.
 
@@ -493,12 +492,16 @@ class ParquetDataset(ParquetDatasetMetadata):
             arrow.Table: The arrow table representation of the data.
         """
         if not hasattr(self, "_arrow_table"):
-            return self.to_arrow()
+            self._arrow_table = self.to_arrow()
+            self.ddb_con.register(f"{self.name}_table", self._arrow_table)
         return self._arrow_table
 
     def to_duckdb(
         self,
         lazy: bool = True,
+        columns: str | list[str] | None = None,
+        batch_size: int | None = None,
+        **kwargs,
     ) -> _duckdb.DuckDBPyRelation:
         """
         Converts the current object to a DuckDBPyRelation object.
@@ -509,19 +512,27 @@ class ParquetDataset(ParquetDatasetMetadata):
         Returns:
             DuckDBPyRelation: A DuckDBPyRelation object representing the converted object.
         """
+        return self.table.to_duckdb(
+            lazy=lazy, columns=columns, batch_size=batch_size, **kwargs
+        )
+        # if lazy:
+        #     if sorted(self.files) == sorted(self.scan_files):
+        #         self._ddb = self.ddb_con.from_arrow(self.arrow_parquet_dataset)
+        #     else:
+        #         self._ddb = self.ddb_con.from_arrow(self.arrow_dataset)
+        #
+        # else:
+        #     self._ddb = self.ddb_con.from_arrow(self.arrow())
+        #
+        # return self._ddb
 
-        if lazy:
-            if sorted(self.files) == sorted(self.scan_files):
-                self._ddb = self.ddb_con.from_arrow(self.arrow_parquet_dataset)
-            else:
-                self._ddb = self.ddb_con.from_arrow(self.arrow_dataset)
-
-        else:
-            self._ddb = self.ddb_con.from_arrow(self.arrow())
-
-        return self._ddb
-
-    def duckdb(self, lazy: bool = True) -> _duckdb.DuckDBPyRelation:
+    def duckdb(
+        self,
+        lazy: bool = True,
+        columns: str | list[str] | None = None,
+        batch_size: int | None = None,
+        **kwargs,
+    ) -> _duckdb.DuckDBPyRelation:
         """
         A description of the entire function, its parameters, and its return types.
 
@@ -531,7 +542,9 @@ class ParquetDataset(ParquetDatasetMetadata):
         Returns:
             _duckdb.DuckDBPyRelation: An instance of _duckdb.DuckDBPyRelation.
         """
-        return self.to_duckdb(lazy=lazy)
+        return self.to_duckdb(
+            lazy=lazy, columns=columns, batch_size=batch_size, **kwargs
+        )
 
     @property
     def ddb(self) -> _duckdb.DuckDBPyRelation:
@@ -542,12 +555,15 @@ class ParquetDataset(ParquetDatasetMetadata):
             The DuckDBPyRelation object.
         """
         if not hasattr(self, "_ddb"):
-            return self.to_duckdb()
+            self._ddb = self.to_duckdb()
         return self._ddb
 
     def to_polars(
         self,
         lazy: bool = True,
+        columns: str | list[str] | None = None,
+        batch_size: int | None = None,
+        **kwargs,
     ) -> _pl.DataFrame:
         """
         Converts the current object to a Polars DataFrame.
@@ -559,14 +575,23 @@ class ParquetDataset(ParquetDatasetMetadata):
         Returns:
             _pl.DataFrame: The converted Polars DataFrame.
         """
-        if lazy:
-            self._pl = _pl.scan_pyarrow_dataset(self.arrow_dataset)
-        else:
-            self._pl = _pl.from_arrow(self.arrow())
+        return self.table.to_polars(
+            lazy=lazy, columns=columns, batch_size=batch_size, **kwargs
+        )
+        # if lazy:
+        #     self._pl = _pl.scan_pyarrow_dataset(self.arrow_dataset)
+        # else:
+        #     self._pl = _pl.from_arrow(self.arrow())
+        #
+        # return self._pl
 
-        return self._pl
-
-    def to_pl(self, lazy: bool = True) -> _pl.DataFrame:
+    def to_pl(
+        self,
+        lazy: bool = True,
+        columns: str | list[str] | None = None,
+        batch_size: int | None = None,
+        **kwargs,
+    ) -> _pl.DataFrame:
         """
         Convert the DataFrame to a Polars DataFrame.
 
@@ -577,7 +602,9 @@ class ParquetDataset(ParquetDatasetMetadata):
             _pl.DataFrame: The converted Polars DataFrame.
         """
 
-        return self.to_polars(lazy=lazy)
+        return self.to_polars(
+            lazy=lazy, columns=columns, batch_size=batch_size, **kwargs
+        )
 
     @property
     def pl(self) -> _pl.DataFrame:
@@ -596,6 +623,9 @@ class ParquetDataset(ParquetDatasetMetadata):
     def to_pandas(
         self,
         lazy: bool = True,
+        columns: str | list[str] | None = None,
+        batch_size: int | None = None,
+        **kwargs,
     ) -> pd.DataFrame:
         """
         Convert the current object to a pandas DataFrame.
@@ -606,11 +636,19 @@ class ParquetDataset(ParquetDatasetMetadata):
         Returns:
             pd.DataFrame: The converted pandas DataFrame.
         """
+        return self.table.to_pandas(
+            lazy=lazy, columns=columns, batch_size=batch_size, **kwargs
+        )
+        # self._df = self.to_duckdb(lazy=lazy).df()
+        # return self._df
 
-        self._df = self.to_duckdb(lazy=lazy).df()
-        return self._df
-
-    def to_df(self, lazy: bool = True) -> pd.DataFrame:
+    def to_df(
+        self,
+        lazy: bool = True,
+        columns: str | list[str] | None = None,
+        batch_size: int | None = None,
+        **kwargs,
+    ) -> pd.DataFrame:
         """
         Convert the object to a pandas DataFrame.
 
@@ -621,7 +659,9 @@ class ParquetDataset(ParquetDatasetMetadata):
             pd.DataFrame: The converted pandas DataFrame.
         """
 
-        return self.to_pandas(lazy=lazy)
+        return self.to_pandas(
+            lazy=lazy, columns=columns, batch_size=batch_size, **kwargs
+        )
 
     @property
     def df(self) -> pd.DataFrame:
@@ -634,11 +674,11 @@ class ParquetDataset(ParquetDatasetMetadata):
         """
 
         if not hasattr(self, "_df"):
-            return self.to_pandas()
+            self._df = self.to_pandas()
         return self._df
 
     def __repr__(self):
-        return self.ddb_con.from_arrow(self.arrow_parquet_dataset.head(10)).__repr__()
+        return self.table.__repr__()
 
     def sql(self, sql: str) -> _duckdb.DuckDBPyRelation:
         """
@@ -704,8 +744,8 @@ class ParquetDataset(ParquetDatasetMetadata):
         filter_expr: str | pds.Expression,
         use: str = "auto",
         on: str = "auto",
-        return_type: str | None = None,
-        lazy: bool = True,
+        # return_type: str | None = None,
+        # lazy: bool = True,
     ) -> pds.FileSystemDataset | pds.Dataset | _duckdb.DuckDBPyRelation:
         """
         Filters the dataset based on the given filter expression.
@@ -765,7 +805,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             else:
                 res = self._filter_duckdb(filter_expr)
 
-        return FilterResult(result=res, ddb_con=self.ddb_con)
+        return PydalaTable(result=res, ddb_con=self.ddb_con)
 
     @property
     def registered_tables(self) -> list[str]:
@@ -791,6 +831,12 @@ class ParquetDataset(ParquetDatasetMetadata):
         """
         self.pydala_dataset_metadata.reset_scan()
 
+    def interrupt_duckdb(self):
+        """
+        Interrupts the DuckDB connection.
+        """
+        self.ddb_con.interrupt()
+
     def reset_duckdb(self):
         """
         Resets the DuckDB connection and registers the necessary tables and datasets.
@@ -798,19 +844,19 @@ class ParquetDataset(ParquetDatasetMetadata):
         Returns:
             None
         """
-        self.ddb_con = _duckdb.connect()
-        if len(self._table_files):
-            self.ddb_con.register("arrow_table", self._arrow_table)
+        # self.ddb_con = _duckdb.connect()
+        self.interrupt_duckdb()
 
-        if hasattr(self, "_arrow_dataset"):
-            if len(self._arrow_dataset.files):
-                self.ddb_con.register("arrow_dataset", self._arrow_dataset)
+        if not f"{self.name}_table" in self.registered_tables:
+            if len(self._table_files):
+                self.ddb_con.register(f"{self.name}_table", self._arrow_table)
 
-        if hasattr(self, "_arrow_parquet_dataset"):
-            if len(self._arrow_parquet_dataset.files):
-                self.ddb_con.register(
-                    "arrow_parquet_dataset", self._arrow_parquet_dataset
-                )
+        if not f"{self.name}_dataset" in self.registered_tables:
+            if hasattr(self, "_arrow_parquet_dataset"):
+                if len(self._arrow_parquet_dataset.files):
+                    self.ddb_con.register(
+                        f"{self.name}_dataset", self._arrow_parquet_dataset
+                    )
 
     def update_metadata_table(self):
         """
@@ -880,7 +926,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                 all files in the dataset will be deleted. Defaults to None.
         """
         self._filesystem.rm(files, recursive=True)
-        self.load(reload=True)
+        #self.load(reload=True)
 
     def _get_delta_other_df(
         self,
@@ -888,7 +934,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         filter_columns: str | list[str] | None = None,
         use: str = "auto",
         on: str = "auto",
-    ):
+    ) -> _pl.DataFrame | _pl.LazyFrame:
         """
         Generate the delta dataframe based on the given dataframe, columns, use, and on parameters.
 
@@ -936,29 +982,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         if filter_expr == []:
             return _pl.DataFrame(schema=df.schema)
 
-        if on != "parquet_dataset":
-            # self.scan(" AND ".join(filter_expr))
-
-            # if len(self.scan_files):
-            #    res = self.filter(" AND ".join(filter_expr), use=use, on=on)
-            # else:
-            res = self.filter(" AND ".join(filter_expr), on=on, use=use)
-
-        else:
-            res = self.filter(" AND ".join(filter_expr), use=use, on=on)
-
-        # if isinstance(res, _duckdb.DuckDBPyRelation):
-        #    df0 = res.pl()
-        # elif isinstance(res, pds.Dataset | pds.FileSystemDataset):
-        #    df0 = _pl.from_arrow(res.to_table())
-
-        df0 = res.to_polars()
-        # else:
-        #    df0 = _pl.DataFrame(schema=df.schema)
-
-        # self.reset_scan()
-
-        return df0
+        return self.filter(" AND ".join(filter_expr), use=use, on=on).to_polars()
 
     def write_to_dataset(
         self,
@@ -966,13 +990,14 @@ class ParquetDataset(ParquetDatasetMetadata):
             _pl.DataFrame
             | _pl.LazyFrame
             | pa.Table
+            | pa.RecordBatch
             | pd.DataFrame
             | _duckdb.DuckDBPyConnection
         ),
-        base_name: str | None = None,
         mode: str = "append",  # "delta", "overwrite"
-        num_rows: int | None = 100_000_000,
-        row_group_size: int | None = None,
+        partitioning_columns: str | list[str] | None = None,
+        n_rows: int | None = 10_000_000,
+        row_group_size: int | None = 1_000_000,
         compression: str = "zstd",
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
         unique: bool | str | list[str] = False,
@@ -982,10 +1007,11 @@ class ParquetDataset(ParquetDatasetMetadata):
         use_large_string: bool = False,
         delta_subset: str | list[str] | None = None,
         other_df_filter_columns: str | list[str] | None = None,
-        partitioning_columns: str | list[str] | None = None,
         use: str = "pyarrow",
         on: str = "parquet_dataset",
         update_metadata: bool = False,
+        add_missing_fields: bool = True,
+        drop_extra_fields: bool = False,
         **kwargs,
     ):
         """
@@ -996,7 +1022,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                 or Table to write.
             base_name (str | None): The base name for the dataset files. Defaults to None.
             mode (str): The write mode. Can be "append", "delta", or "overwrite". Defaults to "append".
-            num_rows (int | None): The number of rows per file. Defaults to 100_000_000.
+            n_rows (int | None): The number of rows per file. Defaults to 100_000_000.
             row_group_size (int | None): The row group size for Parquet files. Defaults to None.
             compression (str): The compression algorithm to use. Defaults to "zstd".
             sort_by (str | list[str] | list[tuple[str, str]] | None): The column(s) to sort by. Defaults to None.
@@ -1018,24 +1044,29 @@ class ParquetDataset(ParquetDatasetMetadata):
         if df.shape[0] == 0:
             return
 
-        if self.partitioning_names:
-            partitioning_columns = self.partitioning_names.copy()
+        if self.partition_names:
+            partitioning_columns = self.partition_names.copy()
 
         writer = Writer(
             data=df, path=self._path, filesystem=self._filesystem, schema=self.schema
         )
         writer.sort_data(by=sort_by)
         writer.unique(columns=unique)
-        writer.add_datepart_columns(timestamp_column=self._timestamp_column)
+        writer.add_datepart_columns(
+            columns=partitioning_columns, timestamp_column=self._timestamp_column
+        )
         writer.cast_schema(
             use_large_string=use_large_string,
             ts_unit=ts_unit,
             tz=tz,
             remove_tz=remove_tz,
+            add_missing_fields=add_missing_fields,
+            drop_extra_fields=drop_extra_fields,
         )
 
         if mode == "overwrite":
             del_files = self.files.copy()
+
         elif mode == "delta" and self.has_files:
             writer._to_polars()
             other_df = self._get_delta_other_df(
@@ -1046,319 +1077,387 @@ class ParquetDataset(ParquetDatasetMetadata):
             )
             if other_df is not None:
                 writer.delta(other=other_df, subset=delta_subset)
-            # print("delta", writer.data.shape)
+
         if writer.shape[0] == 0:
-            # print("No new data to write.")
             return
-        writer.partition_by(
-            columns=partitioning_columns,
-            timestamp_column=self._timestamp_column,
-            num_rows=num_rows,
-        )
-        writer.set_path(base_name=base_name)
-        file_metadata = writer.write(
-            row_group_size=row_group_size, compression=compression, **kwargs
-        )
 
-        if len(file_metadata):
-            if hasattr(self, "file_metadata"):
-                self.file_metadata.update(file_metadata)
-            else:
-                self.file_metadata = file_metadata
-
+        writer.write_to_dataset(
+            row_group_size=row_group_size,
+            compression=compression,
+            partitioning=partitioning_columns,
+            partitioning_flavor="hive",
+            n_rows=n_rows,
+            **kwargs,
+        )
         if mode == "overwrite":
             self.delete_files(del_files)
             if update_metadata:
-                self.load(reload=True, verbose=False)
+                self.load(update_metadata=True, verbose=False)
+                self.update_metada_table()
+
         else:
             if update_metadata:
                 try:
                     self.load(update_metadata=True, verbose=False)
                 except Exception as e:
                     _ = e
-                    self.load(reload=True, verbose=False)
-        if update_metadata:
-            self.update_metada_table()
+                    self.load(reload_metadata=True, verbose=False)
+                self.update_metada_table()
+
         self.clear_cache()
 
-    def _optimize_by_file_size(
+    def _optimize_partition(
         self,
-        target_size: str | int,
-        strict: bool = False,
-        sort_by_timestamp: bool | str = True,
-        filter_expr: str | None = None,
-        lazy: bool = True,
-        allow_smaller: bool = False,
-        **kwargs,
+        partition: str|list[str],
+        n_rows: int | None = None,
+        sort_by: str | list[str] | list[tuple[str, str]] = None,
+        distinct: bool = False,
+        compression="zstd", **kwargs
     ):
-        """
-        Optimize the dataset by file size.
+        if isinstance(partition, str):
+            partition = [partition]
 
-        Args:
-            target_size (str | int): The target size of the dataset in bytes or a human-readable string (e.g. '1GB').
-            strict (bool, optional): Whether to strictly enforce the target size. Defaults to False.
-            sort_by_timestamp (bool | str, optional): Whether to sort the dataset by timestamp. If True, the dataset
-                will be sorted by the first timestamp column. If a string is provided, the dataset will be sorted by
-                the specified column. Defaults to True.
-            filter_expr (str | None, optional): An optional filter expression to apply to the dataset before optimizing.
-                Defaults to None.
-            lazy (bool, optional): Whether to lazily load the dataset. Defaults to True.
-            allow_smaller (bool, optional): Whether to allow the dataset to be smaller than the target size. Defaults
-                to False.
-            **kwargs: Additional keyword arguments to pass to `write_to_dataset`.
+        filter_ = " AND ".join(
+            [f"{n}='{v}'" for n, v in list(zip(self.partition_names, partition))]
+        )
+        batches = self.scan(filter_).to_batch_reader(
+            sort_by=sort_by, distinct=distinct, batch_size=n_rows
+        )
 
-        Raises:
-            ValueError: If `target_size` is not a valid size string.
-
-        Returns:
-            None
-        """
-        if filter_expr is not None:
-            self.scan_file_catalog(filter_expr=filter_expr)
-            file_catalog = self.file_catalog.filter(
-                _pl.col("file_path").is_in(
-                    [os.path.basename(f) for f in self._scan_files]
-                )
-            )
-
-        else:
-            file_catalog = self.file_catalog
-
-        if sort_by_timestamp:
-            if len(self._timestamp_columns):
-                file_catalog.sort(
-                    [
-                        self._timestamp_columns[0] + "_min",
-                        self._timestamp_columns[0] + "_max",
-                    ]
-                )
-            else:
-                file_catalog.sort(
-                    [sort_by_timestamp + "_min", sort_by_timestamp + "_max"]
-                )
-
-        if isinstance(target_size, str):
-            target_byte_size = humanized_size_to_bytes(target_size)
-        elif isinstance(target_size, int):
-            target_byte_size = target_size
-        else:
-            raise ValueError("Invalid target size")
-
-        del_files = []
-
-        if not strict:
-            file_groups = file_catalog.with_columns(
-                (_pl.col("total_byte_size").cumsum() // target_byte_size).alias("group")
-            ).select(["file_path", "total_byte_size", "group"])
-
-            for file_group in tqdm.tqdm(file_groups.partition_by("group")):
-                if (
-                    file_group.shape[0] == 1
-                    and file_group["total_byte_size"].sum() > target_byte_size
-                ):
-                    continue
-                paths = [
-                    os.path.join(self._path, f)
-                    for f in file_group["file_path"].to_list()
-                ]
-                del_files.extend(paths)
-                if lazy:
-                    df = _pl.scan_pyarrow_dataset(
-                        pds.dataset(
-                            paths,
-                            filesystem=self._filesystem,
-                            partitioning=self._partitioning,
-                        )
-                    )
-                else:
-                    df = _pl.from_arrow(
-                        read_table(
-                            paths, self._filesystem, partitioning=self._partitioning
-                        )
-                    )
-
-                self.write_to_dataset(df=df, mode="append", **kwargs)
-            # print(del_files)
-            self.delete_files(del_files)
-
-        else:
-            target_num_rows = int(
-                target_byte_size
-                / self.file_catalog.with_columns(
-                    (_pl.col("total_byte_size") / _pl.col("num_rows")).alias(
-                        "row_byte_size"
-                    )
-                )["row_byte_size"].mean()
-            )
-
-            self._optimize_by_num_rows(
-                target_num_rows=target_num_rows,
-                strict=True,
-                sort_by_timestamp=sort_by_timestamp,
-                filter_expr=filter_expr,
-                lazy=lazy,
-                allow_smaller=allow_smaller**kwargs,
-            )
-
-    def _optimize_num_rows(
-        self,
-        target_num_rows: int,
-        strict: bool = False,
-        sort_by_timestamp: bool | str = True,
-        filter_expr: str | None = None,
-        lazy: bool = True,
-        allow_smaller: bool = False,
-        **kwargs,
-    ):
-        """
-        Optimize the number of rows in the dataset by appending data from files with fewer rows
-        to files with more rows, until the target number of rows is reached.
-
-        Args:
-            target_num_rows (int): The target number of rows for the dataset.
-            strict (bool, optional): If True, only files with exactly target_num_rows rows will be used.
-                Defaults to False.
-            sort_by_timestamp (bool | str, optional): If True, sort files by timestamp.
-                If str, sort files by the specified column. Defaults to True.
-            filter_expr (str | None, optional): A filter expression to apply to the dataset before optimizing.
-                Defaults to None.
-            lazy (bool, optional): If True, use lazy loading when reading files.
-                If False, load all files into memory at once. Defaults to True.
-            allow_smaller (bool, optional): If True, allow files with fewer rows than target_num_rows to be used.
-                Defaults to False.
-            **kwargs: Additional keyword arguments to pass to write_to_dataset().
-
-        Returns:
-            None
-        """
-        if filter_expr is not None:
-            self.scan_file_catalog(filter_expr=filter_expr)
-            file_catalog = self.file_catalog.filter(
-                _pl.col("file_path").is_in(
-                    [os.path.basename(f) for f in self._scan_files]
-                )
-            )
-        else:
-            file_catalog = self.file_catalog
-
-        if sort_by_timestamp:
-            if len(self._timestamp_columns):
-                file_catalog.sort(
-                    [
-                        self._timestamp_columns[0] + "_min",
-                        self._timestamp_columns[0] + "_max",
-                    ]
-                )
-            else:
-                file_catalog.sort(
-                    [sort_by_timestamp + "_min", sort_by_timestamp + "_max"]
-                )
-
-        del_files = []
-
-        if not strict:
-            file_groups = file_catalog.with_columns(
-                (_pl.col("num_rows").cumsum() // target_num_rows).alias("group")
-            ).select(["file_path", "num_rows", "group"])
-
-            for file_group in tqdm.tqdm(file_groups.partition_by("group")):
-                if not allow_smaller and file_group["num_rows"].sum() > target_num_rows:
-                    continue
-                paths = [
-                    os.path.join(self._path, f)
-                    for f in file_group["file_path"].to_list()
-                ]
-                del_files.extend(paths)
-                if lazy:
-                    df = _pl.scan_pyarrow_dataset(
-                        pds.dataset(
-                            paths,
-                            filesystem=self._filesystem,
-                            partitioning=self._partitioning,
-                        )
-                    )
-                else:
-                    df = _pl.from_arrow(
-                        read_table(
-                            paths, self._filesystem, partitioning=self._partitioning
-                        )
-                    )
-
-                self.write_to_dataset(df=df, mode="append", **kwargs)
-
-        else:
-            file_catalog = file_catalog.filter(_pl.col("num_rows") != target_num_rows)
-            paths = [
-                os.path.join(self._path, f) for f in file_catalog["file_path"].to_list()
-            ]
-            del_files.extend(paths)
-            if lazy:
-                df = _pl.scan_pyarrow_dataset(
-                    pds.dataset(
-                        paths,
-                        filesystem=self._filesystem,
-                        partitioning=self._partitioning,
-                    )
-                )
-            else:
-                df = _pl.from_arrow(
-                    read_table(paths, self._filesystem, partitioning=self._partitioning)
-                )
-
+        for batch in batches:
             self.write_to_dataset(
-                df=df, mode="append", num_rows=target_num_rows, **kwargs
+                pa.table(batch),
+                mode="overwrite",
+                n_rows=n_rows,
+                row_group_size=min(n_rows or 250_000),
+                compression=compression,
+                update_metadata=False,
+                **kwargs
+            )
+        self.reset_scan()
+
+
+    def optimize(self, n_rows: int | None = None, sort_by: str | list[str] | list[tuple[str, str]] = None, distinct: bool = False,
+                 compression="zstd", **kwargs):
+        
+        def _optimize_partition(
+            partition: str|list[str],
+            n_rows: int | None = None,
+            sort_by: str | list[str] | list[tuple[str, str]] = None,
+            distinct: bool = False,
+            compression="zstd", 
+        ):
+            if isinstance(partition, str):
+                partition = [partition]
+
+            filter_ = " AND ".join(
+                [f"{n}='{v}'" for n, v in list(zip(self.partition_names, partition))]
+            )
+            batches = self.scan(filter_).to_batch_reader(
+                sort_by=sort_by, distinct=distinct, batch_size=n_rows
             )
 
-        # print(del_files)
-        self.delete_files(del_files)
+            for batch in batches:
+                self.write_to_dataset(
+                    pa.table(batch),
+                    mode="overwrite",
+                    n_rows=n_rows,
+                    row_group_size=min(n_rows or 250_000),
+                    compression=compression,
+                    update_metadata=False,
+                    
+                )
+            self.reset_scan()
 
-    def optimize(
-        self,
-        target_size: str | int | None = None,
-        target_num_rows: int | None = None,
-        strict: bool = False,
-        sort_by_timestamp: bool | str = True,
-        filter_expr: str | None = None,
-        lazy: bool = True,
-        allow_smaller: bool = False,
-        **kwargs,
-    ):
-        """
-        Optimize the dataset by either target file size or target number of rows.
+        run_parallel(
+            _optimize_partition,
+            self.partitions,
+            n_rows=n_rows,
+            sort_by=sort_by,
+            distinct=distinct,
+            compression=compression,
+            **kwargs
+        )
 
-        Args:
-            target_size (str | int | None): The target file size in bytes or a string with a suffix (e.g. '10MB').
-            target_num_rows (int | None): The target number of rows.
-            strict (bool): If True, raise an exception if the target size or number of rows cannot be reached.
-            sort_by_timestamp (bool | str): If True, sort files by timestamp before optimizing.
-                If 'asc', sort files by timestamp in ascending order.
-                If 'desc', sort files by timestamp in descending order.
-            filter_expr (str | None): A filter expression to apply to the dataset before optimizing.
-            lazy (bool): If True, only load the metadata of the files, not the actual data.
-            allow_smaller (bool): If True, allow the resulting file to be smaller than the target size.
-
-        Returns:
-            None
-        """
-        if target_size is not None:
-            self._optimize_by_file_size(
-                target_size=target_size,
-                strict=strict,
-                sort_by_timestamp=sort_by_timestamp,
-                filter_expr=filter_expr,
-                lazy=lazy,
-                allow_smaller=allow_smaller,
-                **kwargs,
-            )
-        elif target_num_rows is not None:
-            self._optimize_num_rows(
-                target_num_rows=target_num_rows,
-                strict=strict,
-                sort_by_timestamp=sort_by_timestamp,
-                filter_expr=filter_expr,
-                lazy=lazy,
-                allow_smaller=allow_smaller,
-                **kwargs,
-            )
-
-    # def zorder()
+        
+    # def _optimize_by_file_size(
+    #     self,
+    #     target_size: str | int,
+    #     strict: bool = False,
+    #     sort_by_timestamp: bool | str = True,
+    #     filter_expr: str | None = None,
+    #     lazy: bool = True,
+    #     allow_smaller: bool = False,
+    #     **kwargs,
+    # ):
+    #     """
+    #     Optimize the dataset by file size.
+    #
+    #     Args:
+    #         target_size (str | int): The target size of the dataset in bytes or a human-readable string (e.g. '1GB').
+    #         strict (bool, optional): Whether to strictly enforce the target size. Defaults to False.
+    #         sort_by_timestamp (bool | str, optional): Whether to sort the dataset by timestamp. If True, the dataset
+    #             will be sorted by the first timestamp column. If a string is provided, the dataset will be sorted by
+    #             the specified column. Defaults to True.
+    #         filter_expr (str | None, optional): An optional filter expression to apply to the dataset before optimizing.
+    #             Defaults to None.
+    #         lazy (bool, optional): Whether to lazily load the dataset. Defaults to True.
+    #         allow_smaller (bool, optional): Whether to allow the dataset to be smaller than the target size. Defaults
+    #             to False.
+    #         **kwargs: Additional keyword arguments to pass to `write_to_dataset`.
+    #
+    #     Raises:
+    #         ValueError: If `target_size` is not a valid size string.
+    #
+    #     Returns:
+    #         None
+    #     """
+    #     if filter_expr is not None:
+    #         self.scan_file_catalog(filter_expr=filter_expr)
+    #         file_catalog = self.file_catalog.filter(
+    #             _pl.col("file_path").is_in(
+    #                 [os.path.basename(f) for f in self._scan_files]
+    #             )
+    #         )
+    #
+    #     else:
+    #         file_catalog = self.file_catalog
+    #
+    #     if sort_by_timestamp:
+    #         if len(self._timestamp_columns):
+    #             file_catalog.sort(
+    #                 [
+    #                     self._timestamp_columns[0] + "_min",
+    #                     self._timestamp_columns[0] + "_max",
+    #                 ]
+    #             )
+    #         else:
+    #             file_catalog.sort(
+    #                 [sort_by_timestamp + "_min", sort_by_timestamp + "_max"]
+    #             )
+    #
+    #     if isinstance(target_size, str):
+    #         target_byte_size = humanized_size_to_bytes(target_size)
+    #     elif isinstance(target_size, int):
+    #         target_byte_size = target_size
+    #     else:
+    #         raise ValueError("Invalid target size")
+    #
+    #     del_files = []
+    #
+    #     if not strict:
+    #         file_groups = file_catalog.with_columns(
+    #             (_pl.col("total_byte_size").cumsum() // target_byte_size).alias("group")
+    #         ).select(["file_path", "total_byte_size", "group"])
+    #
+    #         for file_group in tqdm.tqdm(file_groups.partition_by("group")):
+    #             if (
+    #                 file_group.shape[0] == 1
+    #                 and file_group["total_byte_size"].sum() > target_byte_size
+    #             ):
+    #                 continue
+    #             paths = [
+    #                 os.path.join(self._path, f)
+    #                 for f in file_group["file_path"].to_list()
+    #             ]
+    #             del_files.extend(paths)
+    #             if lazy:
+    #                 df = _pl.scan_pyarrow_dataset(
+    #                     pds.dataset(
+    #                         paths,
+    #                         filesystem=self._filesystem,
+    #                         partitioning=self._partitioning,
+    #                     )
+    #                 )
+    #             else:
+    #                 df = _pl.from_arrow(
+    #                     read_table(
+    #                         paths, self._filesystem, partitioning=self._partitioning
+    #                     )
+    #                 )
+    #
+    #             self.write_to_dataset(df=df, mode="append", **kwargs)
+    #         # print(del_files)
+    #         self.delete_files(del_files)
+    #
+    #     else:
+    #         target_n_rows = int(
+    #             target_byte_size
+    #             / self.file_catalog.with_columns(
+    #                 (_pl.col("total_byte_size") / _pl.col("n_rows")).alias(
+    #                     "row_byte_size"
+    #                 )
+    #             )["row_byte_size"].mean()
+    #         )
+    #
+    #         self._optimize_by_n_rows(
+    #             target_n_rows=target_n_rows,
+    #             strict=True,
+    #             sort_by_timestamp=sort_by_timestamp,
+    #             filter_expr=filter_expr,
+    #             lazy=lazy,
+    #             allow_smaller=allow_smaller**kwargs,
+    #         )
+    #
+    # def _optimize_n_rows(
+    #     self,
+    #     target_n_rows: int,
+    #     strict: bool = False,
+    #     sort_by_timestamp: bool | str = True,
+    #     filter_expr: str | None = None,
+    #     lazy: bool = True,
+    #     allow_smaller: bool = False,
+    #     **kwargs,
+    # ):
+    #     """
+    #     Optimize the number of rows in the dataset by appending data from files with fewer rows
+    #     to files with more rows, until the target number of rows is reached.
+    #
+    #     Args:
+    #         target_n_rows (int): The target number of rows for the dataset.
+    #         strict (bool, optional): If True, only files with exactly target_n_rows rows will be used.
+    #             Defaults to False.
+    #         sort_by_timestamp (bool | str, optional): If True, sort files by timestamp.
+    #             If str, sort files by the specified column. Defaults to True.
+    #         filter_expr (str | None, optional): A filter expression to apply to the dataset before optimizing.
+    #             Defaults to None.
+    #         lazy (bool, optional): If True, use lazy loading when reading files.
+    #             If False, load all files into memory at once. Defaults to True.
+    #         allow_smaller (bool, optional): If True, allow files with fewer rows than target_n_rows to be used.
+    #             Defaults to False.
+    #         **kwargs: Additional keyword arguments to pass to write_to_dataset().
+    #
+    #     Returns:
+    #         None
+    #     """
+    #     if filter_expr is not None:
+    #         self.scan_file_catalog(filter_expr=filter_expr)
+    #         file_catalog = self.file_catalog.filter(
+    #             _pl.col("file_path").is_in(
+    #                 [os.path.basename(f) for f in self._scan_files]
+    #             )
+    #         )
+    #     else:
+    #         file_catalog = self.file_catalog
+    #
+    #     if sort_by_timestamp:
+    #         if len(self._timestamp_columns):
+    #             file_catalog.sort(
+    #                 [
+    #                     self._timestamp_columns[0] + "_min",
+    #                     self._timestamp_columns[0] + "_max",
+    #                 ]
+    #             )
+    #         else:
+    #             file_catalog.sort(
+    #                 [sort_by_timestamp + "_min", sort_by_timestamp + "_max"]
+    #             )
+    #
+    #     del_files = []
+    #
+    #     if not strict:
+    #         file_groups = file_catalog.with_columns(
+    #             (_pl.col("n_rows").cumsum() // target_n_rows).alias("group")
+    #         ).select(["file_path", "n_rows", "group"])
+    #
+    #         for file_group in tqdm.tqdm(file_groups.partition_by("group")):
+    #             if not allow_smaller and file_group["n_rows"].sum() > target_n_rows:
+    #                 continue
+    #             paths = [
+    #                 os.path.join(self._path, f)
+    #                 for f in file_group["file_path"].to_list()
+    #             ]
+    #             del_files.extend(paths)
+    #             if lazy:
+    #                 df = _pl.scan_pyarrow_dataset(
+    #                     pds.dataset(
+    #                         paths,
+    #                         filesystem=self._filesystem,
+    #                         partitioning=self._partitioning,
+    #                     )
+    #                 )
+    #             else:
+    #                 df = _pl.from_arrow(
+    #                     read_table(
+    #                         paths, self._filesystem, partitioning=self._partitioning
+    #                     )
+    #                 )
+    #
+    #             self.write_to_dataset(df=df, mode="append", **kwargs)
+    #
+    #     else:
+    #         file_catalog = file_catalog.filter(_pl.col("n_rows") != target_n_rows)
+    #         paths = [
+    #             os.path.join(self._path, f) for f in file_catalog["file_path"].to_list()
+    #         ]
+    #         del_files.extend(paths)
+    #         if lazy:
+    #             df = _pl.scan_pyarrow_dataset(
+    #                 pds.dataset(
+    #                     paths,
+    #                     filesystem=self._filesystem,
+    #                     partitioning=self._partitioning,
+    #                 )
+    #             )
+    #         else:
+    #             df = _pl.from_arrow(
+    #                 read_table(paths, self._filesystem, partitioning=self._partitioning)
+    #             )
+    #
+    #         self.write_to_dataset(
+    #             df=df, mode="append", n_rows=target_n_rows, **kwargs
+    #         )
+    #
+    #     # print(del_files)
+    #     self.delete_files(del_files)
+    #
+    # def optimize(
+    #     self,
+    #     target_size: str | int | None = None,
+    #     target_n_rows: int | None = None,
+    #     strict: bool = False,
+    #     sort_by_timestamp: bool | str = True,
+    #     filter_expr: str | None = None,
+    #     lazy: bool = True,
+    #     allow_smaller: bool = False,
+    #     **kwargs,
+    # ):
+    #     """
+    #     Optimize the dataset by either target file size or target number of rows.
+    #
+    #     Args:
+    #         target_size (str | int | None): The target file size in bytes or a string with a suffix (e.g. '10MB').
+    #         target_n_rows (int | None): The target number of rows.
+    #         strict (bool): If True, raise an exception if the target size or number of rows cannot be reached.
+    #         sort_by_timestamp (bool | str): If True, sort files by timestamp before optimizing.
+    #             If 'asc', sort files by timestamp in ascending order.
+    #             If 'desc', sort files by timestamp in descending order.
+    #         filter_expr (str | None): A filter expression to apply to the dataset before optimizing.
+    #         lazy (bool): If True, only load the metadata of the files, not the actual data.
+    #         allow_smaller (bool): If True, allow the resulting file to be smaller than the target size.
+    #
+    #     Returns:
+    #         None
+    #     """
+    #     if target_size is not None:
+    #         self._optimize_by_file_size(
+    #             target_size=target_size,
+    #             strict=strict,
+    #             sort_by_timestamp=sort_by_timestamp,
+    #             filter_expr=filter_expr,
+    #             lazy=lazy,
+    #             allow_smaller=allow_smaller,
+    #             **kwargs,
+    #         )
+    #     elif target_n_rows is not None:
+    #         self._optimize_n_rows(
+    #             target_n_rows=target_n_rows,
+    #             strict=strict,
+    #             sort_by_timestamp=sort_by_timestamp,
+    #             filter_expr=filter_expr,
+    #             lazy=lazy,
+    #             allow_smaller=allow_smaller,
+    #             **kwargs,
+    #         )
+    #
+    # # def zorder()

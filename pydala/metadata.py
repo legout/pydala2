@@ -9,42 +9,9 @@ import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 
 from .filesystem import clear_cache, FileSystem
-from .helpers.misc import get_partitions_from_path, run_parallel
+from .helpers.misc import get_partitions_from_path
 from .schema import repair_schema, unify_schemas
-
-
-def collect_parquet_metadata(
-    files: list[str] | str,
-    filesystem: AbstractFileSystem | pfs.FileSystem | None = None,
-    n_jobs: int = -1,
-    backend: str = "threading",
-    verbose: bool = True,
-) -> dict[str, pq.FileMetaData]:
-    """Collect all metadata information of the given parqoet files.
-
-    Args:
-        files (list[str] | str): Parquet files.
-        filesystem (AbstractFileSystem | pfs.FileSystem | None, optional): Filesystem. Defaults to None.
-        n_jobs (int, optional): n_jobs parameter of joblib.Parallel. Defaults to -1.
-        backend (str, optional): backend parameter of joblib.Parallel. Defaults to "threading".
-        verbose (bool, optional): Wheter to show the task progress using tqdm or not. Defaults to True.
-
-    Returns:
-        dict[str, pq.FileMetaData]: Parquet metadata of the given files.
-    """
-
-    def get_metadata(f, filesystem):
-        return {f: pq.read_metadata(f, filesystem=filesystem)}
-
-    metadata = run_parallel(
-        get_metadata,
-        files,
-        filesystem=filesystem,
-        backend=backend,
-        n_jobs=n_jobs,
-        verbose=verbose,
-    )
-    return {key: value for d in metadata for key, value in d.items()}
+from .helpers.metadata import collect_parquet_metadata, remove_from_metadata
 
 
 class ParquetDatasetMetadata:
@@ -111,9 +78,9 @@ class ParquetDatasetMetadata:
         Args:
             files (list[str] | None): A list of file paths to collect metadata for. If None, metadata will be
                 collected for all files in the dataset.
-            **kwargs: Additional keyword arguments to pass to the `collect_metadata` function.
+            **kwargs: Additional keyword arguments to pass to the `collect_parquet_metadata` function.
 
-        Returns:
+        Return
             None
         """
         if files is None:
@@ -132,7 +99,12 @@ class ParquetDatasetMetadata:
             else:
                 self.file_metadata = file_metadata
 
-    def update_file_metadata(self, **kwargs) -> None:
+    def _rm_file_metadata(self):
+        rm_file_metadata = [f for f in self.file_metadata.keys() if f not in self.files]
+        for f in rm_file_metadata:
+            self.file_metadata.pop(f)
+
+    def _update_file_metadata(self, **kwargs) -> None:
         """
         Updates the metadata for files in the dataset.
 
@@ -146,14 +118,146 @@ class ParquetDatasetMetadata:
         Returns:
             None
         """
+
+        # Add new files to file_metadata
         self.reload_files()
 
         files = sorted((set(self._files) - set(self.files_in_metadata)))
+
         if hasattr(self, "file_metadata"):
             files = sorted(set(files) - set(self.file_metadata.keys()))
 
         if len(files):
             self._collect_file_metadata(files=files, **kwargs)
+
+        # Remove files from file_metadata
+        self._rm_file_metadata()
+
+    def reset(self):
+        """
+        Resets the dataset by removing the metadata file and clearing the cache.
+        This method removes the metadata file and clears the cache for the dataset's filesystem and base filesystem.
+        Returns:
+            None
+        """
+        if self.has_metadata:
+            del self._metadata
+        if hasattr(self, "_file_schema"):
+            del self._file_schema
+        if hasattr(self, "_schema"):
+            del self._schema
+        if hasattr(self, "file_metadata"):
+            del self.file_metadata
+
+        self.clear_cache()
+
+    def _get_unified_schema(
+        self,
+        ts_unit: str | None = "us",
+        tz: str | None = None,
+        use_large_string: bool = False,
+        sort: bool | list[str] = False,
+    ) -> tuple[pa.Schema, bool]:
+        """
+        Returns the unified schema for the dataset.
+        Returns:
+            pyarrow.Schema: The unified schema for the dataset.
+
+        """
+        schemas = [
+            self.file_metadata[f].schema.to_arrow_schema() for f in self.file_metadata
+        ]
+
+        if self.has_metadata:
+            schemas.insert(0, self.metadata.schema.to_arrow_schema())
+
+        schema, schemas_equal = unify_schemas(
+            schemas,
+            ts_unit=ts_unit,
+            tz=tz,
+            use_large_string=use_large_string,
+            sort=sort,
+        )
+
+        return schema, schemas_equal
+
+    def _repair_file_schemas(
+        self,
+        schema: pa.Schema | None = None,
+        format_version: str | None = None,
+        tz: str | None = None,
+        ts_unit: str | None = "us",
+        use_large_string: bool = False,
+        sort: bool | list[str] = False,
+        **kwargs,
+    ):
+        """
+        Repairs the schemas of the files in the dataset.
+        This method repairs the schemas of the files in the dataset to match the given schema. If no schema is given,
+        the method will attempt to find the unified schema for the dataset and use that as the target schema.
+        Args:
+            schema (pa.Schema, optional): The schema to use for the files in the dataset. Defaults to None.
+            **kwargs: Additional keyword arguments to pass to the `repair_schema` method.
+        Returns:
+            None
+        """
+        # get unified schema
+        if schema is None:
+            schema, schemas_equal = self._get_unified_schema(
+                ts_unit=ts_unit, tz=tz, use_large_string=use_large_string, sort=sort
+            )
+            if schemas_equal:
+                return
+
+        if format_version is None:
+            format_version = self.metadata.format_version
+
+        # find files to repair
+        files = [
+            f
+            for f in self.file_metadata
+            if self.file_metadata[f].format_version != format_version
+        ]
+        files += [
+            f
+            for f in self.file_metadata
+            if self.file_metadata[f].schema.to_arrow_schema() != schema
+        ]
+
+        files = sorted(set(files))
+
+        # repair schema of files
+        if len(files):
+            repair_schema(
+                files=files,
+                schema=schema,
+                filesystem=self._filesystem,
+                version=format_version,
+                **kwargs,
+            )
+            self.clear_cache()
+            # collect new file metadata
+            self._collect_file_metadata(files=sorted(files))
+
+    def _update_metadata(self, **kwargs):
+        if not self.file_metadata:
+            self._update_file_metadata(**kwargs)
+
+        # update metadata
+        if self.file_metadata:
+            if not self.has_metadata:
+                self._metadata = self.file_metadata[list(self.file_metadata.keys())[0]]
+                for f in list(self.file_metadata.keys())[1:]:
+                    self._metadata.append_row_groups(self.file_metadata[f])
+            else:
+                files = list(
+                    set(self.file_metadata.keys()) - set(self.files_in_metadata)
+                )
+                for f in sorted(files):
+                    self._metadata.append_row_groups(self.file_metadata[f])
+
+        # rm from metadata
+        self._metadata = remove_from_metadata(self._metadata, self.files)
 
     def update(
         self,
@@ -181,87 +285,28 @@ class ParquetDatasetMetadata:
             None
         """
         if reload:
-            self.delete_metadata_file()
-            if self.has_metadata:
-                del self._metadata
-            if hasattr(self, "_file_schema"):
-                del self._file_schema
-            if hasattr(self, "_schema"):
-                del self._schema
-            if hasattr(self, "file_metadata"):
-                del self.file_metadata
-
-            self.clear_cache()
+            self.reset()
 
         # update file metadata
-        self.update_file_metadata(**kwargs)
+        self._update_file_metadata(**kwargs)
 
         # return if not file metadata
         if not hasattr(self, "file_metadata"):
             return
 
-        if self.has_metadata:
-            metadata_schema = self._metadata.schema.to_arrow_schema()
-            format_version = self._metadata.format_version
-        # get all file schemas and format versions
-        schemas = {
-            f: self.file_metadata[f].schema.to_arrow_schema()
-            for f in self.file_metadata
-        }
-        format_version = (
-            format_version
-            or self.file_metadata[sorted(self.file_metadata.keys())[0]].format_version
+        self._repair_file_schemas(
+            schema=schema,
+            format_version=format_version,
+            tz=tz,
+            ts_unit=ts_unit,
+            use_large_string=use_large_string,
+            sort=sort,
         )
 
-        # if schems is None, finde the unified schema
-        if schema is None:
-            schemas_v = list(schemas.values())
-
-            if self.has_metadata:
-                schemas_v.insert(0, metadata_schema)
-
-            schema, _ = unify_schemas(
-                schemas_v,
-                ts_unit=ts_unit,
-                tz=tz,
-                use_large_string=use_large_string,
-                sort=sort,
-            )
-
-        # get files to repair, due to different format version or schema
-        files = [
-            f for f in schemas if self.file_metadata[f].format_version != format_version
-        ]
-        files += [f for f in schemas if schemas[f] != schema]
-        files = sorted(set(files))
-
-        # repaif schema of files
-        if len(files):
-            repair_schema(
-                files=files,
-                schema=schema,
-                filesystem=self._filesystem,
-                version=format_version,
-                **kwargs,
-            )
-            self.clear_cache()
-            # collect new file metadata
-            self._collect_file_metadata(files=sorted(files))
-
         # update metadata
-        if self.file_metadata:
-            if not self.has_metadata:
-                self._metadata = self.file_metadata[list(self.file_metadata.keys())[0]]
-                for f in list(self.file_metadata.keys())[1:]:
-                    self._metadata.append_row_groups(self.file_metadata[f])
-            else:
-                files = list(
-                    set(self.file_metadata.keys()) - set(self.files_in_metadata)
-                )
-                for f in sorted(files):
-                    self._metadata.append_row_groups(self.file_metadata[f])
-
-            self.write_metadata_file()
+        self._update_metadata(**kwargs)
+        # write metadata file
+        self.write_metadata_file()
 
     def replace_schema(self, schema: pa.Schema, **kwargs) -> None:
         """
@@ -274,20 +319,7 @@ class ParquetDatasetMetadata:
         Returns:
             None
         """
-        self.reload_files()
-        self.clear_cache()
-        repair_schema(
-            files=self._files,
-            schema=schema,
-            filesystem=self._filesystem,
-            **kwargs,
-        )
-        if hasattr(self, "_schema"):
-            del self._schema
-        if hasattr(self, "_file_schema"):
-            del self._file_schema
-
-        self.load_metadata(reload=True)
+        self.update(schema=schema, **kwargs)
 
     def load_metadata(self, *args, **kwargs):
         self.update(*args, **kwargs)
@@ -578,33 +610,6 @@ class PydalaDatasetMetadata:
 
         filter_expr_mod.append(filter_expr)
 
-        #     filter_expr_mod.append(
-        #         f"({filter_expr.replace('>', '.max::DATE>')} OR {filter_expr.split('>')[0]}.max::DATE IS NULL)"
-        #     ) if is_date else filter_expr_mod.append(
-        #         f"({filter_expr.replace('>', '.max>')} OR {filter_expr.split('>')[0]}.max IS NULL)"
-        #     )
-
-        # elif "<" in filter_expr:
-        #     filter_expr_mod.append(
-        #         f"({filter_expr.replace('<', '.min::DATE<')} OR {filter_expr.split('<')[0]}.min::DATE IS NULL)"
-        #     ) if is_date else filter_expr_mod.append(
-        #         f"({filter_expr.replace('<', '.min<')} OR {filter_expr.split('<')[0]}.min IS NULL)"
-        #     )
-
-        # elif "=" in filter_expr:
-        #     filter_expr_mod.append(
-        #         f"({filter_expr.replace('=', '.min::DATE<=')} OR {filter_expr.split('=')[0]}.min::DATE IS NULL)"
-        #     ) if is_date else filter_expr_mod.append(
-        #         f"({filter_expr.replace('=', '.min<=')} OR {filter_expr.split('=')[0]}.min IS NULL)"
-        #     )
-        #     filter_expr_mod.append(
-        #         f"({filter_expr.replace('=', '.max::DATE>=')} OR {filter_expr.split('=')[0]}.max::DATE IS NULL)"
-        #     ) if is_date else filter_expr_mod.append(
-        #         f"({filter_expr.replace('=', '.max>=')} OR {filter_expr.split('=')[0]}.max IS NULL)"
-        #     )
-        # else:
-        #     filter_expr_mod.append(filter_expr)
-
         return filter_expr_mod
 
     def scan(self, filter_expr: str | None = None):
@@ -696,51 +701,3 @@ class PydalaDatasetMetadata:
         """
         return self._metadata_table_scanned is not None
         # @staticmethod
-
-    # def _get_row_group_stats(
-    #     row_group: pq.RowGroupMetaData,
-    #     partitioning: None | str | list[str] = None,
-    # ):
-    #     def get_column_stats(row_group_column):
-    #         name = row_group_column.path_in_schema
-    #         column_stats = {}
-    #         column_stats[
-    #             name + "_total_compressed_size"
-    #         ] = row_group_column.total_compressed_size
-    #         column_stats[
-    #             name + "_total_uncompressed_size"
-    #         ] = row_group_column.total_uncompressed_size
-
-    #         column_stats[name + "_physical_type"] = row_group_column.physical_type
-    #         if row_group_column.is_stats_set:
-    #             column_stats[name + ".min"] = row_group_column.statistics.min
-    #             column_stats[name + ".max"] = row_group_column.statistics.max
-    #             column_stats[
-    #                 name + "_null_count"
-    #             ] = row_group_column.statistics.null_count
-    #             column_stats[
-    #                 name + "_distinct_count"
-    #             ]: row_group_column.statistics.distinct_count
-    #         return column_stats
-
-    #     stats = {}
-    #     file_path = row_group.column(0).file_path
-    #     stats["file_path"] = file_path
-    #     if "=" in file_path:
-    #         partitioning = partitioning or "hive"
-    #     if partitioning is not None:
-    #         partitions = get_partitions_from_path(file_path, partitioning=partitioning)
-    #         stats.update(dict(partitions))
-
-    #     stats["num_columns"] = row_group.num_columns
-    #     stats["num_rows"] = row_group.num_rows
-    #     stats["total_byte_size"] = row_group.total_byte_size
-    #     stats["compression"] = row_group.column(0).compression
-
-    #     column_stats = [
-    #         get_column_stats(row_group.column(i)) for i in range(row_group.num_columns)
-    #     ]
-    #     # column_stats = [await task for task in tasks]
-
-    #     [stats.update(cs) for cs in column_stats]
-    #     return stats

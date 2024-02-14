@@ -5,6 +5,7 @@ import pandas as pd
 
 import polars.selectors as cs
 import pyarrow.parquet as pq
+import pyarrow.dataset as pds
 from fsspec import AbstractFileSystem
 from fsspec import filesystem as fsspec_filesystem
 
@@ -114,6 +115,7 @@ class Writer:
         self,
         data: (
             pa.Table
+            | pa.RecordBatch
             | pl.DataFrame
             | pl.LazyFrame
             | pd.DataFrame
@@ -138,7 +140,11 @@ class Writer:
             None
         """
         self.schema = schema
-        self.data = data
+        self.data = (
+            data
+            if not isinstance(data, pa.RecordBatch)
+            else pa.Table.from_batches([data])
+        )
         self.base_path = path
         self.path = None
         self.filesystem = filesystem
@@ -228,22 +234,29 @@ class Writer:
                 columns = None
             self.data = self.data.unique(columns, maintain_order=True)
 
-    def add_datepart_columns(self, timestamp_column: str | None = None):
+    def add_datepart_columns(
+        self, columns: list[str], timestamp_column: str | None = None
+    ):
         """
         Adds datepart columns to the data.
 
         Args:
             timestamp_column (str): The name of the timestamp column.
+            columns (str): Date part columns to add. The available options are: "year",
+                "month", "week", "yearday", monthday", "weekday".
 
         Returns:
             None
         """
+        if isinstance(columns, str):
+            columns = [columns]
+
         if timestamp_column is not None:
             self._set_schema()
             self._to_polars()
             datepart_columns = {
                 col: True
-                for col in self.schema.names
+                for col in self.schema.names + columns
                 if col in ["year", "month", "week", "yearday", "monthday", "weekday"]
             }
 
@@ -291,6 +304,7 @@ class Writer:
             add_missing_fields=add_missing_fields,
             drop_extra_fields=drop_extra_fields,
         )
+        self.schema = self.data.schema
 
     def delta(
         self,
@@ -309,63 +323,63 @@ class Writer:
         self._to_polars()
         self.data = self.data.delta(other, subset=subset)
 
-    def partition_by(
-        self,
-        columns: str | list[str] | None = None,
-        timestamp_column: str | None = None,
-        num_rows: int | None = None,
-        strftime: str | list[str] | None = None,
-        timedelta: str | list[str] | None = None,
-    ):
-        """
-        Partitions the data by the specified columns, number of rows, strftime format, and timedelta.
+    # def partition_by(
+    #     self,
+    #     columns: str | list[str] | None = None,
+    #     timestamp_column: str | None = None,
+    #     num_rows: int | None = None,
+    #     strftime: str | list[str] | None = None,
+    #     timedelta: str | list[str] | None = None,
+    # ):
+    #     """
+    #     Partitions the data by the specified columns, number of rows, strftime format, and timedelta.
+    #
+    #     Parameters:
+    #         columns (str | list[str] | None): The column or columns to partition the data by. If None, the data
+    #             will not be partitioned.
+    #         num_rows (int | None): The maximum number of rows in each partition. If None, the data will not be
+    #             partitioned.
+    #         strftime (str | list[str] | None): The strftime format string or list of format strings to use for
+    #             partitioning the data by date or time. If None, the data will not be partitioned by date or time.
+    #         timedelta (str | list[str] | None): The timedelta string or list of timedelta strings to use for
+    #             partitioning the data by time interval. If None, the data will not be partitioned by time interval.
+    #
+    #
+    #     """
+    #     self._to_polars()
+    #     self.data = self.data.partition_by_ext(
+    #         columns=columns,
+    #         timestamp_column=timestamp_column,
+    #         strftime=strftime,
+    #         timedelta=timedelta,
+    #         num_rows=num_rows,
+    #     )
 
-        Parameters:
-            columns (str | list[str] | None): The column or columns to partition the data by. If None, the data
-                will not be partitioned.
-            num_rows (int | None): The maximum number of rows in each partition. If None, the data will not be
-                partitioned.
-            strftime (str | list[str] | None): The strftime format string or list of format strings to use for
-                partitioning the data by date or time. If None, the data will not be partitioned by date or time.
-            timedelta (str | list[str] | None): The timedelta string or list of timedelta strings to use for
-                partitioning the data by time interval. If None, the data will not be partitioned by time interval.
-
-
-        """
-        self._to_polars()
-        self.data = self.data.partition_by_ext(
-            columns=columns,
-            timestamp_column=timestamp_column,
-            strftime=strftime,
-            timedelta=timedelta,
-            num_rows=num_rows,
-        )
-
-    def set_path(self, base_name: str | None = None):
-        """
-        Set the path for the data files.
-
-        Args:
-            base_name (str | None, optional): The base name for the data files. Defaults to None.
-
-        """
-        if base_name is None:
-            base_name = f"data-{dt.datetime.now().strftime('%Y%m%d_%H%M%S%f')[:-3]}"
-
-        self.path = [
-            os.path.join(
-                self.base_path,
-                "/".join(
-                    (
-                        "=".join([k, str(v).lstrip("0")])
-                        for k, v in partition[0].items()
-                        if k != "row_nr"
-                    )
-                ),
-                f"{base_name}-{num}-{uuid.uuid4().hex[:16]}.parquet",
-            )
-            for num, partition in enumerate(self.data)
-        ]
+    # def set_path(self, base_name: str | None = None):
+    #     """
+    #     Set the path for the data files.
+    #
+    #     Args:
+    #         base_name (str | None, optional): The base name for the data files. Defaults to None.
+    #
+    #     """
+    #     if base_name is None:
+    #         base_name = f"data-{dt.datetime.now().strftime('%Y%m%d_%H%M%S%f')[:-3]}"
+    #
+    #     self.path = [
+    #         os.path.join(
+    #             self.base_path,
+    #             "/".join(
+    #                 (
+    #                     "=".join([k, str(v).lstrip("0")])
+    #                     for k, v in partition[0].items()
+    #                     if k != "row_nr"
+    #                 )
+    #             ),
+    #             f"{base_name}-{num}-{uuid.uuid4().hex[:16]}.parquet",
+    #         )
+    #         for num, partition in enumerate(self.data)
+    #     ]
 
     @property
     def shape(self):
@@ -373,42 +387,70 @@ class Writer:
             self.data = self.data.collect()
         return self.data.shape
 
-    def write(
-        self, row_group_size: int | None = None, compression: str = "zstd", **kwargs
+    # def write(
+    #     self, row_group_size: int | None = None, compression: str = "zstd", **kwargs
+    # ):
+    #     """
+    #     Writes the data to Parquet files.
+    #
+    #     Args:
+    #         row_group_size (int | None, optional): The number of rows in each row group. Defaults to None.
+    #         compression (str, optional): The compression algorithm to use. Defaults to "zstd".
+    #         **kwargs: Additional keyword arguments to pass to the underlying Parquet writer.
+    #
+    #     Returns:
+    #         dict: A dictionary mapping each file path to its corresponding Parquet metadata.
+    #     """
+    #     if self.path is None:
+    #         raise ValueError("No path set. Call set_path() first.")
+    #     if not isinstance(self.data, list):
+    #         self._to_arrow()
+    #         self.data = [self.data]
+    #
+    #     file_metadata = []
+    #     for path, part in zip(self.path, self.data):
+    #         part = part[1].to_arrow()
+    #         if not self._use_large_string:
+    #             part = part.cast(shrink_large_string(part.schema))
+    #
+    #         metadata = write_table(
+    #             table=part,
+    #             path=path,
+    #             filesystem=self.filesystem,
+    #             row_group_size=row_group_size,
+    #             compression=compression,
+    #             **kwargs,
+    #         )
+    #
+    #         file_metadata.append(metadata)
+
+    def write_to_dataset(
+        self,
+        row_group_size: int | None = None,
+        compression: str = "zstd",
+        partitioning: pds.Partitioning | list[str] | None = None,
+        partitioning_flavor: str = "hive",
+        num_rows: int | None = None,
+        **kwargs,
     ):
-        """
-        Writes the data to Parquet files.
+        self._to_arrow()
+        self.data.cast(self.schema)
 
-        Args:
-            row_group_size (int | None, optional): The number of rows in each row group. Defaults to None.
-            compression (str, optional): The compression algorithm to use. Defaults to "zstd".
-            **kwargs: Additional keyword arguments to pass to the underlying Parquet writer.
+        basename_template = f"data-{dt.datetime.now().strftime('%Y%m%d_%H%M%S%f')[:-3]}-{uuid.uuid4().hex[:16]}-{{i}}.parquet"
 
-        Returns:
-            dict: A dictionary mapping each file path to its corresponding Parquet metadata.
-        """
-        if self.path is None:
-            raise ValueError("No path set. Call set_path() first.")
-        if not isinstance(self.data, list):
-            self._to_arrow()
-            self.data = [self.data]
-
-        file_metadata = []
-        for path, part in zip(self.path, self.data):
-            part = part[1].to_arrow()
-            if not self._use_large_string:
-                part = part.cast(shrink_large_string(part.schema))
-
-            metadata = write_table(
-                table=part,
-                path=path,
-                filesystem=self.filesystem,
-                row_group_size=row_group_size,
-                compression=compression,
-                **kwargs,
-            )
-
-            file_metadata.append(metadata)
+        pq.write_to_dataset(
+            self.data,
+            root_path=self.base_path,
+            filesystem=self.filesystem,
+            partitioning=partitioning,
+            partitioning_flavor=partitioning_flavor,
+            basename_template=basename_template,
+            row_group_size=row_group_size,
+            compression=compression,
+            max_rows_per_file=num_rows,
+            existing_data_behavior="overwrite_or_ignore",
+            **kwargs,
+        )
 
         # def _write(path_part, fs):
         #     path, part = path_part
@@ -438,8 +480,8 @@ class Writer:
         #         _write, list(zip(self.path, self.data)), fs=self.filesystem
         #     )
 
-        file_metadata = dict(file_metadata)
-        for f in file_metadata:
-            file_metadata[f].set_file_path(f.split(self.base_path)[-1].lstrip("/"))
+        # file_metadata = dict(file_metadata)
+        # for f in file_metadata:
+        #    file_metadata[f].set_file_path(f.split(self.base_path)[-1].lstrip("/"))
 
-        return file_metadata
+        # return file_metadata

@@ -41,6 +41,11 @@ dev = [
     "ruff>=0.1.2",
     "sqlparser>=0.0.9",
     "sqlparse>=0.4.4",
+    "deltalake>=0.15.3",
+    "lance>=1.2.1",
+    "asyncer>=0.0.4",
+    "orjson>=3.9.13",
+    "ujson>=5.9.0",
 ]
 
 [build-system]
