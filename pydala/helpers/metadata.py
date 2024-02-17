@@ -40,24 +40,50 @@ def collect_parquet_metadata(
 
 def remove_from_metadata(
     metadata: pq.FileMetaData,
-    files: list[str],
+    rm_files: list[str] | None = None,
+    keep_files: list[str] | None = None,
+    base_path: str = None,
 ) -> pq.FileMetaData:
     """
-    Removes files from the metadata of the dataset.
-    This method removes files from the metadata of the dataset and writes the updated metadata to the metadata file.
+    Removes row groups from the metadata of the dataset.
+    This method removes row groups from the given metadata based on the given files.
+    Files in `rm_files` will be removed from the metadata. Files in `keep_files` will be kept in the metadata.
+
+
     Args:
         metadata (pq.FileMetaData): The metadata of the dataset.
-        files (list[str]): The files to hold in the metadata.
+        rm_files (list[str]): The files to delete from the metadata.
+        keep_files (list[str]): The files to keep in the metadata.
     Returns:
         pq.FileMetaData: The updated metadata of the dataset.
     """
-    row_groups = [
-        metadata.row_group(i)
-        for i in range(metadata.num_row_groups)
-        if metadata.row_group(i).column(0).file_path in files
-    ]
-    new_metadata = row_groups[0]
-    for rg in row_groups[1:]:
-        new_metadata.append_row_groups(rg)
+    row_groups = []
+    if rm_files is not None:
+        if base_path is not None:
+            rm_files = [f.replace(base_path, "").lstrip("/") for f in rm_files]
 
-    return new_metadata
+        # row_groups to keep
+        row_groups += [
+            metadata.row_group(i)
+            for i in range(metadata.num_row_groups)
+            if metadata.row_group(i).column(0).file_path not in rm_files
+        ]
+    if keep_files is not None:
+        if base_path is not None:
+            keep_files = [f.replace(base_path, "").lstrip("/") for f in keep_files]
+
+        # row_groups to keep
+        row_groups += [
+            metadata.row_group(i)
+            for i in range(metadata.num_row_groups)
+            if metadata.row_group(i).column(0).file_path in keep_files
+        ]
+
+    if len(row_groups):
+        new_metadata = row_groups[0]
+        for rg in row_groups[1:]:
+            new_metadata.append_row_groups(rg)
+
+        return new_metadata
+
+    return metadata

@@ -53,10 +53,11 @@ class ParquetDatasetMetadata:
         self._files = sorted(self._filesystem.glob(os.path.join(path, "**/*.parquet")))
 
         self._file = os.path.join(path, "_metadata")
+        self._metadata = self._read_metadata()
+
+    def _read_metadata(self) -> pq.FileMetaData:
         if self.has_metadata_file:
-            self._metadata = pq.read_metadata(
-                self.metadata_file, filesystem=self._filesystem
-            )
+            return pq.read_metadata(self.metadata_file, filesystem=self._filesystem)
 
     def reload_files(self) -> None:
         """
@@ -97,7 +98,7 @@ class ParquetDatasetMetadata:
         if hasattr(self, "file_metadata"):
             self.file_metadata.update(file_metadata)
         else:
-            self.file_me: os.walktadata = file_metadata
+            self.file_metadata = file_metadata
 
     def _rm_file_metadata(self):
         """
@@ -107,7 +108,7 @@ class ParquetDatasetMetadata:
         for f in rm_file_metadata:
             self.file_metadata.pop(f)
 
-    def _update_file_metadata(self, **kwargs) -> None:
+    def _update_file_metadata(self, files: list[str] | None = None, **kwargs) -> None:
         """
         Updates the metadata for files in the dataset.
 
@@ -125,16 +126,25 @@ class ParquetDatasetMetadata:
         # Add new files to file_metadata
         self.reload_files()
 
-        files = sorted((set(self._files) - set(self.files_in_metadata)))
+        if self.has_metadata:
+            new_files = sorted((set(self._files) - set(self.files_in_metadata)))
+        else:
+            new_files = []
 
         if hasattr(self, "file_metadata"):
-            files = sorted(set(files) - set(self.file_metadata.keys()))
+            new_files = sorted(set(new_files) - set(self.file_metadata.keys()))
 
-        if len(files):
-            self._collect_file_metadata(files=files, **kwargs)
+        if files is not None:
+            new_files = sorted(set(files + new_files))
 
-        # Remove files from file_metadata
-        self._rm_file_metadata()
+        if new_files:
+            self._collect_file_metadata(files=new_files, **kwargs)
+        else:
+            self.file_metadata = {}
+
+        # Remove metadata of deleted files from file_metadata
+        if hasattr(self, "file_metadata"):
+            self._rm_file_metadata()
 
     def reset(self):
         """
@@ -167,20 +177,29 @@ class ParquetDatasetMetadata:
             pyarrow.Schema: The unified schema for the dataset.
 
         """
-        schemas = [
-            self.file_metadata[f].schema.to_arrow_schema() for f in self.file_metadata
-        ]
+        if not hasattr(self, "file_metadata"):
+            self._update_file_metadata()
 
-        if self.has_metadata:
-            schemas.insert(0, self.metadata.schema.to_arrow_schema())
+        new_files = sorted((set(self._files) - set(self.files_in_metadata)))
 
-        schema, schemas_equal = unify_schemas(
-            schemas,
-            ts_unit=ts_unit,
-            tz=tz,
-            use_large_string=use_large_string,
-            sort=sort,
-        )
+        if len(new_files):
+            schemas = [
+                self.file_metadata[f].schema.to_arrow_schema() for f in new_files
+            ]
+
+            if self.has_metadata:
+                schemas.insert(0, self.metadata.schema.to_arrow_schema())
+
+            schema, schemas_equal = unify_schemas(
+                schemas,
+                ts_unit=ts_unit,
+                tz=tz,
+                use_large_string=use_large_string,
+                sort=sort,
+            )
+        else:
+            schema = self.metadata.schema.to_arrow_schema()
+            schemas_equal = True
 
         return schema, schemas_equal
 
@@ -206,41 +225,41 @@ class ParquetDatasetMetadata:
         """
         # get unified schema
         if schema is None:
-            schema, schemas_equal = self._get_unified_schema(
+            schema, _ = self._get_unified_schema(
                 ts_unit=ts_unit, tz=tz, use_large_string=use_large_string, sort=sort
             )
-            if schemas_equal:
-                return
 
         if format_version is None:
             format_version = self.metadata.format_version
 
         # find files to repair
-        files = [
+        # files with different schema or format version
+        files_to_repair = [
             f
             for f in self.file_metadata
             if self.file_metadata[f].format_version != format_version
         ]
-        files += [
+        # files with different schema
+        files_to_repair += [
             f
             for f in self.file_metadata
             if self.file_metadata[f].schema.to_arrow_schema() != schema
         ]
 
-        files = sorted(set(files))
+        files_to_repair = sorted(set(files_to_repair))
 
         # repair schema of files
-        if len(files):
+        if len(files_to_repair):
             repair_schema(
-                files=files,
+                files=files_to_repair,
                 schema=schema,
                 filesystem=self._filesystem,
                 version=format_version,
                 **kwargs,
             )
             self.clear_cache()
-            # collect new file metadata
-            self._collect_file_metadata(files=sorted(files))
+            # update file metadata
+            self._update_file_metadata(files=sorted(files_to_repair), **kwargs)
 
     def _update_metadata(self, **kwargs):
         if not self.file_metadata:
@@ -253,14 +272,17 @@ class ParquetDatasetMetadata:
                 for f in list(self.file_metadata.keys())[1:]:
                     self._metadata.append_row_groups(self.file_metadata[f])
             else:
-                files = list(
-                    set(self.file_metadata.keys()) - set(self.files_in_metadata)
+                # remove files in metadata, that are not in file_metadata
+                self._metadata = remove_from_metadata(
+                    self._metadata,
+                    rm_files=sorted(self.file_metadata.keys()),
+                    keep_files=sorted(
+                        set(self._files) - set(self.file_metadata.keys())
+                    ),
+                    base_path=self._path,
                 )
-                for f in sorted(files):
+                for f in sorted(self.file_metadata.keys()):
                     self._metadata.append_row_groups(self.file_metadata[f])
-
-        # rm from metadata
-        self._metadata = remove_from_metadata(self._metadata, self.files)
 
     def update(
         self,
@@ -269,7 +291,7 @@ class ParquetDatasetMetadata:
         ts_unit: str | None = "us",
         tz: str | None = None,
         use_large_string: bool = False,
-        format_version: str = None,
+        format_version: str | None = None,
         sort: bool | list[str] = True,
         **kwargs,
     ) -> None:
@@ -294,8 +316,8 @@ class ParquetDatasetMetadata:
         self._update_file_metadata(**kwargs)
 
         # return if not file metadata
-        if not hasattr(self, "file_metadata"):
-            return
+        # if not hasattr(self, "file_metadata"):
+        #    return
 
         self._repair_file_schemas(
             schema=schema,
@@ -308,8 +330,10 @@ class ParquetDatasetMetadata:
 
         # update metadata
         self._update_metadata(**kwargs)
-        # write metadata file
-        self.write_metadata_file()
+
+        if self._read_metadata() != self._metadata:
+            # write metadata file
+            self.write_metadata_file()
 
     def replace_schema(self, schema: pa.Schema, **kwargs) -> None:
         """

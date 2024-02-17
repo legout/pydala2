@@ -1,5 +1,4 @@
 import os
-from turtle import up
 
 import duckdb as _duckdb
 from numpy import isin

@@ -46,6 +46,11 @@ dev = [
     "asyncer>=0.0.4",
     "orjson>=3.9.13",
     "ujson>=5.9.0",
+    "dill>=0.3.8",
+    "msgpack>=1.0.7",
+]
+msgpack = [
+    "marshmallow>=3.20.2",
 ]
 
 [build-system]
