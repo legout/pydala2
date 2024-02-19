@@ -51,15 +51,16 @@ class ParquetDatasetMetadata:
             except Exception:
                 pass  # raise FileNotFoundError(f"Directory {self._path} does not exist.")
 
-        self._files = sorted(self._filesystem.glob(os.path.join(path, "**/*.parquet")))
-        if not self._filesystem.exists(os.path.join(path, "metadata")):
-            try:
-                self._filesystem.mkdir(os.path.join(path, "metadata"))
-            except Exception:
-                pass
-
-        self._metadata_file = os.path.join(path, "metadata/_metadata")
-        self._file_metadata_file = os.path.join(path, "metadata/file_metadata.pkl")
+        # self._files = sorted(self._filesystem.glob(os.path.join(path, "**/*.parquet")))
+        self.reload_files()
+        # if not self._filesystem.exists(os.path.join(path, "metadata")):
+        #     try:
+        #         self._filesystem.mkdir(os.path.join(path, "metadata"))
+        #     except Exception:
+        #         pass
+        #
+        self._metadata_file = os.path.join(path, "_metadata")
+        self._file_metadata_file = os.path.join(path, "file_metadata.pkl")
         self._metadata = self._read_metadata()
         self._file_metadata = self._load_file_metadata()
 
@@ -69,7 +70,7 @@ class ParquetDatasetMetadata:
 
     def _load_file_metadata(self) -> dict[pq.FileMetaData] | None:
         if self.has_file_metadata_file:
-            with open(self._file_metadata_file, "rb") as f:
+            with self._filesystem.open(self._file_metadata_file, "rb") as f:
                 return pickle.load(f)
 
     def reload_files(self) -> None:
@@ -81,9 +82,12 @@ class ParquetDatasetMetadata:
         Returns:
             None
         """
-        self._files = sorted(
-            self._filesystem.glob(os.path.join(self._path, "**/*.parquet"))
-        )
+        self._files = [
+            fn.replace(self._path, "").lstrip("/")
+            for fn in sorted(
+                self._filesystem.glob(os.path.join(self._path, "**/*.parquet"))
+            )
+        ]
 
     def _collect_file_metadata(self, files: list[str] | None = None, **kwargs) -> None:
         """
@@ -101,12 +105,17 @@ class ParquetDatasetMetadata:
             files = self._files
 
         file_metadata = collect_parquet_metadata(
-            files=files, filesystem=self._filesystem, **kwargs
+            files=files,
+            base_path=self._path,
+            filesystem=self._filesystem,
+            **kwargs,
         )
 
         # if file_metadata:
         for f in file_metadata:
-            file_metadata[f].set_file_path("../" + f.split(self._path)[-1].lstrip("/"))
+            file_metadata[f.replace(self._path, "")].set_file_path(
+                f.split(self._path)[-1].lstrip("/")
+            )
 
         if self.has_file_metadata:
             self._file_metadata.update(file_metadata)
@@ -125,7 +134,7 @@ class ParquetDatasetMetadata:
         """
         Save file metadata to a specified file.
         """
-        with open(self._file_metadata_file, "wb") as f:
+        with self._filesystem.open(self._file_metadata_file, "wb") as f:
             pickle.dump(self.file_metadata, f)
 
     def update_file_metadata(self, files: list[str] | None = None, **kwargs) -> None:
@@ -152,16 +161,16 @@ class ParquetDatasetMetadata:
             new_files = []
 
         if self.has_file_metadata:
-            new_files = sorted(set(new_files) - set(self.file_metadata.keys()))
+            new_files += sorted(set(new_files) - set(self.file_metadata.keys()))
         else:
-            new_files = sorted(set(new_files + self.files))
+            new_files += sorted(set(new_files + self._files))
 
         if files is not None:
             new_files = sorted(set(files + new_files))
 
         if new_files:
             self._collect_file_metadata(files=new_files, **kwargs)
-        #else:
+        # else:
         #    self._file_metadata = {}
 
         # Remove metadata of deleted files from file_metadata
@@ -179,13 +188,15 @@ class ParquetDatasetMetadata:
         """
         if self.has_metadata:
             del self._metadata
+            self._metadata = None
             self._filesystem.rm(self._metadata_file)
         if hasattr(self, "_file_schema"):
             del self._file_schema
         if hasattr(self, "_schema"):
             del self._schema
-        if self.hase_file_metadata:
+        if self.has_file_metadata:
             del self._file_metadata
+            self._file_metadata = None
             self._filesystem.rm(self._file_metadata_file)
 
         self.clear_cache()
@@ -255,22 +266,24 @@ class ParquetDatasetMetadata:
                 ts_unit=ts_unit, tz=tz, use_large_string=use_large_string, sort=sort
             )
 
-        if format_version is None:
-            format_version = self.metadata.format_version
-
-        # find files to repair
-        # files with different schema or format version
         files_to_repair = [
-            f
-            for f in self.file_metadata
-            if self.file_metadata[f].format_version != format_version
-        ]
-        # files with different schema
-        files_to_repair += [
             f
             for f in self.file_metadata
             if self.file_metadata[f].schema.to_arrow_schema() != schema
         ]
+
+        if format_version is None and self.has_metadata:
+            format_version = self._metadata.format_version
+
+        # find files to repair
+        # files with different schema or format version
+        if format_version is not None:
+            files_to_repair += [
+                f
+                for f in self.file_metadata
+                if self.file_metadata[f].format_version != format_version
+            ]
+        # files with different schema
 
         files_to_repair = sorted(set(files_to_repair))
 
@@ -289,7 +302,7 @@ class ParquetDatasetMetadata:
 
     def _update_metadata(self, **kwargs):
         # if not self.file_metadata:
-        self.update_file_metadata(**kwargs)
+        # self.update_file_metadata(**kwargs)
 
         # update metadata
         if self.has_file_metadata:
@@ -309,7 +322,7 @@ class ParquetDatasetMetadata:
         tz: str | None = None,
         use_large_string: bool = False,
         format_version: str | None = None,
-        sort: bool | list[str] = True,
+        sort: bool | list[str] = False,
         **kwargs,
     ) -> None:
         """
@@ -408,7 +421,7 @@ class ParquetDatasetMetadata:
         Returns True if the dataset has metadata, False otherwise.
         """
         return self._metadata is not None
-    
+
     @property
     def has_file_metadata(self):
         """
@@ -510,9 +523,7 @@ class ParquetDatasetMetadata:
             return list(
                 set(
                     [
-                        os.path.join(
-                            self._path, self._metadata.row_group(i).column(0).file_path
-                        )
+                        self._metadata.row_group(i).column(0).file_path.lstrip("../")
                         for i in range(self._metadata.num_row_groups)
                     ]
                 )

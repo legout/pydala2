@@ -2,10 +2,12 @@ from fsspec import AbstractFileSystem
 import pyarrow.filesystem as pfs
 import pyarrow.parquet as pq
 from .misc import run_parallel
+import os
 
 
 def collect_parquet_metadata(
     files: list[str] | str,
+    base_path: str | None = None,
     filesystem: AbstractFileSystem | pfs.FileSystem | None = None,
     n_jobs: int = -1,
     backend: str = "threading",
@@ -24,12 +26,17 @@ def collect_parquet_metadata(
         dict[str, pq.FileMetaData]: Parquet metadata of the given files.
     """
 
-    def get_metadata(f, filesystem):
-        return {f: pq.read_metadata(f, filesystem=filesystem)}
+    def get_metadata(f, base_path, filesystem):
+        if base_path is not None:
+            path = os.path.join(base_path, f)
+        else:
+            path = f
+        return {f: pq.read_metadata(path, filesystem=filesystem)}
 
     metadata = run_parallel(
         get_metadata,
         files,
+        base_path=base_path,
         filesystem=filesystem,
         backend=backend,
         n_jobs=n_jobs,

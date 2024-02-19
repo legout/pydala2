@@ -131,13 +131,13 @@ class ParquetDataset(ParquetDatasetMetadata):
                 self.update_metadata_table()
 
             self._arrow_parquet_dataset = pds.parquet_dataset(
-                self.metadata_file,
+                self._metadata_file,
                 partitioning=self._partitioning,
                 filesystem=self._filesystem,
             )
 
             self.table = PydalaTable(
-                table=self._arrow_parquet_dataset, ddb_con=self.ddb_con
+                result=self._arrow_parquet_dataset, ddb_con=self.ddb_con
             )
 
             self.ddb_con.register(f"{self.name}_dataset", self._arrow_parquet_dataset)
@@ -290,10 +290,15 @@ class ParquetDataset(ParquetDatasetMetadata):
         if self.has_files:
             if not hasattr(self, "_partition_values"):
                 if self.is_loaded:
-                    self._partition_values = dict(zip(self.partition_names,[
-                        pa_list.to_pylist()
-                        for pa_list in self.arrow_parquet_dataset.partitioning.dictionaries
-                    ]))
+                    self._partition_values = dict(
+                        zip(
+                            self.partition_names,
+                            [
+                                pa_list.to_pylist()
+                                for pa_list in self.arrow_parquet_dataset.partitioning.dictionaries
+                            ],
+                        )
+                    )
             else:
                 # print(f"No dataset loaded yet. Run {self}.load()")
                 return []
@@ -309,7 +314,9 @@ class ParquetDataset(ParquetDatasetMetadata):
         if self.has_files:
             if not hasattr(self, "_partitions"):
                 if self.is_loaded:
-                    self._partitions = _pl.from_arrow(self.metadata_table.select(["type","market","exchange"]))
+                    self._partitions = _pl.from_arrow(
+                        self.metadata_table.select(["type", "market", "exchange"])
+                    )
 
             else:
                 # print(f"No dataset loaded yet. Run {self}.load()")
@@ -925,7 +932,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                 all files in the dataset will be deleted. Defaults to None.
         """
         self._filesystem.rm(files, recursive=True)
-        #self.load(reload=True)
+        # self.load(reload=True)
 
     def _get_delta_other_df(
         self,
@@ -1107,11 +1114,12 @@ class ParquetDataset(ParquetDatasetMetadata):
 
     def _optimize_partition(
         self,
-        partition: str|list[str],
+        partition: str | list[str],
         n_rows: int | None = None,
         sort_by: str | list[str] | list[tuple[str, str]] = None,
         distinct: bool = False,
-        compression="zstd", **kwargs
+        compression="zstd",
+        **kwargs,
     ):
         if isinstance(partition, str):
             partition = [partition]
@@ -1131,20 +1139,25 @@ class ParquetDataset(ParquetDatasetMetadata):
                 row_group_size=min(n_rows or 250_000),
                 compression=compression,
                 update_metadata=False,
-                **kwargs
+                **kwargs,
             )
         self.reset_scan()
 
+    def optimize(
+        self,
+        n_rows: int | None = None,
+        sort_by: str | list[str] | list[tuple[str, str]] = None,
+        distinct: bool = False,
+        compression="zstd",
+        **kwargs,
+    ):
 
-    def optimize(self, n_rows: int | None = None, sort_by: str | list[str] | list[tuple[str, str]] = None, distinct: bool = False,
-                 compression="zstd", **kwargs):
-        
         def _optimize_partition(
-            partition: str|list[str],
+            partition: str | list[str],
             n_rows: int | None = None,
             sort_by: str | list[str] | list[tuple[str, str]] = None,
             distinct: bool = False,
-            compression="zstd", 
+            compression="zstd",
         ):
             if isinstance(partition, str):
                 partition = [partition]
@@ -1164,7 +1177,6 @@ class ParquetDataset(ParquetDatasetMetadata):
                     row_group_size=min(n_rows or 250_000),
                     compression=compression,
                     update_metadata=False,
-                    
                 )
             self.reset_scan()
 
@@ -1175,10 +1187,9 @@ class ParquetDataset(ParquetDatasetMetadata):
             sort_by=sort_by,
             distinct=distinct,
             compression=compression,
-            **kwargs
+            **kwargs,
         )
 
-        
     # def _optimize_by_file_size(
     #     self,
     #     target_size: str | int,

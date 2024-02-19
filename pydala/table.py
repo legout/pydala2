@@ -26,7 +26,7 @@ class PydalaTable:
             "duckdb" if isinstance(result, _duckdb.DuckDBPyRelation) else "pyarrow"
         )
 
-    @staticmethod
+    # @staticmethod
     def _get_sort_by(
         self, sort_by: str | list[str] | list[tuple[str, str]], type_: str | None = None
     ):
@@ -236,6 +236,8 @@ class PydalaTable:
                 sort_by = self._get_sort_by(self, sort_by, "duckdb")
                 return ddb.order(sort_by).distinct() if distinct else ddb.order(sort_by)
 
+        return ddb.distinct() if distinct else ddb
+
         columns = "*" if columns is None else ",".join(columns)
         if sort_by is not None:
             sort_by = self._get_sort_by(self, sort_by, "duckdb")
@@ -288,6 +290,7 @@ class PydalaTable:
                     if distinct
                     else at.sort_by(sort_by)
                 )
+            return self.ddb_con.from_arrpw(at).distinct().arrow() if distinct else at
 
         columns = "*" if columns is None else ",".join(columns)
         if sort_by is not None:
