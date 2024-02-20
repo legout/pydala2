@@ -434,6 +434,8 @@ class ParquetDataset(ParquetDatasetMetadata):
               read and converted to an Apache Arrow table. The conversion will be
               performed in parallel.
         """
+        if batch_size is not None:
+            batch_size = 131072
         return self.table.to_arrow(columns=columns, batch_size=batch_size, **kwargs)
 
         # if hasattr(self, "_arrow_table"):
@@ -1151,7 +1153,6 @@ class ParquetDataset(ParquetDatasetMetadata):
         compression="zstd",
         **kwargs,
     ):
-
         def _optimize_partition(
             partition: str | list[str],
             n_rows: int | None = None,
