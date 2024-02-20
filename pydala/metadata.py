@@ -392,7 +392,7 @@ class ParquetDatasetMetadata:
         with self._filesystem.open(os.path.join(self._path, "_metadata"), "wb") as f:
             self._metadata.write_metadata_file(f)
 
-    def delete_metadata_file(self) -> None:
+    def delete_metadata_files(self) -> None:
         """
         Deletes the metadata file associated with the dataset, if it exists.
 
@@ -400,6 +400,9 @@ class ParquetDatasetMetadata:
             None
         """
         if self.has_metadata_file:
+            self._filesystem.rm(self._metadata_file)
+        if self.has_file_metadata_file:
+            self._filesystem.rm(self._file_metadata_file)
 
     def clear_cache(self) -> None:
         """
