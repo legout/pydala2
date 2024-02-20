@@ -273,7 +273,7 @@ class PydalaTable:
             columns = [columns]
 
         if self._type == "pyarrow":
-            at = self.result.to_table(
+            arrow_table = self.result.to_table(
                 columns=columns,
                 filter=filter,
                 batch_size=batch_size,
@@ -286,11 +286,17 @@ class PydalaTable:
             if sort_by is not None:
                 sort_by = self._get_sort_by(self, sort_by)
                 return (
-                    self.ddb_con.from_arrow(at.sort_by(sort_by)).distinct().arrow()
+                    self.ddb_con.from_arrow(arrow_table.sort_by(sort_by))
+                    .distinct()
+                    .arrow()
                     if distinct
-                    else at.sort_by(sort_by)
+                    else arrow_table.sort_by(sort_by)
                 )
-            return self.ddb_con.from_arrpw(at).distinct().arrow() if distinct else at
+            return (
+                self.ddb_con.from_arrow(arrow_table).distinct().arrow()
+                if distinct
+                else arrow_table
+            )
 
         columns = "*" if columns is None else ",".join(columns)
         if sort_by is not None:
