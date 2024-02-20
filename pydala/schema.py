@@ -365,6 +365,7 @@ def unify_schemas(
 
 def repair_schema(
     files: list[str],
+    base_path: str | None = None,
     schema: pa.Schema | None = None,
     filesystem: AbstractFileSystem | pfs.FileSystem | None = None,
     n_jobs: int = -1,
@@ -395,6 +396,8 @@ def repair_schema(
             order of firt schema is used. Otherwise, the order if the given field names is
             applied.
     """
+    if base_path is not None:
+        files = [os.path.join(base_path, f) for f in files]
     if schema is None:
         schemas = collect_file_schemas(
             files=files,
