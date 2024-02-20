@@ -292,6 +292,7 @@ class ParquetDatasetMetadata:
             repair_schema(
                 files=files_to_repair,
                 schema=schema,
+                base_path=self._path,
                 filesystem=self._filesystem,
                 version=format_version,
                 **kwargs,
@@ -399,7 +400,6 @@ class ParquetDatasetMetadata:
             None
         """
         if self.has_metadata_file:
-            self._filesystem.rm(self._metadata_file)
 
     def clear_cache(self) -> None:
         """
