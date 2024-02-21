@@ -263,7 +263,7 @@ class Writer:
             self.data = self.data.with_datepart_columns(
                 timestamp_column=timestamp_column, **datepart_columns
             )
-            self.to_arrow()
+            self._to_arrow()
             self.schema = self.data.schema
 
     def cast_schema(
