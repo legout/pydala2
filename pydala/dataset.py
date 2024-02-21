@@ -60,6 +60,8 @@ class ParquetDataset(ParquetDatasetMetadata):
         )
         if name is None:
             self.name = os.path.basename(path)
+        else:
+            self.nae = name
 
         if self.has_files:
             if partitioning == "ignore":
