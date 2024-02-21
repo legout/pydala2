@@ -1152,7 +1152,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                     pa.table(batch),
                     mode="overwrite",
                     max_rows_per_file=max_rows_per_file,
-                    row_group_size=min(max_rows_per_file or row_group_size)
+                    row_group_size=min(max_rows_per_file or row_group_size),
                     compression=compression,
                     update_metadata=False,
                 )
