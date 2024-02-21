@@ -1052,7 +1052,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         """
         if "n_rows" in kwargs:
             max_rows_per_file = kwargs.pop("n_rows")
-        if num_rows in kwargs:
+        if "num_rows" in kwargs:
             max_rows_per_file = kwargs.pop("num_rows")
 
         if df.shape[0] == 0:
