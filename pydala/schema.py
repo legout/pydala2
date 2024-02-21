@@ -2,7 +2,7 @@ import pyarrow as pa
 import pyarrow.fs as pfs
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
-
+import os
 from .helpers.misc import run_parallel
 
 # from .io import read_table, write_table
