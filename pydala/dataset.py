@@ -1006,7 +1006,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         ),
         mode: str = "append",  # "delta", "overwrite"
         partitioning_columns: str | list[str] | None = None,
-        n_rows: int | None = 10_000_000,
+        max_rows_per_file: int | None = 10_000_000,
         row_group_size: int | None = 1_000_000,
         compression: str = "zstd",
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
@@ -1050,6 +1050,10 @@ class ParquetDataset(ParquetDatasetMetadata):
         Returns:
             None
         """
+        if "n_rows" in kwargs:
+            max_rows_per_file = kwargs.pop("n_rows")
+        if num_rows in kwargs:
+            max_rows_per_file = kwargs.pop("num_rows")
 
         if df.shape[0] == 0:
             return
@@ -1096,7 +1100,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             compression=compression,
             partitioning=partitioning_columns,
             partitioning_flavor="hive",
-            n_rows=n_rows,
+            max_rows_per_file=max_rows_per_file,
             **kwargs,
         )
         if mode == "overwrite":
