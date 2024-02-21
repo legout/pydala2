@@ -48,7 +48,9 @@ def unnest_all(df: pl.DataFrame, seperator="_", fields: list[str] | None = None)
             ]
         ).unnest(struct_columns)
 
-    struct_columns = [col for col in df.columns if df[col].dtype == pl.Struct]  # noqa: F821
+    struct_columns = [
+        col for col in df.columns if df[col].dtype == pl.Struct
+    ]  # noqa: F821
     while len(struct_columns):
         df = _unnest_all(struct_columns=struct_columns)
         struct_columns = [col for col in df.columns if df[col].dtype == pl.Struct]
@@ -115,10 +117,22 @@ def _opt_dtype(s: pl.Series, strict: bool = True) -> pl.Series:
 
 
 def opt_dtype(
-    df: pl.DataFrame, exclude: str | list[str] | None = None, strict: bool = True
+    df: pl.DataFrame,
+    exclude: str | list[str] | None = None,
+    strict: bool = True,
+    include: str | list[str] | None = None,
 ) -> pl.DataFrame:
     _opt_dtype_strict = partial(_opt_dtype, strict=strict)
     _opt_dtype_not_strict = partial(_opt_dtype, strict=False)
+    if include is not None:
+        if isinstance(include, str):
+            include = [include]
+        exclude = [col for col in df.columns if col not in include]
+        return df.with_columns(
+            pl.all()
+            .filter(lambda col: col in include)
+            .map(_opt_dtype_strict if strict else _opt_dtype_not_strict)
+        )
     return (
         df.with_columns(
             pl.all()
