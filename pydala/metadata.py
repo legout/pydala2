@@ -126,7 +126,9 @@ class ParquetDatasetMetadata:
         """
         Removes file metadata for files that are no longer in the dataset.
         """
-        rm_file_metadata = [f for f in self.file_metadata.keys() if f not in self.files]
+        rm_file_metadata = [
+            f for f in self._file_metadata.keys() if f not in self.files
+        ]
         for f in rm_file_metadata:
             self._file_metadata.pop(f)
 
@@ -135,7 +137,7 @@ class ParquetDatasetMetadata:
         Save file metadata to a specified file.
         """
         with self._filesystem.open(self._file_metadata_file, "wb") as f:
-            pickle.dump(self.file_metadata, f)
+            pickle.dump(self._file_metadata, f)
 
     def update_file_metadata(self, files: list[str] | None = None, **kwargs) -> None:
         """
@@ -161,7 +163,7 @@ class ParquetDatasetMetadata:
             new_files = []
 
         if self.has_file_metadata:
-            new_files += sorted(set(new_files) - set(self.file_metadata.keys()))
+            new_files += sorted(set(new_files) - set(self._file_metadata.keys()))
         else:
             new_files += sorted(set(new_files + self._files))
 
@@ -221,7 +223,7 @@ class ParquetDatasetMetadata:
 
         if len(new_files):
             schemas = [
-                self.file_metadata[f].schema.to_arrow_schema() for f in new_files
+                self._file_metadata[f].schema.to_arrow_schema() for f in new_files
             ]
 
             if self.has_metadata:
@@ -268,8 +270,8 @@ class ParquetDatasetMetadata:
 
         files_to_repair = [
             f
-            for f in self.file_metadata
-            if self.file_metadata[f].schema.to_arrow_schema() != schema
+            for f in self._file_metadata
+            if self._file_metadata[f].schema.to_arrow_schema() != schema
         ]
 
         if format_version is None and self.has_metadata:
@@ -280,8 +282,8 @@ class ParquetDatasetMetadata:
         if format_version is not None:
             files_to_repair += [
                 f
-                for f in self.file_metadata
-                if self.file_metadata[f].format_version != format_version
+                for f in self._file_metadata
+                if self._file_metadata[f].format_version != format_version
             ]
         # files with different schema
 
@@ -308,9 +310,9 @@ class ParquetDatasetMetadata:
         # update metadata
         if self.has_file_metadata:
             # if not self.has_metadata:
-            self._metadata = self.file_metadata[list(self.file_metadata.keys())[0]]
-            for f in list(self.file_metadata.keys())[1:]:
-                self._metadata.append_row_groups(self.file_metadata[f])
+            self._metadata = self._file_metadata[list(self._file_metadata.keys())[0]]
+            for f in list(self._file_metadata.keys())[1:]:
+                self._metadata.append_row_groups(self._file_metadata[f])
             # else:
             #    for f in sorted(self.file_metadata.keys()):
             #        self._metadata.append_row_groups(self.file_metadata[f])
