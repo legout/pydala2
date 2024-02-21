@@ -1082,7 +1082,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         )
 
         if mode == "overwrite":
-            del_files = self.files.copy()
+            del_files = [os.path.join(self._path, fn) for fn in self.files]
 
         elif mode == "delta" and self.has_files:
             writer._to_polars()
@@ -1125,7 +1125,7 @@ class ParquetDataset(ParquetDatasetMetadata):
 
     def optimize(
         self,
-        max_rows_per_file: int | None = None,
+        max_rows_per_file: int | None = 10_000_000,
         sort_by: str | list[str] | list[tuple[str, str]] = None,
         distinct: bool = False,
         compression="zstd",
@@ -1134,7 +1134,7 @@ class ParquetDataset(ParquetDatasetMetadata):
     ):
         def _optimize_partition(
             partition: str | list[str],
-            max_rows_per_file: int | None = None,
+            max_rows_per_file: int | None = 10_000_000,
             sort_by: str | list[str] | list[tuple[str, str]] = None,
             distinct: bool = False,
             compression="zstd",
@@ -1153,12 +1153,16 @@ class ParquetDataset(ParquetDatasetMetadata):
             for batch in batches:
                 self.write_to_dataset(
                     pa.table(batch),
-                    mode="overwrite",
+                    mode="append",
                     max_rows_per_file=max_rows_per_file,
-                    row_group_size=min(max_rows_per_file or row_group_size),
+                    row_group_size=min(max_rows_per_file, row_group_size),
                     compression=compression,
                     update_metadata=False,
                 )
+
+            del_files = [os.path.join(self._path, fn) for fn in self.scan_files]
+            self._filesystem.rm(del_files)
+
             self.reset_scan()
 
         run_parallel(
