@@ -306,6 +306,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                 return []
             return self._partition_values
 
+    @property
     def partitions(self) -> dict:
         """
         Returns a dictionary of partitioning values.
