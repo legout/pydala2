@@ -316,8 +316,10 @@ class ParquetDataset(ParquetDatasetMetadata):
         if self.has_files:
             if not hasattr(self, "_partitions"):
                 if self.is_loaded:
-                    self._partitions = _pl.from_arrow(
-                        self.metadata_table.select(["type", "market", "exchange"])
+                    self._partitions = (
+                        _pl.from_arrow(self.metadata_table.select(self.partition_names))
+                        .to_numpy()
+                        .tolist()
                     )
 
             else:
