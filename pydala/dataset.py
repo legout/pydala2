@@ -323,9 +323,9 @@ class ParquetDataset(ParquetDatasetMetadata):
                         .tolist()
                     )
 
-            else:
-                # print(f"No dataset loaded yet. Run {self}.load()")
-                return {}
+                else:
+                    # print(f"No dataset loaded yet. Run {self}.load()")
+                    return {}
             return self._partitions
 
     def gen_metadata_table(self):
@@ -362,7 +362,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         self.pydala_dataset_metadata.scan(filter_expr=filter_expr)
 
         return PydalaTable(
-            table=pds.dataset(
+            result=pds.dataset(
                 self.scan_files,
                 filesystem=self._filesystem,
                 partitioning=self._partitioning,
