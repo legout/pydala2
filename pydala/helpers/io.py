@@ -430,7 +430,7 @@ class Writer:
         compression: str = "zstd",
         partitioning: pds.Partitioning | list[str] | None = None,
         partitioning_flavor: str = "hive",
-        max_rows_per_file_rows: int | None = None,
+        max_rows_per_file: int | None = None,
         **kwargs,
     ):
         self._to_arrow()
@@ -447,7 +447,7 @@ class Writer:
             basename_template=basename_template,
             row_group_size=row_group_size,
             compression=compression,
-            max_rows_per_file=max_rows_per_file_rows,
+            max_rows_per_file=max_rows_per_file,
             existing_data_behavior="overwrite_or_ignore",
             **kwargs,
         )
