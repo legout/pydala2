@@ -128,11 +128,6 @@ def opt_dtype(
         if isinstance(include, str):
             include = [include]
         exclude = [col for col in df.columns if col not in include]
-        return df.with_columns(
-            pl.all()
-            .filter(lambda col: col in include)
-            .map(_opt_dtype_strict if strict else _opt_dtype_not_strict)
-        )
     return (
         df.with_columns(
             pl.all()
