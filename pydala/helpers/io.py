@@ -242,7 +242,7 @@ class Writer:
 
         Args:
             timestamp_column (str): The name of the timestamp column.
-            columns (str): Date part columns to add. The available options are: "year",
+            columns (list[str]): Date part columns to add. The available options are: "year",
                 "month", "week", "yearday", monthday", "weekday".
 
         Returns:
@@ -263,6 +263,8 @@ class Writer:
             self.data = self.data.with_datepart_columns(
                 timestamp_column=timestamp_column, **datepart_columns
             )
+            self.to_arrow()
+            self.schema = self.data.schema
 
     def cast_schema(
         self,
