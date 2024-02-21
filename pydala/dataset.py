@@ -1032,7 +1032,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                 or Table to write.
             base_name (str | None): The base name for the dataset files. Defaults to None.
             mode (str): The write mode. Can be "append", "delta", or "overwrite". Defaults to "append".
-            n_rows (int | None): The number of rows per file. Defaults to 100_000_000.
+            max_rows_per_file (int | None): The number of rows per file. Defaults to 100_000_000.
             row_group_size (int | None): The row group size for Parquet files. Defaults to None.
             compression (str): The compression algorithm to use. Defaults to "zstd".
             sort_by (str | list[str] | list[tuple[str, str]] | None): The column(s) to sort by. Defaults to None.
