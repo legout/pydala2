@@ -1007,7 +1007,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         mode: str = "append",  # "delta", "overwrite"
         partitioning_columns: str | list[str] | None = None,
         max_rows_per_file: int | None = 10_000_000,
-        row_group_size: int | None = 1_000_000,
+        row_group_size: int | None = 250_000,
         compression: str = "zstd",
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
         unique: bool | str | list[str] = False,
@@ -1120,51 +1120,22 @@ class ParquetDataset(ParquetDatasetMetadata):
 
         self.clear_cache()
 
-    def _optimize_partition(
-        self,
-        partition: str | list[str],
-        n_rows: int | None = None,
-        sort_by: str | list[str] | list[tuple[str, str]] = None,
-        distinct: bool = False,
-        compression="zstd",
-        **kwargs,
-    ):
-        if isinstance(partition, str):
-            partition = [partition]
-
-        filter_ = " AND ".join(
-            [f"{n}='{v}'" for n, v in list(zip(self.partition_names, partition))]
-        )
-        batches = self.scan(filter_).to_batch_reader(
-            sort_by=sort_by, distinct=distinct, batch_size=n_rows
-        )
-
-        for batch in batches:
-            self.write_to_dataset(
-                pa.table(batch),
-                mode="overwrite",
-                n_rows=n_rows,
-                row_group_size=min(n_rows or 250_000),
-                compression=compression,
-                update_metadata=False,
-                **kwargs,
-            )
-        self.reset_scan()
-
     def optimize(
         self,
-        n_rows: int | None = None,
+        max_rows_per_file: int | None = None,
         sort_by: str | list[str] | list[tuple[str, str]] = None,
         distinct: bool = False,
         compression="zstd",
+        row_group_size: int | None = 250_000,
         **kwargs,
     ):
         def _optimize_partition(
             partition: str | list[str],
-            n_rows: int | None = None,
+            max_rows_per_file: int | None = None,
             sort_by: str | list[str] | list[tuple[str, str]] = None,
             distinct: bool = False,
             compression="zstd",
+            row_group_size: int | None = 250_000,
         ):
             if isinstance(partition, str):
                 partition = [partition]
@@ -1173,15 +1144,15 @@ class ParquetDataset(ParquetDatasetMetadata):
                 [f"{n}='{v}'" for n, v in list(zip(self.partition_names, partition))]
             )
             batches = self.scan(filter_).to_batch_reader(
-                sort_by=sort_by, distinct=distinct, batch_size=n_rows
+                sort_by=sort_by, distinct=distinct, batch_size=max_rows_per_file
             )
 
             for batch in batches:
                 self.write_to_dataset(
                     pa.table(batch),
                     mode="overwrite",
-                    n_rows=n_rows,
-                    row_group_size=min(n_rows or 250_000),
+                    max_rows_per_file=max_rows_per_file,
+                    row_group_size=min(max_rows_per_file or row_group_size)
                     compression=compression,
                     update_metadata=False,
                 )
@@ -1190,10 +1161,11 @@ class ParquetDataset(ParquetDatasetMetadata):
         run_parallel(
             _optimize_partition,
             self.partitions,
-            n_rows=n_rows,
+            max_rows_per_file=max_rows_per_file,
             sort_by=sort_by,
             distinct=distinct,
             compression=compression,
+            row_group_size=row_group_size,
             **kwargs,
         )
 
