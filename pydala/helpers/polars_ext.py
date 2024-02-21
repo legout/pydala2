@@ -178,12 +178,16 @@ def with_strftime_columns(
             for strftime_ in strftime
         ]
     # print("timestamp_column, with_strftime_columns", timestamp_column)
-    return df.with_columns(
-        [
-            pl.col(timestamp_column).dt.strftime(strftime_).alias(column_name)
-            for strftime_, column_name in zip(strftime, column_names)
-        ]
-    ).opt_dtype(include=column_names, strict=False)
+    return opt_dtype(
+        df.with_columns(
+            [
+                pl.col(timestamp_column).dt.strftime(strftime_).alias(column_name)
+                for strftime_, column_name in zip(strftime, column_names)
+            ]
+        ),
+        include=column_names,
+        strict=False,
+    )
 
 
 def with_truncated_columns(
