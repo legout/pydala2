@@ -319,6 +319,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                 if self.is_loaded:
                     self._partitions = (
                         _pl.from_arrow(self.metadata_table.select(self.partition_names))
+                        .unique(maintan_order=True)
                         .to_numpy()
                         .tolist()
                     )
