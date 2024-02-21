@@ -183,7 +183,7 @@ def with_strftime_columns(
             pl.col(timestamp_column).dt.strftime(strftime_).alias(column_name)
             for strftime_, column_name in zip(strftime, column_names)
         ]
-    )
+    ).opt_dtype(include=column_names, strict=False)
 
 
 def with_truncated_columns(
