@@ -757,7 +757,10 @@ class PydalaDatasetMetadata:
     def scan_files(self):
         if self.metadata_table_scanned is not None:
             return sorted(
-                set(self.metadata_table_scanned.column("file_path").to_pylist())
+                fn.replace(self._path, "").lstrip("/")
+                for fn in set(
+                    self.metadata_table_scanned.column("file_path").to_pylist()
+                )
             )
         else:
             return self.files
