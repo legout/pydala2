@@ -143,6 +143,8 @@ class ParquetDataset(ParquetDatasetMetadata):
             )
 
             self.ddb_con.register(f"{self.name}_dataset", self._arrow_parquet_dataset)
+            self.ddb_con.register("arrow_parquet_dataset", self._arrow_parquet_dataset)
+
             if self._timestamp_column is None:
                 self._timestamp_columns = get_timestamp_column(self.pl.head(1))
                 if len(self._timestamp_columns) > 1:
@@ -315,19 +317,22 @@ class ParquetDataset(ParquetDatasetMetadata):
             dict: A dictionary of partitioning values.
         """
         if self.has_files:
-            if not hasattr(self, "_partitions"):
-                if self.is_loaded:
-                    self._partitions = (
-                        _pl.from_arrow(self.metadata_table.select(self.partition_names))
-                        .unique(maintain_order=True)
-                        .to_numpy()
-                        .tolist()
-                    )
+            if self._partitioning:
+                if not hasattr(self, "_partitions"):
+                    if self.is_loaded:
+                        self._partitions = (
+                            _pl.from_arrow(
+                                self.metadata_table.select(self.partition_names)
+                            )
+                            .unique(maintain_order=True)
+                            .to_numpy()
+                            .tolist()
+                        )
 
-                else:
-                    # print(f"No dataset loaded yet. Run {self}.load()")
-                    return {}
-            return self._partitions
+                    else:
+                        # print(f"No dataset loaded yet. Run {self}.load()")
+                        return {}
+                return self._partitions
 
     def gen_metadata_table(self):
         """
@@ -349,6 +354,8 @@ class ParquetDataset(ParquetDatasetMetadata):
         self.pydala_dataset_metadata.gen_metadata_table(
             self.metadata, self._partitioning
         )
+        self.ddb_con.register(f"{self.name}_metadata", self.metadata_table)
+        self.ddb_con.register("metadata", self.metadata_table)
 
     def scan(self, filter_expr: str | None = None) -> ParquetDatasetMetadata:
         """
@@ -381,27 +388,10 @@ class ParquetDataset(ParquetDatasetMetadata):
             pds.Dataset: The converted Arrow dataset.
 
         """
-        return self.table.to_arrow_dataset()
-        # if self.has_files:
-        #     if hasattr(self, "_arrow_dataset"):
-        #         if sorted(self._arrow_dataset.files) == sorted(self.scan_files):
-        #             return self._arrow_dataset
-        #
-        #         self._arrow_dataset = pds.dataset(
-        #             self.scan_files,
-        #             partitioning=self._partitioning,
-        #             filesystem=self._filesystem,
-        #         )
-        #     else:
-        #         self._arrow_dataset = pds.dataset(
-        #             self.scan_files,
-        #             partitioning=self._partitioning,
-        #             filesystem=self._filesystem,
-        #         )
-        #     if len(self._arrow_dataset.files):
-        #         self.ddb_con.register("arrow_dataset", self._arrow_dataset)
-        #
-        #     return self._arrow_dataset
+
+        self._arrow_dataset = self.table.to_arrow_dataset()
+        self.ddb_con.register("arrow_dataset", self._arrow_dataset)
+        return self._arrow_dataset
 
     @property
     def arrow_dataset(self) -> pds.Dataset:
@@ -413,7 +403,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         """
 
         if not hasattr(self, "_arrow_dataset"):
-            self._arrow_dataset = self.to_arrow_dataset()
+            self.to_arrow_dataset()
         return self._arrow_dataset
 
     def to_arrow(
@@ -442,41 +432,13 @@ class ParquetDataset(ParquetDatasetMetadata):
         """
         if batch_size is not None:
             batch_size = 131072
-        return self.table.to_arrow(columns=columns, batch_size=batch_size, **kwargs)
+        self._arrow_table = self.table.to_arrow(
+            columns=columns, batch_size=batch_size, **kwargs
+        )
+        self.ddb_con.register("arrow_table", self._arrow_table)
+        return self._arrow_table
 
-        # if hasattr(self, "_arrow_table"):
-        #     if sorted(self._table_files) == sorted(self.scan_files):
-        #         return self._arrow_table
-        #
-        #     else:
-        #         self._arrow_table = pa.concat_tables(
-        #             run_parallel(
-        #                 read_table,
-        #                 self.scan_files,
-        #                 schema=self.file_schema,
-        #                 filesystem=self._filesystem,
-        #                 partitioning=self._partitioning,
-        #                 **kwargs,
-        #             )
-        #         )
-        #
-        # else:
-        #     self._arrow_table = pa.concat_tables(
-        #         run_parallel(
-        #             read_table,
-        #             self.scan_files,
-        #             schema=self.schema,
-        #             filesystem=self._filesystem,
-        #             partitioning=self._partitioning,
-        #             **kwargs,
-        #         )
-        #     )
-        # self._table_files = self.scan_files.copy()
-        #
-        # if len(self._table_files):
-        #     self.ddb_con.register("arrow_table", self._arrow_table)
-        #
-        # return self._arrow_table
+      
 
     # @property
     def arrow_table(
@@ -506,8 +468,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             arrow.Table: The arrow table representation of the data.
         """
         if not hasattr(self, "_arrow_table"):
-            self._arrow_table = self.to_arrow()
-            self.ddb_con.register(f"{self.name}_table", self._arrow_table)
+            self.to_arrow()
         return self._arrow_table
 
     def to_duckdb(
@@ -529,16 +490,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         return self.table.to_duckdb(
             lazy=lazy, columns=columns, batch_size=batch_size, **kwargs
         )
-        # if lazy:
-        #     if sorted(self.files) == sorted(self.scan_files):
-        #         self._ddb = self.ddb_con.from_arrow(self.arrow_parquet_dataset)
-        #     else:
-        #         self._ddb = self.ddb_con.from_arrow(self.arrow_dataset)
-        #
-        # else:
-        #     self._ddb = self.ddb_con.from_arrow(self.arrow())
-        #
-        # return self._ddb
+
 
     def duckdb(
         self,
@@ -592,12 +544,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         return self.table.to_polars(
             lazy=lazy, columns=columns, batch_size=batch_size, **kwargs
         )
-        # if lazy:
-        #     self._pl = _pl.scan_pyarrow_dataset(self.arrow_dataset)
-        # else:
-        #     self._pl = _pl.from_arrow(self.arrow())
-        #
-        # return self._pl
+
 
     def to_pl(
         self,
@@ -653,10 +600,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         return self.table.to_pandas(
             lazy=lazy, columns=columns, batch_size=batch_size, **kwargs
         )
-        # self._df = self.to_duckdb(lazy=lazy).df()
-        # return self._df
-
-    def to_df(
+     def to_df(
         self,
         lazy: bool = True,
         columns: str | list[str] | None = None,
@@ -931,7 +875,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             ]
         )
 
-    def delete_files(self, files: str | list[str] | None = None):
+    def delete_files(self, files: str | list[str] ):
         """
         Deletes the specified files from the dataset.
 
@@ -939,6 +883,8 @@ class ParquetDataset(ParquetDatasetMetadata):
             files (str | list[str] | None, optional): The name(s) of the file(s) to delete. If None,
                 all files in the dataset will be deleted. Defaults to None.
         """
+        if not self._path in files[0]:
+            files = [os.path.join(self._path, fn) for fn in files]
         self._filesystem.rm(files, recursive=True)
         # self.load(reload=True)
 
@@ -1010,7 +956,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         ),
         mode: str = "append",  # "delta", "overwrite"
         partitioning_columns: str | list[str] | None = None,
-        max_rows_per_file: int | None = 10_000_000,
+        max_rows_per_file: int | None = 2_500_000,
         row_group_size: int | None = 250_000,
         compression: str = "zstd",
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
