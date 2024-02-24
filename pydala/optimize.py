@@ -49,6 +49,8 @@ class Optimize(ParquetDataset):
         filter_ = " AND ".join(
             [f"{n}='{v}'" for n, v in list(zip(self.partition_names, partition))]
         )
+        filter_ += f" AND num_rows <{max_rows_per_file}"
+
         batches = self.scan(filter_).to_batch_reader(
             sort_by=sort_by, distinct=distinct, batch_size=max_rows_per_file
         )
