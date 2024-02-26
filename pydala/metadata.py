@@ -161,7 +161,7 @@ class ParquetDatasetMetadata:
         rm_files = []
 
         if self.has_file_metadata:
-            new_files += sorted(set(new_files) - set(self._file_metadata.keys()))
+            new_files += sorted(set(self.files) - set(self._file_metadata.keys()))
             rm_files += sorted(set(self._file_metadata.keys()) - set(self.files))
 
         else:
