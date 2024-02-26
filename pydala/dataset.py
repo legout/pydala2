@@ -1,23 +1,21 @@
 import os
 
 import duckdb as _duckdb
-from numpy import isin
 import pandas as pd
 import pyarrow as pa
 import pyarrow.dataset as pds
-import tqdm
 from fsspec import AbstractFileSystem
 
-from .helpers.io import Writer, read_table
+from .helpers.io import Writer
 from .helpers.misc import (
     get_timestamp_column,
-    humanized_size_to_bytes,
-    run_parallel,
     str2pyarrow_filter,
 )
 from .helpers.polars_ext import pl as _pl
 from .metadata import ParquetDatasetMetadata, PydalaDatasetMetadata
 from .table import PydalaTable
+
+# from .optimize import Optimize
 
 
 class ParquetDataset(ParquetDatasetMetadata):
@@ -114,8 +112,8 @@ class ParquetDataset(ParquetDatasetMetadata):
         Returns:
             None
         """
-        if kwargs.pop("udate", None):
-            update_meatadata = True
+        if kwargs.pop("update", None):
+            update_metadata = True
         if kwargs.pop("reload", None):
             reload_metadata = True
         if self.has_files:
@@ -321,13 +319,14 @@ class ParquetDataset(ParquetDatasetMetadata):
                 if not hasattr(self, "_partitions"):
                     if self.is_loaded:
                         self._partitions = (
-                            _pl.from_arrow(
-                                self.metadata_table.select(self.partition_names)
-                            )
-                            .unique(maintain_order=True)
-                            .to_numpy()
-                            .tolist()
+                            (self.metadata_table.select(",".join(self.partition_names)))
+                            .distinct()
+                            .fetchall()
                         )
+                        # .unique(maintain_order=True)
+                        # .to_numpy()
+                        # .tolist()
+                        # )
 
                     else:
                         # print(f"No dataset loaded yet. Run {self}.load()")
@@ -354,8 +353,8 @@ class ParquetDataset(ParquetDatasetMetadata):
         self.pydala_dataset_metadata.gen_metadata_table(
             self.metadata, self._partitioning
         )
-        self.ddb_con.register(f"{self.name}_metadata", self.metadata_table)
-        self.ddb_con.register("metadata", self.metadata_table)
+        # self.ddb_con.register(f"{self.name}_metadata", self.metadata_table)
+        # self.ddb_con.register("metadata", self.metadata_table)
 
     def scan(self, filter_expr: str | None = None) -> ParquetDatasetMetadata:
         """
@@ -438,8 +437,6 @@ class ParquetDataset(ParquetDatasetMetadata):
         self.ddb_con.register("arrow_table", self._arrow_table)
         return self._arrow_table
 
-      
-
     # @property
     def arrow_table(
         self,
@@ -490,7 +487,6 @@ class ParquetDataset(ParquetDatasetMetadata):
         return self.table.to_duckdb(
             lazy=lazy, columns=columns, batch_size=batch_size, **kwargs
         )
-
 
     def duckdb(
         self,
@@ -544,7 +540,6 @@ class ParquetDataset(ParquetDatasetMetadata):
         return self.table.to_polars(
             lazy=lazy, columns=columns, batch_size=batch_size, **kwargs
         )
-
 
     def to_pl(
         self,
@@ -600,7 +595,8 @@ class ParquetDataset(ParquetDatasetMetadata):
         return self.table.to_pandas(
             lazy=lazy, columns=columns, batch_size=batch_size, **kwargs
         )
-     def to_df(
+
+    def to_df(
         self,
         lazy: bool = True,
         columns: str | list[str] | None = None,
@@ -875,7 +871,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             ]
         )
 
-    def delete_files(self, files: str | list[str] ):
+    def delete_files(self, files: str | list[str]):
         """
         Deletes the specified files from the dataset.
 
@@ -1070,4 +1066,11 @@ class ParquetDataset(ParquetDatasetMetadata):
 
         self.clear_cache()
 
-    
+
+#
+# ParquetDataset.compact_partitions = Optimize.compact_partitions
+# ParquetDataset._compact_partition = Optimize._compact_partition
+# ParquetDataset.compact_by_timeperiod = Optimize.compact_by_timeperiod
+# ParquetDataset._compact_by_timeperiod = Optimize._compact_by_timeperiod
+# ParquetDataset.compact_by_rows = Optimize.compact_by_rows
+# ParquetDataset.repartition = Optimize.repartition

@@ -1,9 +1,4 @@
-from math import e
-import re
-import stat
 import duckdb as _duckdb
-from numpy import sort
-from polars import col
 import pyarrow.dataset as pds
 from .helpers.polars_ext import pl as _pl
 import pyarrow as pa

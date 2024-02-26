@@ -122,14 +122,11 @@ class ParquetDatasetMetadata:
         else:
             self._file_metadata = file_metadata
 
-    def _rm_file_metadata(self):
+    def _rm_file_metadata(self, files: list[str] | None = None) -> None:
         """
         Removes file metadata for files that are no longer in the dataset.
         """
-        rm_file_metadata = [
-            f for f in self._file_metadata.keys() if f not in self.files
-        ]
-        for f in rm_file_metadata:
+        for f in files:
             self._file_metadata.pop(f)
 
     def _dump_file_metadata(self):
@@ -157,13 +154,16 @@ class ParquetDatasetMetadata:
         # Add new files to file_metadata
         self.reload_files()
 
-        if self.has_metadata:
-            new_files = sorted((set(self._files) - set(self.files_in_metadata)))
-        else:
-            new_files = []
+        # if self.has_metadata:
+        #    new_files = sorted((set(self._files) - set(self.files_in_metadata)))
+        # else:
+        new_files = []
+        rm_files = []
 
         if self.has_file_metadata:
             new_files += sorted(set(new_files) - set(self._file_metadata.keys()))
+            rm_files += sorted(set(self._file_metadata.keys()) - set(self.files))
+
         else:
             new_files += sorted(set(new_files + self._files))
 
@@ -172,14 +172,12 @@ class ParquetDatasetMetadata:
 
         if new_files:
             self._collect_file_metadata(files=new_files, **kwargs)
-        # else:
-        #    self._file_metadata = {}
 
-        # Remove metadata of deleted files from file_metadata
-        if self.has_file_metadata:
-            self._rm_file_metadata()
+        if rm_files:
+            self._rm_file_metadata(files=rm_files)
 
-        self._dump_file_metadata()
+        if new_files or rm_files:
+            self._dump_file_metadata()
 
     def reset(self):
         """
@@ -306,7 +304,7 @@ class ParquetDatasetMetadata:
     def _update_metadata(self, **kwargs):
         # if not self.file_metadata:
         # self.update_file_metadata(**kwargs)
-
+        self._metadata_temp = self._metadata
         # update metadata
         if self.has_file_metadata:
             # if not self.has_metadata:
@@ -316,6 +314,9 @@ class ParquetDatasetMetadata:
             # else:
             #    for f in sorted(self.file_metadata.keys()):
             #        self._metadata.append_row_groups(self.file_metadata[f])
+        if self._metadata_temp != self._metadata:
+            self._write_metadata_file()
+        del self._metadata_temp
 
     def update(
         self,
@@ -364,9 +365,9 @@ class ParquetDatasetMetadata:
         # update metadata
         self._update_metadata(**kwargs)
 
-        if self._read_metadata() != self._metadata:
-            # write metadata file
-            self._write_metadata_file()
+        # if self._read_metadata() != self._metadata:
+        #    # write metadata file
+        #    self._write_metadata_file()
 
     def replace_schema(self, schema: pa.Schema, **kwargs) -> None:
         """
@@ -556,6 +557,7 @@ class PydalaDatasetMetadata:
         self,
         metadata: pq.FileMetaData,
         partitioning: None | str | list[str] = None,
+        ddb_con: duckdb.DuckDBPyConnection | None = None,
     ) -> None:
         """
         A class representing metadata for a Parquet dataset.
@@ -574,7 +576,10 @@ class PydalaDatasetMetadata:
         # self._parquet_dataset_metadata = parquet_dataset_metadata
         # self._partitioning = partitioning
         self.reset_scan()
-        self._con = duckdb.connect()
+        if ddb_con is None:
+            self._ddb_con = duckdb.connect()
+        else:
+            self._ddb_con = ddb_con
         self.gen_metadata_table(metadata=metadata, partitioning=partitioning)
 
     def reset_scan(self):
@@ -625,7 +630,11 @@ class PydalaDatasetMetadata:
                     rgc.update(rgc.pop("statistics"))
                     metadata_table[col_name].append(rgc)
 
-        self._metadata_table = pa.Table.from_pydict(metadata_table)
+        # self._metadata_table = pa.Table.from_pydict(metadata_table)
+        self._metadata_table = self._ddb_con.from_arrow(
+            pa.Table.from_pydict(metadata_table)
+        )
+        self._metadata_table.create_view("metadata_table")
 
     @property
     def metadata_table(self):
@@ -713,19 +722,23 @@ class PydalaDatasetMetadata:
                 #    in self.metadata_table.column_names
                 # ):
                 col = re.split("[>=<]", fe)[0].lstrip("(")
-                if not isinstance(
-                    self.metadata_table.schema.field(col).type, pa.StructType
-                ):
+                # if not isinstance(
+                #    self.metadata_table.schema.field(col).type, pa.StructType
+                # ):
+                if self.metadata_table.select(col).types[0].id != "struct":
                     filter_expr_mod.append(fe)
                 else:
                     filter_expr_mod += self._gen_filter(fe)
 
             self._filter_expr_mod = " AND ".join(filter_expr_mod)
 
-            self._metadata_table_scanned = (
-                self._con.from_arrow(self.metadata_table)
-                .filter(self._filter_expr_mod)
-                .arrow()
+            # self._metadata_table_scanned = (
+            #    self._con.from_arrow(self.metadata_table)
+            #    .filter(self._filter_expr_mod)
+            #    .arrow()
+            # )
+            self._metadata_table_scanned = self._metadata_table.filter(
+                self._filter_expr_mod
             )
 
     def filter(self, filter_expr: str | None = None):
@@ -757,14 +770,21 @@ class PydalaDatasetMetadata:
     def scan_files(self):
         if self.metadata_table_scanned is not None:
             return sorted(
-                set(self.metadata_table_scanned.column("file_path").to_pylist())
+                set(
+                    map(
+                        lambda x: x[0],
+                        self.metadata_table_scanned.select("file_path").fetchall(),
+                    )
+                )
             )
         else:
             return self.files
 
     @property
     def files(self):
-        return sorted(set(self.metadata_table.column("file_path").to_pylist()))
+        return sorted(
+            set(map(lambda x: x[0], self.metadata_table.select("file_path").fetchall()))
+        )
 
     @property
     def is_scanned(self):
