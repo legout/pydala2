@@ -61,6 +61,12 @@ class ParquetDataset(ParquetDatasetMetadata):
         else:
             self.name = name
 
+        if ddb_con is None:
+            ddb_con = _duckdb.connect()
+
+        self.ddb_con = ddb_con
+        self._timestamp_column = timestamp_column
+
         if self.has_files:
             if partitioning == "ignore":
                 self._partitioning = None
@@ -76,11 +82,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             self.pydala_dataset_metadata = PydalaDatasetMetadata(
                 metadata=self.metadata, partitioning=partitioning, ddb_con=ddb_con
             )
-        if ddb_con is None:
-            ddb_con = _duckdb.connect()
-
-        self.ddb_con = ddb_con
-        self._timestamp_column = timestamp_column
+            self.metadata_table.create_view(f"{self.name}_metadata")
 
     def load(
         self,
