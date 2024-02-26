@@ -577,9 +577,9 @@ class PydalaDatasetMetadata:
         # self._partitioning = partitioning
         self.reset_scan()
         if ddb_con is None:
-            self._ddb_con = duckdb.connect()
+            self.ddb_con = duckdb.connect()
         else:
-            self._ddb_con = ddb_con
+            self.ddb_con = ddb_con
         self.gen_metadata_table(metadata=metadata, partitioning=partitioning)
 
     def reset_scan(self):
@@ -631,7 +631,7 @@ class PydalaDatasetMetadata:
                     metadata_table[col_name].append(rgc)
 
         # self._metadata_table = pa.Table.from_pydict(metadata_table)
-        self._metadata_table = self._ddb_con.from_arrow(
+        self._metadata_table = self.ddb_con.from_arrow(
             pa.Table.from_pydict(metadata_table)
         )
         self._metadata_table.create_view("metadata_table")

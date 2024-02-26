@@ -74,8 +74,7 @@ class ParquetDataset(ParquetDatasetMetadata):
 
         if self.has_metadata:
             self.pydala_dataset_metadata = PydalaDatasetMetadata(
-                metadata=self.metadata,
-                partitioning=partitioning,
+                metadata=self.metadata, partitioning=partitioning, ddb_con=ddb_con
             )
         if ddb_con is None:
             ddb_con = _duckdb.connect()

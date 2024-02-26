@@ -451,6 +451,7 @@ class Writer:
             compression=compression,
             max_rows_per_file=max_rows_per_file,
             existing_data_behavior="overwrite_or_ignore",
+            create_dirs=False,
             **kwargs,
         )
 
