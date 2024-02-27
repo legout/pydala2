@@ -309,7 +309,7 @@ class Optimize(ParquetDataset):
     def repartition(
         self,
         partitioning_columns: str | list[str] | None = None,
-        max_rows_per_file: int | None = 10_000_000,
+        max_rows_per_file: int | None = 2_500_000,
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
         distinct: bool = False,
         compression="zstd",

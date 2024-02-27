@@ -60,7 +60,7 @@ class ParquetDatasetMetadata:
         #         pass
         #
         self._metadata_file = os.path.join(path, "_metadata")
-        self._file_metadata_file = os.path.join(path, "file_metadata.pkl")
+        self._file_metadata_file = os.path.join(path, "_file_metadata")
         self._metadata = self._read_metadata()
         self._file_metadata = self._load_file_metadata()
 
