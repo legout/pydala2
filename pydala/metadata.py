@@ -627,7 +627,8 @@ class PydalaDatasetMetadata:
                     col_name = rgc.pop("path_in_schema")
                     rgc.pop("file_path")
                     rgc.pop("compression")
-                    rgc.update(rgc.pop("statistics"))
+                    if "statistics" in rgc:
+                        rgc.update(rgc.pop("statistics"))
                     metadata_table[col_name].append(rgc)
 
         # self._metadata_table = pa.Table.from_pydict(metadata_table)
