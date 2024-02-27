@@ -60,7 +60,10 @@ class Optimize(ParquetDataset):
         if len(self.pydala_dataset_metadata.scan_files) > 1:
             scan = PydalaTable(
                 result=pds.dataset(
-                    self.pydala_dataset_metadata.scan_files,
+                    [
+                        os.path.join(self._path, f)
+                        for f in self.pydala_dataset_metadata.scan_files
+                    ],
                     filesystem=self._filesystem,
                     partitioning=self._partitioning,
                 ),
@@ -142,7 +145,10 @@ class Optimize(ParquetDataset):
         if len(self.pydala_dataset_metadata.scan_files) > 1:
             scan = PydalaTable(
                 result=pds.dataset(
-                    self.pydala_dataset_metadata.scan_files,
+                    [
+                        os.path.join(self._path, f)
+                        for f in self.pydala_dataset_metadata.scan_files
+                    ],
                     filesystem=self._filesystem,
                     partitioning=self._partitioning,
                 ),
@@ -261,7 +267,10 @@ class Optimize(ParquetDataset):
             if len(self.pydala_dataset_metadata.scan_files) > 1:
                 scan = PydalaTable(
                     result=pds.dataset(
-                        self.pydala_dataset_metadata.scan_files,
+                        [
+                            os.path.join(self._path, f)
+                            for f in self.pydala_dataset_metadata.scan_files
+                        ],
                         filesystem=self._filesystem,
                         partitioning=self._partitioning,
                     ),
