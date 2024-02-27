@@ -1,8 +1,8 @@
 import datetime as dt
 
 import duckdb as _duckdb
-# from pydala.helpers.misc import run_parallel
 import pyarrow as pa
+import pyarrow.dataset as pds
 import tqdm
 from fsspec import AbstractFileSystem
 
