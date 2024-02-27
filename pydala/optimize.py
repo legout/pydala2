@@ -137,7 +137,6 @@ class Optimize(ParquetDataset):
         self.pydala_dataset_metadata.scan(filter_)
 
         if len(self.pydala_dataset_metadata.scan_files) > 1:
-
             scan = PydalaTable(
                 result=pds.dataset(
                     self.pydala_dataset_metadata.scan_files,
@@ -254,10 +253,9 @@ class Optimize(ParquetDataset):
                 **kwargs,
             )
         else:
-            self.pydala_dataset_metadata.scan("num_rows<max_rows_per_file")
+            self.pydala_dataset_metadata.scan(f"num_rows<{max_rows_per_file}")
 
             if len(self.pydala_dataset_metadata.scan_files) > 1:
-
                 scan = PydalaTable(
                     result=pds.dataset(
                         self.pydala_dataset_metadata.scan_files,
