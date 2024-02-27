@@ -188,13 +188,13 @@ class ParquetDataset(ParquetDatasetMetadata):
             int: The number of rows in the dataset.
         """
         if self.is_loaded:
-            return self.metadata.n_rows
+            return self.metadata.num_rows
         else:
             # print(f"No dataset loaded yet. Run {self}.load()")
             return 0
 
     @property
-    def n_rows(self) -> int:
+    def num_rows(self) -> int:
         """
         Returns the number of rows in the dataset.
 
@@ -204,7 +204,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             int: The number of rows in the dataset.
         """
         if self.is_loaded:
-            return self.metadata.n_rows
+            return self.metadata.num_rows
         else:
             # print(f"No dataset loaded yet. Run {self}.load()")
             return 0
