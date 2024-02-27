@@ -1,6 +1,5 @@
 import datetime as dt
 import os
-
 import duckdb as _duckdb
 import pyarrow as pa
 import pyarrow.dataset as pds
@@ -282,7 +281,7 @@ class Optimize(ParquetDataset):
                     batch_size=max_rows_per_file, sort_by=sort_by, distinct=distinct
                 )
 
-                for batch in tqmd.tqdm(batches):
+                for batch in tqdm.tqdm(batches):
                     self.write_to_dataset(
                         pa.table(batch),
                         mode="append",

@@ -63,7 +63,7 @@ class PydalaTable:
 
     def sort_by(self, by: str | list[str] | list[tuple[str, str]] | None = None):
         if by is not None:
-            sort_by = self._get_sort_by(self, by)
+            sort_by = self._get_sort_by(by)
             if self._type == "pyarrow":
                 self.result = self.result.sort_by(sort_by)
             else:
@@ -139,7 +139,7 @@ class PydalaTable:
                 memory_pool=memory_pool,
             )
             if sort_by is not None:
-                sort_by = self._get_sort_by(self, sort_by, "duckdb")
+                sort_by = self._get_sort_by(sort_by, "duckdb")
                 return (
                     ddb.order(sort_by)
                     .distinct()
@@ -158,7 +158,7 @@ class PydalaTable:
 
         columns = "*" if columns is None else ",".join(columns)
         if sort_by is not None:
-            sort_by = self._get_sort_by(self, sort_by, "duckdb")
+            sort_by = self._get_sort_by(sort_by, "duckdb")
             return (
                 self.result.select(columns)
                 .order(sort_by)
@@ -229,14 +229,14 @@ class PydalaTable:
                     )
                 )
             if sort_by is not None:
-                sort_by = self._get_sort_by(self, sort_by, "duckdb")
+                sort_by = self._get_sort_by(sort_by, "duckdb")
                 return ddb.order(sort_by).distinct() if distinct else ddb.order(sort_by)
 
-        return ddb.distinct() if distinct else ddb
+            return ddb.distinct() if distinct else ddb
 
         columns = "*" if columns is None else ",".join(columns)
         if sort_by is not None:
-            sort_by = self._get_sort_by(self, sort_by, "duckdb")
+            sort_by = self._get_sort_by(sort_by, "duckdb")
             return (
                 self.result.select(columns).order(sort_by).distinct()
                 if distinct
@@ -280,7 +280,7 @@ class PydalaTable:
                 memory_pool=memory_pool,
             )
             if sort_by is not None:
-                sort_by = self._get_sort_by(self, sort_by)
+                sort_by = self._get_sort_by(sort_by)
                 return (
                     self.ddb_con.from_arrow(arrow_table.sort_by(sort_by))
                     .distinct()
@@ -296,7 +296,7 @@ class PydalaTable:
 
         columns = "*" if columns is None else ",".join(columns)
         if sort_by is not None:
-            sort_by = self._get_sort_by(self, sort_by, "duckdb")
+            sort_by = self._get_sort_by(sort_by, "duckdb")
             return (
                 self.result.select(columns).order(sort_by).distinct().arrow()
                 if distinct
@@ -357,7 +357,7 @@ class PydalaTable:
 
         columns = "*" if columns is None else ",".join(columns)
         if sort_by is not None:
-            sort_by = self._get_sort_by(self, sort_by, "duckdb")
+            sort_by = self._get_sort_by(sort_by, "duckdb")
             if batch_size:
                 return (
                     self.result.select(columns)
