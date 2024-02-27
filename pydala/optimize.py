@@ -343,8 +343,11 @@ class Optimize(ParquetDataset):
         # )
         self.delete_files(self.pydala_dataset_metadata.files)
         self.clear_cache()
-        self.load(update_metadata=True)
-        self.gen_metadata_table()
+        self.update()
+        self.load()
+
+
+#        self.gen_metadata_table()
 
 
 ParquetDataset.compact_partitions = Optimize.compact_partitions
