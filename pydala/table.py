@@ -17,10 +17,15 @@ class PydalaTable:
         else:
             self.ddb_con = ddb_con
 
-        self.result = result
         self._type = (
             "duckdb" if isinstance(result, _duckdb.DuckDBPyRelation) else "pyarrow"
         )
+        if self._type == "pyarrow":
+            self._dataset = result
+            self._ddb = self.ddb_con.from_arrow(result)
+        else:
+            self._dataset = None
+            self._ddb = result
 
     # @staticmethod
     def _get_sort_by(
@@ -61,18 +66,22 @@ class PydalaTable:
                 "sort_by must be a string, list of strings, or list of tuples."
             )
 
-    def sort_by(self, by: str | list[str] | list[tuple[str, str]] | None = None):
-        if by is not None:
-            sort_by = self._get_sort_by(by)
-            if self._type == "pyarrow":
-                self.result = self.result.sort_by(sort_by)
-            else:
-                self.result = self.result.order(sort_by)
-        return self
+    # def sort_by(self, by: str | list[str] | list[tuple[str, str]] | None = None, type_:str|None=None):
+    #     type_ = type_ or self._type
+    #
+    #     if by is not None:
+    #         if type_ == "pyarrow":
+    #             sort_by_pa = self._get_sort_by(by, "pyarrow")
+    #             self._dataset = self._dataset.sort_by(sort_by_pa)
+    #
+    #         if type_ == "duckdb":
+    #             sort_by_ddb = self._get_sort_by(by, "duckdb")
+    #             self._ddb = self._ddb.order(sort_by_ddb)
+    #     return self
 
     def to_arrow_dataset(self) -> pds.Dataset:
         if self._type == "pyarrow":
-            return self.result
+            return self._dataset
 
     @property
     def arrow_dataset(self) -> pds.Dataset:
@@ -90,11 +99,26 @@ class PydalaTable:
         use_threads: bool = True,
         memory_pool: pa.MemoryPool | None = None,
     ) -> pds.Scanner:
-        if sort_by is not None:
-            _ = self.sort_by(sort_by)
+        if self._type != "pyarrow":
+            raise ValueError("This method is only available for pyarrow datasets.")
 
-        if self._type == "pyarrow":
-            return self.result.scanner(
+        if isinstance(columns, str):
+            columns = [columns]
+
+        if sort_by is not None:
+            sort_by = self._get_sort_by(sort_by, "pyarrow")
+            return self._dataset.sort_by(sort_by).scanner(
+                columns=columns,
+                filter=filter,
+                batch_size=batch_size,
+                batch_readahead=batch_readahead,
+                fragment_readahead=fragment_readahead,
+                fragment_scan_options=fragment_scan_options,
+                use_threads=use_threads,
+                memory_pool=memory_pool,
+            )
+        else:
+            return self._dataset.scanner(
                 columns=columns,
                 filter=filter,
                 batch_size=batch_size,
@@ -105,16 +129,86 @@ class PydalaTable:
                 memory_pool=memory_pool,
             )
 
-    def to_scanner(self, *args, **kwargs) -> pds.Scanner:
-        return self.to_arrow_scanner(*args, **kwargs)
+    def to_scanner(
+        self,
+        columns: str | list[str] | None = None,
+        filter: pds.Expression | None = None,
+        batch_size: int = 131072,
+        sort_by: str | list[str] | list[tuple[str, str]] | None = None,
+        batch_readahead: int = 16,
+        fragment_readahead: int = 4,
+        fragment_scan_options: pds.FragmentScanOptions | None = None,
+        use_threads: bool = True,
+        memory_pool: pa.MemoryPool | None = None,
+    ) -> pds.Scanner:
+        return self.to_arrow_scanner(
+            columns=columns,
+            filter=filter,
+            batch_size=batch_size,
+            batch_readahead=batch_readahead,
+            fragment_readahead=fragment_readahead,
+            fragment_scan_options=fragment_scan_options,
+            use_threads=use_threads,
+            memory_pool=memory_pool,
+            sort_by=sort_by,
+        )
 
-    def scanner(self, *args, **kwargs) -> pds.Scanner:
-        return self.to_arrow_scanner(*args, **kwargs)
+    def scanner(
+        self,
+        columns: str | list[str] | None = None,
+        filter: pds.Expression | None = None,
+        batch_size: int = 131072,
+        sort_by: str | list[str] | list[tuple[str, str]] | None = None,
+        batch_readahead: int = 16,
+        fragment_readahead: int = 4,
+        fragment_scan_options: pds.FragmentScanOptions | None = None,
+        use_threads: bool = True,
+        memory_pool: pa.MemoryPool | None = None,
+    ) -> pds.Scanner:
+        return self.to_arrow_scanner(
+            columns=columns,
+            filter=filter,
+            batch_size=batch_size,
+            batch_readahead=batch_readahead,
+            fragment_readahead=fragment_readahead,
+            fragment_scan_options=fragment_scan_options,
+            use_threads=use_threads,
+            memory_pool=memory_pool,
+            sort_by=sort_by,
+        )
+
+    def to_duckdb(
+        self,
+        lazy: bool = True,
+        columns: str | list[str] | None = None,
+        # batch_size: int | None = None,
+        sort_by: str | list[str] | list[tuple[str, str]] | None = None,
+        distinct: bool = False,
+        **kwargs,
+    ) -> _duckdb.DuckDBPyRelation:
+        if isinstance(columns, str):
+            columns = [columns]
+
+        columns = "*" if columns is None else ",".join(columns)
+
+        if lazy:
+            if sort_by is not None:
+                sort_by = self._get_sort_by(sort_by, "duckdb")
+                ddb = self._ddb.select(columns).order(sort_by)
+            else:
+                ddb = self._ddb.select(columns)
+        else:
+            ddb = self.ddb_con.from_arrow(
+                self.scanner(columns=columns, sort_by=sort_by, **kwargs).to_table()
+            )
+
+        return ddb.distinct() if distinct else ddb
 
     def to_batch_reader(
         self,
         columns: str | list[str] | None = None,
         filter: pds.Expression | None = None,
+        lazy: bool = True,
         batch_size: int = 131072,
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
         distinct: bool = False,
@@ -124,58 +218,26 @@ class PydalaTable:
         use_threads: bool = True,
         memory_pool: pa.MemoryPool | None = None,
     ) -> pa.RecordBatchReader:
-        if isinstance(columns, str):
-            columns = [columns]
+        # if sort_by is not None:
+        #    _ = self.sort_by(sort_by)
 
-        if self._type == "pyarrow":
-            ddb = self.to_duckdb(
+        if self._type == "pyarrow" and sort_by is not None and not distinct:
+            return self.to_arrow_scanner(
                 columns=columns,
                 filter=filter,
                 batch_size=batch_size,
+                sort_by=sort_by,
                 batch_readahead=batch_readahead,
                 fragment_readahead=fragment_readahead,
                 fragment_scan_options=fragment_scan_options,
                 use_threads=use_threads,
                 memory_pool=memory_pool,
-            )
-            if sort_by is not None:
-                sort_by = self._get_sort_by(sort_by, "duckdb")
-                return (
-                    ddb.order(sort_by)
-                    .distinct()
-                    .fetch_arrow_reader(batch_size=batch_size or 131072)
-                    if distinct
-                    else ddb.order(sort_by).fetch_arrow_reader(
-                        batch_size=batch_size or 131072
-                    )
-                )
+            ).to_reader()
 
-            return (
-                ddb.distinct().fetch_arrow_reader(batch_size=batch_size or 131072)
-                if distinct
-                else ddb.fetch_arrow_reader(batch_size=batch_size or 131072)
-            )
-
-        columns = "*" if columns is None else ",".join(columns)
-        if sort_by is not None:
-            sort_by = self._get_sort_by(sort_by, "duckdb")
-            return (
-                self.result.select(columns)
-                .order(sort_by)
-                .distinct()
-                .fetch_arrow_reader(batch_size=batch_size or 131072)
-                if distinct
-                else self.result.select(columns).order(sort_by).fetch_arrow_reader()
-            )
-        return (
-            self.result.select(columns)
-            .distinct()
-            .fetch_arrow_reader(batch_size=batch_size or 131072)
-            if distinct
-            else self.result.select(columns).fetch_arrow_reader(
-                batch_size=batch_size or 131072
-            )
-        )
+        else:
+            return self.to_duckdb(
+                columns=columns, lazy=lazy, sort_by=sort_by, distinct=distinct
+            ).to_batch_reader(batch_size=batch_size)
 
     def to_batchtes(
         self,
@@ -203,51 +265,6 @@ class PydalaTable:
             memory_pool=memory_pool,
         ).read_all()
 
-    def to_duckdb(
-        self,
-        lazy: bool = True,
-        columns: str | list[str] | None = None,
-        batch_size: int | None = None,
-        sort_by: str | list[str] | list[tuple[str, str]] | None = None,
-        distinct: bool = False,
-        **kwargs,
-    ) -> _duckdb.DuckDBPyRelation:
-        if isinstance(columns, str):
-            columns = [columns]
-
-        if self._type == "pyarrow":
-            if lazy:
-                ddb = self.ddb_con.from_arrow(
-                    self.to_arrow_scanner(
-                        columns=columns, batch_size=batch_size or 131072, **kwargs
-                    )
-                )
-            else:
-                ddb = self.ddb_con.from_arrow(
-                    self.result.to_table(
-                        columns=columns, batch_size=batch_size or 131072, **kwargs
-                    )
-                )
-            if sort_by is not None:
-                sort_by = self._get_sort_by(sort_by, "duckdb")
-                return ddb.order(sort_by).distinct() if distinct else ddb.order(sort_by)
-
-            return ddb.distinct() if distinct else ddb
-
-        columns = "*" if columns is None else ",".join(columns)
-        if sort_by is not None:
-            sort_by = self._get_sort_by(sort_by, "duckdb")
-            return (
-                self.result.select(columns).order(sort_by).distinct()
-                if distinct
-                else self.result.select(columns).order(sort_by)
-            )
-        return (
-            self.result.select(columns).distinct()
-            if distinct
-            else self.result.select(columns)
-        )
-
     @property
     def ddb(self) -> _duckdb.DuckDBPyRelation:
         return self.to_duckdb()
@@ -265,51 +282,26 @@ class PydalaTable:
         use_threads: bool = True,
         memory_pool: pa.MemoryPool | None = None,
     ) -> pa.Table:
-        if isinstance(columns, str):
-            columns = [columns]
-
         if self._type == "pyarrow":
-            arrow_table = self.result.to_table(
+            t = self.scanner(
                 columns=columns,
                 filter=filter,
                 batch_size=batch_size,
+                sort_by=sort_by,
                 batch_readahead=batch_readahead,
                 fragment_readahead=fragment_readahead,
                 fragment_scan_options=fragment_scan_options,
                 use_threads=use_threads,
                 memory_pool=memory_pool,
-            )
-            if sort_by is not None:
-                sort_by = self._get_sort_by(sort_by)
-                return (
-                    self.ddb_con.from_arrow(arrow_table.sort_by(sort_by))
-                    .distinct()
-                    .arrow()
-                    if distinct
-                    else arrow_table.sort_by(sort_by)
-                )
-            return (
-                self.ddb_con.from_arrow(arrow_table).distinct().arrow()
-                if distinct
-                else arrow_table
-            )
+            ).to_table()
+            if distinct:
+                return _pl.from_arrow(t).unique(maintain_order=True).to_arrow()
+            return t
 
-        columns = "*" if columns is None else ",".join(columns)
-        if sort_by is not None:
-            sort_by = self._get_sort_by(sort_by, "duckdb")
-            return (
-                self.result.select(columns).order(sort_by).distinct().arrow()
-                if distinct
-                else self.result.select(columns).order(sort_by).arrow()
-            )
-
-        return (
-            self.result.select(columns)
-            .distinct()
-            .arrow(batch_size=batch_size or 131072)
-            if distinct
-            else self.result.select(columns).arrow()
-        )
+        else:
+            return self.to_duckdb(
+                columns=columns, sort_by=sort_by, distinct=distinct
+            ).to_arrow_table()
 
     def to_arrow(self, *args, **kwargs) -> pa.Table:
         return self.to_arrow_table(*args, **kwargs)
@@ -335,50 +327,13 @@ class PydalaTable:
 
         if self._type == "pyarrow":
             if lazy:
-                df = _pl.scan_pyarrow_dataset(self.result, batch_size=batch_size)
+                df = _pl.scan_pyarrow_dataset(self._dataset)
                 if columns is not None:
                     df = df.select(columns)
-                if sort_by is not None:
-                    df = df.sort(sort_by)
-                if distinct:
-                    df = df.unique()
-                return df
             else:
-                df = _pl.from_arrow(
-                    self.result.to_table(
-                        columns=columns, batch_size=batch_size or 131072, **kwargs
-                    )
-                )
-                if sort_by is not None:
-                    df = df.sort(sort_by)
-                if distinct:
-                    df = df.unique()
-                return df
+                df = _pl.from_arrow(self.scanner(columns=columns)
+                          
 
-        columns = "*" if columns is None else ",".join(columns)
-        if sort_by is not None:
-            sort_by = self._get_sort_by(sort_by, "duckdb")
-            if batch_size:
-                return (
-                    self.result.select(columns)
-                    .order(sort_by)
-                    .distinct()
-                    .pl(batch_size=batch_size)
-                    if distinct
-                    else self.result.select(columns)
-                    .order(sort_by)
-                    .pl(batch_size=batch_size)
-                )
-            return (
-                self.result.select(columns).order(sort_by).distinct().pl()
-                if distinct
-                else self.result.select(columns).order(sort_by).pl()
-            )
-        return (
-            self.result.select(columns).pl()
-            if batch_size is None
-            else self.result.select(columns).pl(batch_size=batch_size)
-        )
 
     @property
     def pl(self) -> _pl.DataFrame | _pl.LazyFrame:
