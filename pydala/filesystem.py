@@ -240,14 +240,16 @@ def write_csv(
 
 def write_to_pyarrow_dataset(
     self,
-    data: pl.DataFrame
-    | pa.Table
-    | pd.DataFrame
-    | ddb.DuckDBPyRelation
-    | list[pl.DataFrame]
-    | list[pa.Table]
-    | list[pd.DataFrame]
-    | list[ddb.DuckDBPyRelation],
+    data: (
+        pl.DataFrame
+        | pa.Table
+        | pd.DataFrame
+        | ddb.DuckDBPyRelation
+        | list[pl.DataFrame]
+        | list[pa.Table]
+        | list[pd.DataFrame]
+        | list[ddb.DuckDBPyRelation]
+    ),
     path: str,
     basename: str | None = None,
     concat: bool = True,

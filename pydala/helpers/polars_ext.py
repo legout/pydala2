@@ -49,7 +49,9 @@ def unnest_all(df: pl.DataFrame, seperator="_", fields: list[str] | None = None)
             ]
         ).unnest(struct_columns)
 
-    struct_columns = [col for col in df.columns if df[col].dtype == pl.Struct]  # noqa: F821
+    struct_columns = [
+        col for col in df.columns if df[col].dtype == pl.Struct
+    ]  # noqa: F821
     while len(struct_columns):
         df = _unnest_all(struct_columns=struct_columns)
         struct_columns = [col for col in df.columns if df[col].dtype == pl.Struct]
