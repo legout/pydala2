@@ -429,6 +429,7 @@ class Writer:
         partitioning: pds.Partitioning | list[str] | None = None,
         partitioning_flavor: str = "hive",
         max_rows_per_file: int | None = None,
+        create_dir: bool = False,
         **kwargs,
     ):
         self._to_arrow()
@@ -447,7 +448,7 @@ class Writer:
             compression=compression,
             max_rows_per_file=max_rows_per_file,
             existing_data_behavior="overwrite_or_ignore",
-            create_dir=False,
+            create_dir=create_dir,
             **kwargs,
         )
 
