@@ -1,12 +1,5 @@
-import os
-
-from fsspec import AbstractFileSystem
-from fsspec import filesystem
-from fsspec.implementations import cached as cachedfs
-
-
 import datetime as dt
-
+import os
 
 import duckdb as ddb
 import msgspec
@@ -15,7 +8,10 @@ import polars as pl
 import pyarrow as pa
 import pyarrow.dataset as pds
 import pyarrow.parquet as pq
+from fsspec import AbstractFileSystem, filesystem
+from fsspec.implementations import cached as cachedfs
 from fsspec.implementations.dirfs import DirFileSystem
+
 from .helpers.misc import run_parallel
 from .schema import shrink_large_string
 

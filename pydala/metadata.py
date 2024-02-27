@@ -1,4 +1,5 @@
 import os
+import pickle
 import re
 from collections import defaultdict
 
@@ -8,11 +9,11 @@ import pyarrow.fs as pfs
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 
-from .filesystem import clear_cache, FileSystem
+from .filesystem import FileSystem, clear_cache
+from .helpers.metadata import \
+    collect_parquet_metadata  # , remove_from_metadata
 from .helpers.misc import get_partitions_from_path
 from .schema import repair_schema, unify_schemas
-from .helpers.metadata import collect_parquet_metadata  # , remove_from_metadata
-import pickle
 
 
 class ParquetDatasetMetadata:

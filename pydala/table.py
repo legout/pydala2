@@ -1,8 +1,9 @@
 import duckdb as _duckdb
-import pyarrow.dataset as pds
-from .helpers.polars_ext import pl as _pl
-import pyarrow as pa
 import pandas as pd
+import pyarrow as pa
+import pyarrow.dataset as pds
+
+from .helpers.polars_ext import pl as _pl
 
 
 class PydalaTable:

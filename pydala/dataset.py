@@ -7,10 +7,7 @@ import pyarrow.dataset as pds
 from fsspec import AbstractFileSystem
 
 from .helpers.io import Writer
-from .helpers.misc import (
-    get_timestamp_column,
-    str2pyarrow_filter,
-)
+from .helpers.misc import get_timestamp_column, str2pyarrow_filter
 from .helpers.polars_ext import pl as _pl
 from .metadata import ParquetDatasetMetadata, PydalaDatasetMetadata
 from .table import PydalaTable

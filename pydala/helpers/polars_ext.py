@@ -1,9 +1,10 @@
+from functools import partial
+
 import pandas as pd
 import polars as pl
 
 from .datetime import get_timedelta_str
 from .misc import get_timestamp_column
-from functools import partial
 
 # import string
 
@@ -48,9 +49,7 @@ def unnest_all(df: pl.DataFrame, seperator="_", fields: list[str] | None = None)
             ]
         ).unnest(struct_columns)
 
-    struct_columns = [
-        col for col in df.columns if df[col].dtype == pl.Struct
-    ]  # noqa: F821
+    struct_columns = [col for col in df.columns if df[col].dtype == pl.Struct]  # noqa: F821
     while len(struct_columns):
         df = _unnest_all(struct_columns=struct_columns)
         struct_columns = [col for col in df.columns if df[col].dtype == pl.Struct]

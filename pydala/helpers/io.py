@@ -1,24 +1,20 @@
-import polars as pl
-import pyarrow as pa
+import datetime as dt
+import os
+import uuid
+
 import duckdb
 import pandas as pd
-
+import polars as pl
 import polars.selectors as cs
-import pyarrow.parquet as pq
+import pyarrow as pa
 import pyarrow.dataset as pds
+import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 from fsspec import filesystem as fsspec_filesystem
 
-from ..schema import (
-    replace_schema,
-    shrink_large_string,
-    convert_timestamp,
-)
+from ..schema import convert_timestamp, replace_schema, shrink_large_string
 from .misc import get_partitions_from_path
 from .polars_ext import pl
-import os
-import datetime as dt
-import uuid
 
 
 def read_table(

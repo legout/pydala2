@@ -1,8 +1,10 @@
-from fsspec import AbstractFileSystem
+import os
+
 import pyarrow.filesystem as pfs
 import pyarrow.parquet as pq
+from fsspec import AbstractFileSystem
+
 from .misc import run_parallel
-import os
 
 
 def collect_parquet_metadata(

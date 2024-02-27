@@ -1,8 +1,9 @@
 import duckdb as _duckdb
-from polars import col
-import pyarrow.dataset as pds
-from .polars_ext import pl as _pl
 import pyarrow as pa
+import pyarrow.dataset as pds
+from polars import col
+
+from .polars_ext import pl as _pl
 
 
 class PyDalaTable:
@@ -53,7 +54,6 @@ class PyDalaTable:
             )
 
     def to_scanner(self, *args, **kwargs) -> pds.Scanner:
-
         return self.to_arrow_scanner(*args, **kwargs)
 
     def scanner(self, *args, **kwargs) -> pds.Scanner:
@@ -101,7 +101,6 @@ class PyDalaTable:
         use_threads: bool = True,
         memory_pool: pa.MemoryPool | None = None,
     ) -> pa.RecordBatch:
-
         return self.to_batch_reader(
             columns=columns,
             filter=filter,
