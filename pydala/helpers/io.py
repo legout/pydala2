@@ -15,7 +15,7 @@ from fsspec import filesystem as fsspec_filesystem
 from ..schema import convert_timestamp, replace_schema, shrink_large_string
 from .misc import get_partitions_from_path
 from .polars_ext import pl
-from .table import PydalaTable
+from ..table import PydalaTable
 
 
 def read_table(
@@ -192,23 +192,23 @@ class Writer:
         self.schema = self.schema or self.data.schema
 
     def sort_data(self, by: str | list[str] | list[tuple[str, str]] | None = None):
-            """
-            Sorts the data in the PydalaTable object based on the specified column(s).
+        """
+        Sorts the data in the PydalaTable object based on the specified column(s).
 
-            Args:
-                by (str | list[str] | list[tuple[str, str]] | None): The column(s) to sort by.
-                    If a single string is provided, the data will be sorted in ascending order based on that column.
-                    If a list of strings is provided, the data will be sorted in ascending order based on each column in the list.
-                    If a list of tuples is provided, each tuple should contain a column name and a sort order ("ascending" or "descending").
-                    If None is provided, the data will not be sorted.
+        Args:
+            by (str | list[str] | list[tuple[str, str]] | None): The column(s) to sort by.
+                If a single string is provided, the data will be sorted in ascending order based on that column.
+                If a list of strings is provided, the data will be sorted in ascending order based on each column in the list.
+                If a list of tuples is provided, each tuple should contain a column name and a sort order ("ascending" or "descending").
+                If None is provided, the data will not be sorted.
 
-            Returns:
-                None
-            """
-            if by is not None:
-                self._to_arrow()
-                by = PydalaTable._get_sort_by(by, type_="pyarrow")
-                self.data = self.data.sort_by(by)
+        Returns:
+            None
+        """
+        if by is not None:
+            self._to_arrow()
+            by = PydalaTable._get_sort_by(by, type_="pyarrow")
+            self.data = self.data.sort_by(by)
 
     def unique(self, columns: bool | str | list[str] = False):
         """
@@ -262,44 +262,44 @@ class Writer:
             self.schema = self.data.schema
 
     def cast_schema(
-            self,
-            use_large_string: bool = False,
-            tz: str = None,
-            ts_unit: str = None,
-            remove_tz: bool = False,
-            alter_schema: bool = False,
-        ):
-            """
-            Casts the schema of the data object based on the specified parameters.
+        self,
+        use_large_string: bool = False,
+        tz: str = None,
+        ts_unit: str = None,
+        remove_tz: bool = False,
+        alter_schema: bool = False,
+    ):
+        """
+        Casts the schema of the data object based on the specified parameters.
 
-            Args:
-                use_large_string (bool, optional): Whether to use large string type. Defaults to False.
-                tz (str, optional): Timezone to convert timestamps to. Defaults to None.
-                ts_unit (str, optional): Unit to convert timestamps to. Defaults to None.
-                remove_tz (bool, optional): Whether to remove timezone from timestamps. Defaults to False.
-                alter_schema (bool, optional): Whether to alter the schema. Defaults to False.
-            """
-            
-            self._to_arrow()
-            self._set_schema()
-            self._use_large_string = use_large_string
-            if not use_large_string:
-                self.schema = shrink_large_string(self.schema)
+        Args:
+            use_large_string (bool, optional): Whether to use large string type. Defaults to False.
+            tz (str, optional): Timezone to convert timestamps to. Defaults to None.
+            ts_unit (str, optional): Unit to convert timestamps to. Defaults to None.
+            remove_tz (bool, optional): Whether to remove timezone from timestamps. Defaults to False.
+            alter_schema (bool, optional): Whether to alter the schema. Defaults to False.
+        """
 
-            if tz is not None or ts_unit is not None or remove_tz:
-                self.schema = convert_timestamp(
-                    self.schema,
-                    tz=tz,
-                    unit=ts_unit,
-                    remove_tz=remove_tz,
-                )
+        self._to_arrow()
+        self._set_schema()
+        self._use_large_string = use_large_string
+        if not use_large_string:
+            self.schema = shrink_large_string(self.schema)
 
-            self.data = replace_schema(
-                self.data,
+        if tz is not None or ts_unit is not None or remove_tz:
+            self.schema = convert_timestamp(
                 self.schema,
-                alter_schema=alter_schema,
+                tz=tz,
+                unit=ts_unit,
+                remove_tz=remove_tz,
             )
-            self.schema = self.data.schema
+
+        self.data = replace_schema(
+            self.data,
+            self.schema,
+            alter_schema=alter_schema,
+        )
+        self.schema = self.data.schema
 
     def delta(
         self,
