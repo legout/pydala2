@@ -7,15 +7,16 @@ import pandas as pd
 import polars as pl
 import polars.selectors as cs
 import pyarrow as pa
-import pyarrow.dataset as pds
+
+# import pyarrow.dataset as pds
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 from fsspec import filesystem as fsspec_filesystem
 
 from ..schema import convert_timestamp, replace_schema, shrink_large_string
+from ..table import PydalaTable
 from .misc import get_partitions_from_path
 from .polars_ext import pl
-from ..table import PydalaTable
 
 
 def read_table(

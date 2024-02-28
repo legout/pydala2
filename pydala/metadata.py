@@ -357,6 +357,8 @@ class ParquetDatasetMetadata:
 
         # update file metadata
         self.update_file_metadata(**kwargs)
+        if len(self.files):
+            return
 
         # return if not file metadata
         # if not hasattr(self, "file_metadata"):
