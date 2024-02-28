@@ -148,19 +148,19 @@ def replace_schema(
     alter_schema: bool = False,
 ) -> pa.Table:
     """
-    Replaces the schema of a given table with a new schema.
+    Replaces the schema of a PyArrow table with the specified schema or modifies the existing schema.
 
     Args:
-        table (pa.Table): The table to replace the schema of.
-        schema (pa.Schema | None): The new schema to replace with. If None, the existing schema is used.
-        field_dtype (dict | None): A dictionary mapping field names to new data types. If provided,
-            the schema will be modified accordingly.
-        exact (bool): If True, only the fields present in the new schema will be kept. If False,
-            missing fields will be added and non-matching fields will be dropped.
+        table (pa.Table): The PyArrow table to modify.
+        schema (pa.Schema | None, optional): The new schema to replace the existing schema. Defaults to None.
+        field_dtype (dict | None, optional): A dictionary mapping field names to their new data types. Defaults to None.
+        alter_schema (bool, optional): If True, adds missing fields to the table based on the new schema. 
+            If False, drops fields from the table that are not present in the new schema. Defaults to False.
 
     Returns:
-        pa.Table: The table with the replaced schema.
+        pa.Table: The modified table with the replaced or modified schema.
     """
+    
     if field_dtype is not None:
         schema = schema or table.schema
         for field, dtype in field_dtype.items():
