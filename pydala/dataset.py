@@ -81,6 +81,11 @@ class ParquetDataset(ParquetDatasetMetadata):
             )
             self.metadata_table.create_view(f"{self.name}_metadata")
 
+        try:
+            self.load()
+        except Exception as e:
+            pass
+
     def load(
         self,
         update_metadata: bool = False,
@@ -1086,8 +1091,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         use: str = "pyarrow",
         on: str = "parquet_dataset",
         update_metadata: bool = False,
-        add_missing_fields: bool = True,
-        drop_extra_fields: bool = False,
+        alter_schema: bool = False,
         **kwargs,
     ):
         """
@@ -1111,8 +1115,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             use: Library to use for writing, default is "pyarrow".
             on: Format of the dataset, default is "parquet_dataset".
             update_metadata: Whether to update the metadata, default is False.
-            add_missing_fields: Whether to add missing fields, default is True.
-            drop_extra_fields: Whether to drop extra fields, default is False.
+            alter_schema: Whether to alter the schema, default is False.
             **kwargs: Additional keyword arguments.
         """
 
@@ -1128,7 +1131,10 @@ class ParquetDataset(ParquetDatasetMetadata):
             partitioning_columns = self.partition_names.copy()
 
         writer = Writer(
-            data=df, path=self._path, filesystem=self._filesystem, schema=self.schema
+            data=df,
+            path=self._path,
+            filesystem=self._filesystem,
+            schema=self.schema if not alter_schema else None,
         )
         writer.sort_data(by=sort_by)
         writer.unique(columns=unique)
@@ -1140,8 +1146,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             ts_unit=ts_unit,
             tz=tz,
             remove_tz=remove_tz,
-            add_missing_fields=add_missing_fields,
-            drop_extra_fields=drop_extra_fields,
+            alter_schema=alter_schema,
         )
 
         if mode == "overwrite":

@@ -145,8 +145,7 @@ def replace_schema(
     schema: pa.Schema | None = None,
     field_dtype: dict | None = None,
     # exact: bool = False,
-    add_missing_fields: bool = False,
-    drop_extra_fields: bool = False,
+    alter_schema: bool = False,
 ) -> pa.Table:
     """
     Replaces the schema of a given table with a new schema.
@@ -169,7 +168,7 @@ def replace_schema(
 
     schema = schema or table.schema
 
-    if add_missing_fields:
+    if alter_schema:
         missing_fields = [
             field for field in schema.names if field not in table.column_names
         ]
@@ -178,7 +177,7 @@ def replace_schema(
             table = table.append_column(
                 field, pa.array([None] * len(table), type=schema.field(field).type)
             )
-    if drop_extra_fields:
+    else:
         table = table.drop(
             [field for field in table.column_names if field not in schema.names]
         )

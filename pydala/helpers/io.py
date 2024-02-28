@@ -268,8 +268,7 @@ class Writer:
         tz: str = None,
         ts_unit: str = None,
         remove_tz: bool = False,
-        add_missing_fields: bool = False,
-        drop_extra_fields: bool = False,
+        alter_schema: bool = False,
     ):
         """
         Casts the schema of the current Table to self.schema.
@@ -299,8 +298,7 @@ class Writer:
         self.data = replace_schema(
             self.data,
             self.schema,
-            add_missing_fields=add_missing_fields,
-            drop_extra_fields=drop_extra_fields,
+            alter_schema=alter_schema,
         )
         self.schema = self.data.schema
 
