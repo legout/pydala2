@@ -302,8 +302,16 @@ class ParquetDatasetMetadata:
             self.update_file_metadata(files=sorted(files_to_repair), **kwargs)
 
     def _update_metadata(self, **kwargs):
-        # if not self.file_metadata:
-        # self.update_file_metadata(**kwargs)
+        """
+        Update metadata based on the given keyword arguments.
+
+        Parameters:
+            **kwargs: Additional keyword arguments.
+
+        Returns:
+            None
+        """
+
         self._metadata_temp = self._metadata
         # update metadata
         if self.has_file_metadata:
@@ -311,9 +319,7 @@ class ParquetDatasetMetadata:
             self._metadata = self._file_metadata[list(self._file_metadata.keys())[0]]
             for f in list(self._file_metadata.keys())[1:]:
                 self._metadata.append_row_groups(self._file_metadata[f])
-            # else:
-            #    for f in sorted(self.file_metadata.keys()):
-            #        self._metadata.append_row_groups(self.file_metadata[f])
+
         if self._metadata_temp != self._metadata:
             self._write_metadata_file()
         del self._metadata_temp
@@ -330,19 +336,22 @@ class ParquetDatasetMetadata:
         **kwargs,
     ) -> None:
         """
-        Unifies the metadata schema of all files in the dataset to a common schema.
+        Update the data source with optional parameters and reload option.
 
         Args:
-            format_version (str, optional): The format version to use for the unified schema. Defaults to "1.0".
-            update_file_metadata (bool, optional): Whether to update the file metadata before unifying the schemas.
-                Defaults to True.
-            unify_schema_args (dict, optional): Additional arguments to pass to the `unify_schemas` function.
-                Defaults to {}.
-            **kwargs: Additional keyword arguments to pass to the `update_file_metadata` and `repair_schema` methods.
+            reload (bool): Flag to indicate if the data source should be reloaded.
+            schema (pa.Schema | None): The schema of the data source.
+            ts_unit (str | None): The unit of the timestamp.
+            tz (str | None): The time zone of the data source.
+            use_large_string (bool): Flag to indicate whether to use large string type.
+            format_version (str | None): The version of the data format.
+            sort (bool | list[str]): Flag to indicate if sorting is required, or the list of columns to sort by.
+            **kwargs: Additional keyword arguments.
 
         Returns:
             None
         """
+
         if reload:
             self.reset()
 

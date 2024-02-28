@@ -220,7 +220,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             int: The number of columns in the dataset.
         """
         if self.is_loaded:
-            return self.metadata.num_columnselse
+            return self.metadata.num_columns
         else:
             # print(f"No dataset loaded yet. Run {self}.load()")
             return 0
@@ -307,11 +307,9 @@ class ParquetDataset(ParquetDatasetMetadata):
     @property
     def partitions(self) -> dict:
         """
-        Returns a dictionary of partitioning values.
-
-        Returns:
-            dict: A dictionary of partitioning values.
+        Returns the partitions if the file is loaded and partitioning is enabled, otherwise returns an empty dictionary.
         """
+
         if self.has_files:
             if self._partitioning:
                 if not hasattr(self, "_partitions"):
@@ -321,13 +319,8 @@ class ParquetDataset(ParquetDatasetMetadata):
                             .distinct()
                             .fetchall()
                         )
-                        # .unique(maintain_order=True)
-                        # .to_numpy()
-                        # .tolist()
-                        # )
 
                     else:
-                        # print(f"No dataset loaded yet. Run {self}.load()")
                         return {}
                 return self._partitions
 
@@ -351,8 +344,6 @@ class ParquetDataset(ParquetDatasetMetadata):
         self.pydala_dataset_metadata.gen_metadata_table(
             self.metadata, self._partitioning
         )
-        # self.ddb_con.register(f"{self.name}_metadata", self.metadata_table)
-        # self.ddb_con.register("metadata", self.metadata_table)
 
     def scan(self, filter_expr: str | None = None) -> ParquetDatasetMetadata:
         """
@@ -406,31 +397,31 @@ class ParquetDataset(ParquetDatasetMetadata):
     def to_arrow(
         self,
         columns: str | list[str] | None = None,
-        batch_size: int | None = None,
+        batch_size: int = 100_000,
+        sort_by: str | list[str] | list[tuple[str, str]] | None = None,
+        distinct: bool = False,
         **kwargs,
     ) -> pa.Table:
         """
-        Convert the dataset to an Apache Arrow table.
+        Convert the table to Apache Arrow format.
 
         Args:
+            columns (str | list[str] | None): The columns to include in the conversion. If None, all columns are included.
+            batch_size (int): The number of rows to include in each converted batch.
+            sort_by (str | list[str] | list[tuple[str, str]] | None): The column(s) to sort by. If None, no sorting is applied.
+            distinct (bool): Whether to return only distinct rows.
             **kwargs: Additional keyword arguments.
 
         Returns:
-            pa.Table: The converted Apache Arrow table.
-
-        Notes:
-            - If the dataset has already been converted to an Apache Arrow table,
-              and the files used to create the table have not changed, the cached
-              table will be returned.
-            - If the dataset has not been converted to an Apache Arrow table, or
-              the files used to create the table have changed, the dataset will be
-              read and converted to an Apache Arrow table. The conversion will be
-              performed in parallel.
+            pa.Table: The table in Apache Arrow format.
         """
-        if batch_size is not None:
-            batch_size = 131072
+
         self._arrow_table = self.table.to_arrow(
-            columns=columns, batch_size=batch_size, **kwargs
+            columns=columns,
+            batch_size=batch_size,
+            sort_by=sort_by,
+            distinct=distinct,
+            **kwargs,
         )
         self.ddb_con.register("arrow_table", self._arrow_table)
         return self._arrow_table
@@ -439,80 +430,175 @@ class ParquetDataset(ParquetDatasetMetadata):
     def arrow_table(
         self,
         columns: str | list[str] | None = None,
-        batch_size: int | None = None,
+        batch_size: int = 100_000,
+        sort_by: str | list[str] | list[tuple[str, str]] | None = None,
+        distinct: bool = False,
         **kwargs,
     ) -> pa.Table:
         """
-        Converts the object to a PyArrow table and returns it.
+        Returns the table in Apache Arrow format.
 
         Args:
-            self: The object instance.
+            columns (str | list[str] | None): The columns to include in the conversion. If None, all columns are included.
+            batch_size (int): The number of rows to include in each converted batch.
+            sort_by (str | list[str] | list[tuple[str, str]] | None): The column(s) to sort by. If None, no sorting is applied.
+            distinct (bool): Whether to return only distinct rows.
+            **kwargs: Additional keyword arguments.
 
         Returns:
-           pa.Table: The PyArrow table.
-
+            pa.Table: The table in Apache Arrow format.
         """
-        return self.to_arrow(columns=columns, batch_size=batch_size, **kwargs)
+        return self.to_arrow(
+            columns=columns,
+            batch_size=batch_size,
+            sort_by=sort_by,
+            distinct=distinct,
+            **kwargs,
+        )
 
     @property
     def arrow(self):
         """
-        Returns the arrow table representation of the data.
+        Returns the table in Apache Arrow format.
 
         Returns:
-            arrow.Table: The arrow table representation of the data.
+            pa.Table: The table in Apache Arrow format.
         """
         if not hasattr(self, "_arrow_table"):
             self.to_arrow()
         return self._arrow_table
 
+    def to_batch_reader(
+        self,
+        columns: str | list[str] | None = None,
+        batch_size: int = 100_000,
+        sort_by: str | list[str] | list[tuple[str, str]] | None = None,
+        distinct: bool = False,
+        **kwargs,
+    ) -> pa.RecordBatchReader:
+        """
+        Converts the dataset to a RecordBatch reader that can be used to read data in batches.
+
+        Args:
+            columns (str | list[str] | None, optional): The columns to include in the batch reader. Defaults to None.
+            batch_size (int, optional): The size of each batch. Defaults to 100_000.
+            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): The column(s) to sort the data by. Defaults to None.
+            distinct (bool, optional): Whether to return distinct rows. Defaults to False.
+            **kwargs: Additional keyword arguments.
+
+        Returns:
+            pa.RecordBatchReader: The batch reader object.
+        """
+
+        return self.table.to_batch_reader(
+            columns=columns,
+            batch_size=batch_size,
+            sort_by=sort_by,
+            distinct=distinct,
+            **kwargs,
+        )
+
+    def to_batches(
+        self,
+        columns: str | list[str] | None = None,
+        batch_size: int = 100_000,
+        sort_by: str | list[str] | list[tuple[str, str]] | None = None,
+        distinct: bool = False,
+        **kwargs,
+    ) -> pa.RecordBatch:
+        """
+        Converts the dataset into RecordBatches.
+
+        Args:
+            columns (str | list[str] | None, optional): Columns to include in the batches. Defaults to None.
+            batch_size (int, optional): Size of each batch. Defaults to 100_000.
+            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): Columns to sort the batches by. Defaults to None.
+            distinct (bool, optional): Whether to return distinct batches. Defaults to False.
+            **kwargs: Additional keyword arguments.
+
+        Returns:
+            pa.RecordBatch: The batches of records.
+        """
+
+        return self.table.to_batches(
+            columns=columns,
+            batch_size=batch_size,
+            sort_by=sort_by,
+            distinct=distinct,
+            **kwargs,
+        )
+
     def to_duckdb(
         self,
         lazy: bool = True,
         columns: str | list[str] | None = None,
-        batch_size: int | None = None,
+        batch_size: int = 100_000,
+        sort_by: str | list[str] | list[tuple[str, str]] | None = None,
+        distinct: bool = False,
         **kwargs,
     ) -> _duckdb.DuckDBPyRelation:
         """
-        Converts the current object to a DuckDBPyRelation object.
+        A method to convert the current table to a DuckDBPyRelation.
 
         Args:
-            lazy (bool): A boolean indicating whether the conversion should be lazy or not. Default is True.
+            lazy (bool): Whether to load data lazily.
+            columns (str | list[str] | None): Columns to include in the conversion.
+            batch_size (int): Size of each batch for conversion.
+            sort_by (str | list[str] | list[tuple[str, str]] | None): Columns to sort by.
+            distinct (bool): Whether to select only distinct rows.
+            **kwargs: Additional keyword arguments.
 
         Returns:
-            DuckDBPyRelation: A DuckDBPyRelation object representing the converted object.
+            _duckdb.DuckDBPyRelation: The DuckDBPyRelation representing the converted table.
         """
         return self.table.to_duckdb(
-            lazy=lazy, columns=columns, batch_size=batch_size, **kwargs
+            lazy=lazy,
+            columns=columns,
+            batch_size=batch_size,
+            sort_by=sort_by,
+            distinct=distinct,
+            **kwargs,
         )
 
     def duckdb(
         self,
         lazy: bool = True,
         columns: str | list[str] | None = None,
-        batch_size: int | None = None,
+        batch_size: int = 100_000,
+        sort_by: str | list[str] | list[tuple[str, str]] | None = None,
+        distinct: bool = False,
         **kwargs,
     ) -> _duckdb.DuckDBPyRelation:
         """
-        A description of the entire function, its parameters, and its return types.
+        A method to convert the current table to a DuckDBPyRelation.
 
         Args:
-            lazy (bool): A boolean value indicating if the function should be lazy.
+            lazy (bool): Whether to load data lazily.
+            columns (str | list[str] | None): Columns to include in the conversion.
+            batch_size (int): Size of each batch for conversion.
+            sort_by (str | list[str] | list[tuple[str, str]] | None): Columns to sort by.
+            distinct (bool): Whether to select only distinct rows.
+            **kwargs: Additional keyword arguments.
 
         Returns:
-            _duckdb.DuckDBPyRelation: An instance of _duckdb.DuckDBPyRelation.
+            _duckdb.DuckDBPyRelation: The DuckDBPyRelation representing the converted table.
         """
         return self.to_duckdb(
-            lazy=lazy, columns=columns, batch_size=batch_size, **kwargs
+            lazy=lazy,
+            columns=columns,
+            batch_size=batch_size,
+            sort_by=sort_by,
+            distinct=distinct,
+            **kwargs,
         )
 
     @property
     def ddb(self) -> _duckdb.DuckDBPyRelation:
         """
-        Returns the DuckDBPyRelation object associated with the current instance.
+        Returns the DuckDBPyRelation object.
 
         Returns:
-            The DuckDBPyRelation object.
+            _duckdb.DuckDBPyRelation: The DuckDBPyRelation object.
         """
         if not hasattr(self, "_ddb"):
             self._ddb = self.to_duckdb()
@@ -522,52 +608,76 @@ class ParquetDataset(ParquetDatasetMetadata):
         self,
         lazy: bool = True,
         columns: str | list[str] | None = None,
-        batch_size: int | None = None,
+        batch_size: int = 100_000,
+        sort_by: str | list[str] | list[tuple[str, str]] | None = None,
+        distinct: bool = False,
         **kwargs,
     ) -> _pl.DataFrame:
         """
-        Converts the current object to a Polars DataFrame.
+        Convert the table to a Polars DataFrame with specified args.
 
         Args:
-            lazy (bool, optional): If set to True, the conversion will be lazy, meaning that
-                the DataFrame will not be materialized immediately. Defaults to True.
+            lazy (bool): Whether to do lazy evaluation or not.
+            columns (Union[str, List[str], None]): The columns to include in the result.
+            batch_size (int): The size of each batch to process.
+            sort_by (Union[str, List[str], List[Tuple[str, str]], None]): The column(s) to sort by.
+            distinct (bool): Whether to return distinct rows or not.
+            **kwargs: Additional keyword arguments.
 
         Returns:
-            _pl.DataFrame: The converted Polars DataFrame.
+            _pl.DataFrame: A Polars DataFrame.
         """
         return self.table.to_polars(
-            lazy=lazy, columns=columns, batch_size=batch_size, **kwargs
+            lazy=lazy,
+            columns=columns,
+            batch_size=batch_size,
+            sort_by=sort_by,
+            distinct=distinct,
+            **kwargs,
         )
 
     def to_pl(
         self,
         lazy: bool = True,
         columns: str | list[str] | None = None,
-        batch_size: int | None = None,
+        batch_size: int = 100_000,
+        sort_by: str | list[str] | list[tuple[str, str]] | None = None,
+        distinct: bool = False,
         **kwargs,
     ) -> _pl.DataFrame:
         """
-        Convert the DataFrame to a Polars DataFrame.
+        Convert the table to a Polars DataFrame with specified args.
 
         Args:
-            lazy (bool, optional): Whether to perform the conversion lazily. Defaults to True.
+            lazy (bool): Whether to do lazy evaluation or not.
+            columns (Union[str, List[str], None]): The columns to include in the result.
+            batch_size (int): The size of each batch to process.
+            sort_by (Union[str, List[str], List[Tuple[str, str]], None]): The column(s) to sort by.
+            distinct (bool): Whether to return distinct rows or not.
+            **kwargs: Additional keyword arguments.
 
         Returns:
-            _pl.DataFrame: The converted Polars DataFrame.
+            _pl.DataFrame: A Polars DataFrame.
         """
 
         return self.to_polars(
-            lazy=lazy, columns=columns, batch_size=batch_size, **kwargs
+            lazy=lazy,
+            columns=columns,
+            batch_size=batch_size,
+            sort_by=sort_by,
+            distinct=distinct,
+            **kwargs,
         )
 
     @property
     def pl(self) -> _pl.DataFrame:
         """
-        Generate a function comment for the given function body.
+        Returns the Polars DataFrame representation of the dataset.
+
+        If the dataset has not been converted to Polars DataFrame yet, it will be converted and cached.
 
         Returns:
-            _pl.DataFrame: The result of calling `to_polars` if `self._pl` does not exist,
-                otherwise returns `self._pl`.
+            _pl.DataFrame: The Polars DataFrame representation of the dataset.
         """
 
         if not hasattr(self, "_pl"):
@@ -578,51 +688,63 @@ class ParquetDataset(ParquetDatasetMetadata):
         self,
         lazy: bool = True,
         columns: str | list[str] | None = None,
-        batch_size: int | None = None,
+        sort_by: str | list[str] | list[tuple[str, str]] | None = None,
+        distinct: bool = False,
         **kwargs,
     ) -> pd.DataFrame:
         """
-        Convert the current object to a pandas DataFrame.
+        Converts the current table to a pandas DataFrame.
 
         Args:
-            lazy (bool, optional): Whether to execute the conversion lazily. Defaults to True.
+            lazy (bool, optional): Whether to lazily load the DataFrame. Defaults to True.
+            columns (str | list[str] | None, optional): The columns to include in the DataFrame. Defaults to None.
+            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): The column(s) to sort by. Defaults to None.
+            distinct (bool, optional): Whether to return only distinct rows. Defaults to False.
+            **kwargs: Additional keyword arguments to pass to the underlying to_pandas method.
 
         Returns:
-            pd.DataFrame: The converted pandas DataFrame.
+            pd.DataFrame: The pandas DataFrame representation of the table.
         """
+
         return self.table.to_pandas(
-            lazy=lazy, columns=columns, batch_size=batch_size, **kwargs
+            lazy=lazy, columns=columns, sort_by=sort_by, distinct=distinct, **kwargs
         )
 
     def to_df(
         self,
         lazy: bool = True,
         columns: str | list[str] | None = None,
-        batch_size: int | None = None,
+        sort_by: str | list[str] | list[tuple[str, str]] | None = None,
+        distinct: bool = False,
         **kwargs,
     ) -> pd.DataFrame:
         """
-        Convert the object to a pandas DataFrame.
+        Converts the current table to a pandas DataFrame.
 
         Args:
-            lazy (bool): Whether to perform the conversion lazily. Defaults to True.
+            lazy (bool, optional): Whether to lazily load the DataFrame. Defaults to True.
+            columns (str | list[str] | None, optional): The columns to include in the DataFrame. Defaults to None.
+            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): The column(s) to sort by. Defaults to None.
+            distinct (bool, optional): Whether to return only distinct rows. Defaults to False.
+            **kwargs: Additional keyword arguments to pass to the underlying to_pandas method.
 
         Returns:
-            pd.DataFrame: The converted pandas DataFrame.
+            pd.DataFrame: The pandas DataFrame representation of the table.
         """
 
         return self.to_pandas(
-            lazy=lazy, columns=columns, batch_size=batch_size, **kwargs
+            lazy=lazy, columns=columns, sort_by=sort_by, distinct=distinct, **kwargs
         )
 
     @property
     def df(self) -> pd.DataFrame:
         """
-        Returns a pandas DataFrame.
+        Returns the pandas DataFrame representation of the dataset.
 
+        If the dataset has not been converted to pandas DataFrame yet, it will be converted and cached.
 
         Returns:
-            pd.DataFrame: The pandas DataFrame.
+            pd.DataFrame: The pandas DataFrame representation of the dataset.
         """
 
         if not hasattr(self, "_df"):
@@ -969,31 +1091,31 @@ class ParquetDataset(ParquetDatasetMetadata):
         **kwargs,
     ):
         """
-        Writes the given DataFrame or Table to the dataset.
+        Write data to the dataset with specified options and handling for different modes and parameters.
 
         Args:
-            df (_pl.DataFrame | _pl.LazyFrame | pa.Table | pd.DataFrame | _duckdb.DuckDBPyConnection): The DataFrame
-                or Table to write.
-            base_name (str | None): The base name for the dataset files. Defaults to None.
-            mode (str): The write mode. Can be "append", "delta", or "overwrite". Defaults to "append".
-            max_rows_per_file (int | None): The number of rows per file. Defaults to 100_000_000.
-            row_group_size (int | None): The row group size for Parquet files. Defaults to None.
-            compression (str): The compression algorithm to use. Defaults to "zstd".
-            sort_by (str | list[str] | list[tuple[str, str]] | None): The column(s) to sort by. Defaults to None.
-            unique (bool | str | list[str]): Whether to make the dataset unique. Defaults to False.
-            ts_unit (str): The unit of the timestamp column. Defaults to "us".
-            tz (str | None): The time zone of the timestamp column. Defaults to None.
-            remove_tz (bool): Whether to remove the time zone from the timestamp column. Defaults to False.
-            use_large_string (bool): Whether to use large string data type. Defaults to False.
-            delta_subset (str | list[str] | None): The subset of columns to use for delta encoding. Defaults to None.
-            partitioning_columns (str | list[str] | None): The column(s) to partition by. Defaults to None.
-            use (str): The backend to use. Defaults to "duckdb".
-            on (str): The object to write on. Defaults to "dataset".
-            **kwargs: Additional keyword arguments to pass to the writer.
-
-        Returns:
-            None
+            df: DataFrame to be written to the dataset. Can be a pandas DataFrame, PyPolars DataFrame, PyArrow Table, PyArrow RecordBatch, DuckDBPyConnection, or LazyFrame.
+            mode: Mode of writing to the dataset, either "append", "delta", or "overwrite".
+            partitioning_columns: Columns to partition the dataset by. Can be a string, list of strings, or None.
+            max_rows_per_file: Maximum number of rows per file, or None.
+            row_group_size: Size of row groups, or None.
+            compression: Compression algorithm to use, default is "zstd".
+            sort_by: Columns to sort the dataset by. Can be a string, list of strings, list of tuples of strings, or None.
+            unique: Columns to enforce uniqueness on, can be a bool, string, or list of strings.
+            ts_unit: Unit for timestamps, default is "us" (microseconds).
+            tz: Timezone to use, or None.
+            remove_tz: Whether to remove the timezone, default is False.
+            use_large_string: Whether to use large string types, default is False.
+            delta_subset: Subset of columns to consider for delta mode, can be a string, list of strings, or None.
+            other_df_filter_columns: Columns to filter the other DataFrame by, can be a string, list of strings, or None.
+            use: Library to use for writing, default is "pyarrow".
+            on: Format of the dataset, default is "parquet_dataset".
+            update_metadata: Whether to update the metadata, default is False.
+            add_missing_fields: Whether to add missing fields, default is True.
+            drop_extra_fields: Whether to drop extra fields, default is False.
+            **kwargs: Additional keyword arguments.
         """
+
         if "n_rows" in kwargs:
             max_rows_per_file = kwargs.pop("n_rows")
         if "num_rows" in kwargs:
@@ -1042,7 +1164,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         writer.write_to_dataset(
             row_group_size=row_group_size,
             compression=compression,
-            partitioning=partitioning_columns,
+            partitioning_columns=partitioning_columns,
             partitioning_flavor="hive",
             max_rows_per_file=max_rows_per_file,
             **kwargs,

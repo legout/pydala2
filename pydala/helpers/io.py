@@ -321,117 +321,37 @@ class Writer:
         self._to_polars()
         self.data = self.data.delta(other, subset=subset)
 
-    # def partition_by(
-    #     self,
-    #     columns: str | list[str] | None = None,
-    #     timestamp_column: str | None = None,
-    #     num_rows: int | None = None,
-    #     strftime: str | list[str] | None = None,
-    #     timedelta: str | list[str] | None = None,
-    # ):
-    #     """
-    #     Partitions the data by the specified columns, number of rows, strftime format, and timedelta.
-    #
-    #     Parameters:
-    #         columns (str | list[str] | None): The column or columns to partition the data by. If None, the data
-    #             will not be partitioned.
-    #         num_rows (int | None): The maximum number of rows in each partition. If None, the data will not be
-    #             partitioned.
-    #         strftime (str | list[str] | None): The strftime format string or list of format strings to use for
-    #             partitioning the data by date or time. If None, the data will not be partitioned by date or time.
-    #         timedelta (str | list[str] | None): The timedelta string or list of timedelta strings to use for
-    #             partitioning the data by time interval. If None, the data will not be partitioned by time interval.
-    #
-    #
-    #     """
-    #     self._to_polars()
-    #     self.data = self.data.partition_by_ext(
-    #         columns=columns,
-    #         timestamp_column=timestamp_column,
-    #         strftime=strftime,
-    #         timedelta=timedelta,
-    #         num_rows=num_rows,
-    #     )
-
-    # def set_path(self, base_name: str | None = None):
-    #     """
-    #     Set the path for the data files.
-    #
-    #     Args:
-    #         base_name (str | None, optional): The base name for the data files. Defaults to None.
-    #
-    #     """
-    #     if base_name is None:
-    #         base_name = f"data-{dt.datetime.now().strftime('%Y%m%d_%H%M%S%f')[:-3]}"
-    #
-    #     self.path = [
-    #         os.path.join(
-    #             self.base_path,
-    #             "/".join(
-    #                 (
-    #                     "=".join([k, str(v).lstrip("0")])
-    #                     for k, v in partition[0].items()
-    #                     if k != "row_nr"
-    #                 )
-    #             ),
-    #             f"{base_name}-{num}-{uuid.uuid4().hex[:16]}.parquet",
-    #         )
-    #         for num, partition in enumerate(self.data)
-    #     ]
-
     @property
     def shape(self):
         if isinstance(self.data, pl.LazyFrame):
             self.data = self.data.collect()
         return self.data.shape
 
-    # def write(
-    #     self, row_group_size: int | None = None, compression: str = "zstd", **kwargs
-    # ):
-    #     """
-    #     Writes the data to Parquet files.
-    #
-    #     Args:
-    #         row_group_size (int | None, optional): The number of rows in each row group. Defaults to None.
-    #         compression (str, optional): The compression algorithm to use. Defaults to "zstd".
-    #         **kwargs: Additional keyword arguments to pass to the underlying Parquet writer.
-    #
-    #     Returns:
-    #         dict: A dictionary mapping each file path to its corresponding Parquet metadata.
-    #     """
-    #     if self.path is None:
-    #         raise ValueError("No path set. Call set_path() first.")
-    #     if not isinstance(self.data, list):
-    #         self._to_arrow()
-    #         self.data = [self.data]
-    #
-    #     file_metadata = []
-    #     for path, part in zip(self.path, self.data):
-    #         part = part[1].to_arrow()
-    #         if not self._use_large_string:
-    #             part = part.cast(shrink_large_string(part.schema))
-    #
-    #         metadata = write_table(
-    #             table=part,
-    #             path=path,
-    #             filesystem=self.filesystem,
-    #             row_group_size=row_group_size,
-    #             compression=compression,
-    #             **kwargs,
-    #         )
-    #
-    #         file_metadata.append(metadata)
-
     def write_to_dataset(
         self,
         row_group_size: int | None = None,
         compression: str = "zstd",
-        partitioning: pds.Partitioning | list[str] | None = None,
+        partitioning_columns: list[str] | None = None,
         partitioning_flavor: str = "hive",
         max_rows_per_file: int | None = None,
         create_dir: bool = False,
         **kwargs,
     ):
+        """
+        Write the dataset to the given path using Parquet format.
+
+        Args:
+            row_group_size (int, optional): The row group size to use. Defaults to None.
+            compression (str, optional): The compression type to use. Defaults to "zstd".
+            partitioning ( list[str], optional): The partitioning scheme to use. Defaults to None.
+            partitioning_flavor (str, optional): The partitioning flavor to use. Defaults to "hive".
+            max_rows_per_file (int, optional): The maximum number of rows per file. Defaults to None.
+            create_dir (bool, optional): Whether to create the directory if it does not exist. Defaults to False.
+            **kwargs: Additional keyword arguments to pass to the underlying Parquet writer.
+
+        Returns:
+            None
+        """
         self._to_arrow()
         self.data.cast(self.schema)
 
@@ -441,7 +361,8 @@ class Writer:
             self.data,
             root_path=self.base_path,
             filesystem=self.filesystem,
-            partitioning=partitioning,
+            # partitioning=partitioning,
+            partition_cols=partitioning_columns,
             partitioning_flavor=partitioning_flavor,
             basename_template=basename_template,
             row_group_size=row_group_size,
@@ -451,37 +372,3 @@ class Writer:
             create_dir=create_dir,
             **kwargs,
         )
-
-        # def _write(path_part, fs):
-        #     path, part = path_part
-        #     part = part[1].to_arrow()
-
-        #     if not self._use_large_string:
-        #         part = part.cast(shrink_large_string(part.schema))
-
-        #     metadata = write_table(
-        #         table=part,
-        #         path=path,
-        #         filesystem=fs,
-        #         row_group_size=row_group_size,
-        #         compression=compression,
-        #         **kwargs,
-        #     )
-        #     return metadata
-
-        #     # file_metadata.append(metadata)
-
-        # if len(self.data) == 1:
-        #     metadata = _write(list(zip(self.path[0], self.data[0])), self.filesystem)
-        #     file_metadata = [metadata]
-
-        # else:
-        #     file_metadata = run_parallel(
-        #         _write, list(zip(self.path, self.data)), fs=self.filesystem
-        #     )
-
-        # file_metadata = dict(file_metadata)
-        # for f in file_metadata:
-        #    file_metadata[f].set_file_path(f.split(self.base_path)[-1].lstrip("/"))
-
-        # return file_metadata
