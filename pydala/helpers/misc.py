@@ -184,7 +184,7 @@ def str2pyarrow_filter(string: str, schema: pa.Schema):
 
 def get_timestamp_column(df: pl.DataFrame | pl.LazyFrame | pa.Table) -> str | list[str]:
     if isinstance(df, pa.Table):
-        df = pl.from_arrow(df.take([0]))
+        df = pl.from_arrow(df)
     return [
         name
         for name, type_ in df.schema.items()
