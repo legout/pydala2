@@ -363,7 +363,7 @@ class Writer:
             root_path=self.base_path,
             filesystem=self.filesystem,
             # partitioning=partitioning,
-            partition_cols=partitioning_columns,
+            partitioning=partitioning_columns,
             partitioning_flavor=partitioning_flavor,
             basename_template=basename_template,
             row_group_size=row_group_size,
