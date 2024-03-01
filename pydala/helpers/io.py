@@ -248,7 +248,7 @@ class Writer:
             columns = [columns]
 
         if timestamp_column is None:
-            timestamp_column = get_timestamp_column(self.schema)[0]
+            timestamp_column = get_timestamp_column(self.data)[0]
 
         if timestamp_column is not None:
             self._set_schema()
