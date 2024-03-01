@@ -15,7 +15,7 @@ from fsspec import filesystem as fsspec_filesystem
 
 from ..schema import convert_timestamp, replace_schema, shrink_large_string
 from ..table import PydalaTable
-from .misc import get_partitions_from_path
+from .misc import get_partitions_from_path, get_timestamp_column
 from .polars_ext import pl
 
 
@@ -246,6 +246,9 @@ class Writer:
         """
         if isinstance(columns, str):
             columns = [columns]
+
+        if timestamp_column is None:
+            timestamp_column = get_timestamp_column(self.schema)[0]
 
         if timestamp_column is not None:
             self._set_schema()

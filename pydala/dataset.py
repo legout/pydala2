@@ -926,11 +926,11 @@ class ParquetDataset(ParquetDatasetMetadata):
         # self.ddb_con = _duckdb.connect()
         self.interrupt_duckdb()
 
-        if not f"{self.name}_table" in self.registered_tables:
+        if f"{self.name}_table" not in self.registered_tables:
             if len(self._table_files):
                 self.ddb_con.register(f"{self.name}_table", self._arrow_table)
 
-        if not f"{self.name}_dataset" in self.registered_tables:
+        if f"{self.name}_dataset" not in self.registered_tables:
             if hasattr(self, "_arrow_parquet_dataset"):
                 if len(self._arrow_parquet_dataset.files):
                     self.ddb_con.register(
@@ -1092,6 +1092,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         on: str = "parquet_dataset",
         update_metadata: bool = False,
         alter_schema: bool = False,
+        timestamp_column: str | None = None,
         **kwargs,
     ):
         """
@@ -1118,7 +1119,6 @@ class ParquetDataset(ParquetDatasetMetadata):
             alter_schema: Whether to alter the schema, default is False.
             **kwargs: Additional keyword arguments.
         """
-
         if "n_rows" in kwargs:
             max_rows_per_file = kwargs.pop("n_rows")
         if "num_rows" in kwargs:
@@ -1129,6 +1129,9 @@ class ParquetDataset(ParquetDatasetMetadata):
 
         if self.partition_names:
             partitioning_columns = self.partition_names.copy()
+
+        if timestamp_column is not None:
+            self._timestamp_column = timestamp_column
 
         writer = Writer(
             data=df,
