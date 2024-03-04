@@ -170,10 +170,10 @@ class ParquetDatasetMetadata:
 
         if files is not None:
             new_files = sorted(set(files + new_files))
-        print(new_files)
+
         if new_files:
             self._collect_file_metadata(files=new_files, **kwargs)
-        print(rm_files)
+
         if rm_files:
             self._rm_file_metadata(files=rm_files)
 
