@@ -321,7 +321,7 @@ class Optimize(ParquetDataset):
             self.write_to_dataset(
                 pa.table(batch),
                 partitioning_columns=partitioning_columns,
-                partitioning_falvor=partitioning_falvor,
+                # partitioning_falvor=partitioning_falvor,
                 mode="append",
                 max_rows_per_file=max_rows_per_file,
                 row_group_size=min(max_rows_per_file, row_group_size),
