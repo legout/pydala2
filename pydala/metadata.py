@@ -316,8 +316,11 @@ class ParquetDatasetMetadata:
         self._metadata_temp = copy.copy(self._metadata)
         # update metadata
         if self.has_file_metadata:
+            del self._metadata
             # if not self.has_metadata:
-            self._metadata = self._file_metadata[list(self._file_metadata.keys())[0]]
+            self._metadata = copy.copy(
+                self._file_metadata[list(self._file_metadata.keys())[0]]
+            )
             for f in list(self._file_metadata.keys())[1:]:
                 self._metadata.append_row_groups(self._file_metadata[f])
 
