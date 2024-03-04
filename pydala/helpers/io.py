@@ -244,6 +244,8 @@ class Writer:
         Returns:
             None
         """
+        if columns is None:
+            columns = []
         if isinstance(columns, str):
             columns = [columns]
 
