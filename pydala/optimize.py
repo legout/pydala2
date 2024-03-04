@@ -81,6 +81,7 @@ class Optimize(ParquetDataset):
                     row_group_size=row_group_size,
                     compression=compression,
                     update_metadata=False,
+                    unique=True,
                     **kwargs,
                 )
 
@@ -157,6 +158,7 @@ class Optimize(ParquetDataset):
             ).fetch_arrow_reader(batch_size=max_rows_per_file)
 
             for batch in batches:
+                # batch = pl.from_arrow(batch).unique(maintain_order=True)
                 self.write_to_dataset(
                     pa.table(batch),
                     mode="append",
@@ -164,6 +166,7 @@ class Optimize(ParquetDataset):
                     row_group_size=row_group_size,
                     compression=compression,
                     update_metadata=False,
+                    unique=True,
                     **kwargs,
                 )
             self.delete_files(self.pydala_dataset_metadata.scan_files)
@@ -286,6 +289,7 @@ class Optimize(ParquetDataset):
                         row_group_size=row_group_size,
                         compression=compression,
                         update_metadata=False,
+                        unique=True,
                         **kwargs,
                     )
                 # _ = run_parallel(
@@ -328,6 +332,7 @@ class Optimize(ParquetDataset):
                 row_group_size=min(max_rows_per_file, row_group_size),
                 compression=compression,
                 update_metadata=False,
+                unique=True,
                 **kwargs,
             )
         # _ = run_parallel(

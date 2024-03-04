@@ -1140,10 +1140,12 @@ class ParquetDataset(ParquetDatasetMetadata):
             schema=self.schema if not alter_schema else None,
         )
         writer.sort_data(by=sort_by)
-        writer.unique(columns=unique)
-        writer.add_datepart_columns(
-            columns=partitioning_columns, timestamp_column=self._timestamp_column
-        )
+        if unique:
+            writer.unique(columns=unique)
+        if partitioning_columns:
+            writer.add_datepart_columns(
+                columns=partitioning_columns, timestamp_column=self._timestamp_column
+            )
         writer.cast_schema(
             use_large_string=use_large_string,
             ts_unit=ts_unit,
