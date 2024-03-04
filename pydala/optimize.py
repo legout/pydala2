@@ -314,9 +314,10 @@ class Optimize(ParquetDataset):
         row_group_size: int | None = 250_000,
         **kwargs,
     ):
-        batches = self.table.to_batch_reader(
-            batch_size=max_rows_per_file, sort_by=sort_by, distinct=distinct
-        )
+        batches = self.to_duckdb(
+            sort_by=sort_by, distintinct=distinct
+        ).fetch_arrow_reader(batch_size=max_rows_per_file)
+
         for batch in tqdm.tqdm(batches):
             self.write_to_dataset(
                 pa.table(batch),
