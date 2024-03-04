@@ -70,12 +70,9 @@ class Optimize(ParquetDataset):
                 ddb_con=self.ddb_con,
             )
 
-            batches = scan.to_batch_reader(
-                sort_by=sort_by,
-                distinct=distinct,
-                batch_size=max_rows_per_file,
-            )
-
+            batches = scan.to_duckdb(
+                sort_by=sort_by, distinct=distinct
+            ).fetch_arrow_reader(batch_size=max_rows_per_file)
             for batch in batches:
                 self.write_to_dataset(
                     pa.table(batch),
@@ -155,9 +152,9 @@ class Optimize(ParquetDataset):
                 ddb_con=self.ddb_con,
             )
 
-            batches = scan.to_batch_reader(
-                sort_by=sort_by, distinct=distinct, batch_size=max_rows_per_file
-            )
+            batches = scan.to_duckdb(
+                sort_by=sort_by, distinct=distinct
+            ).fetch_arrow_reader(batch_size=max_rows_per_file)
 
             for batch in batches:
                 self.write_to_dataset(
@@ -277,9 +274,9 @@ class Optimize(ParquetDataset):
                     ddb_con=self.ddb_con,
                 )
 
-                batches = scan.to_batch_reader(
-                    batch_size=max_rows_per_file, sort_by=sort_by, distinct=distinct
-                )
+                batches = scan.to_duckdb(
+                    sort_by=sort_by, distinct=distinct
+                ).fetch_arrow_reader(batch_size=max_rows_per_file)
 
                 for batch in tqdm.tqdm(batches):
                     self.write_to_dataset(
