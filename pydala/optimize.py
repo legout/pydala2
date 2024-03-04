@@ -253,7 +253,7 @@ class Optimize(ParquetDataset):
         **kwargs,
     ):
         if self._partitioning:
-            self.compact_partition(
+            self.compact_partitions(
                 max_rows_per_file=max_rows_per_file,
                 sort_by=sort_by,
                 distinct=distinct,
