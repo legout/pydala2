@@ -13,6 +13,7 @@ from .filesystem import FileSystem, clear_cache
 from .helpers.metadata import collect_parquet_metadata  # , remove_from_metadata
 from .helpers.misc import get_partitions_from_path
 from .schema import repair_schema, unify_schemas
+import copy
 
 
 class ParquetDatasetMetadata:
@@ -312,7 +313,7 @@ class ParquetDatasetMetadata:
             None
         """
 
-        self._metadata_temp = self._metadata
+        self._metadata_temp = copy.copy(self._metadata)
         # update metadata
         if self.has_file_metadata:
             # if not self.has_metadata:
