@@ -53,23 +53,22 @@ class Optimize(ParquetDataset):
         filter_ = " AND ".join(
             [f"{n}='{v}'" for n, v in list(zip(self.partition_names, partition))]
         )
-        filter_ += f" AND num_rows<{max_rows_per_file}"
 
-        self.pydala_dataset_metadata.scan(filter_)
-
-        if len(self.pydala_dataset_metadata.scan_files) > 1:
-            scan = PydalaTable(
-                result=pds.dataset(
-                    [
-                        os.path.join(self._path, f)
-                        for f in self.pydala_dataset_metadata.scan_files
-                    ],
-                    filesystem=self._filesystem,
-                    partitioning=self._partitioning,
-                ),
-                ddb_con=self.ddb_con,
+        scan = self.pydala_dataset_metadata.scan(filter_)
+        if len(self.pydata_dataset_metadata.scan_files) == 1:
+            num_rows = (
+                self.metadata_table.filter(
+                    f"file_path='{self.scan_files[0].replace(self._path,'').lstrip('/')}'"
+                )
+                .aggregate("sum(num_rows)")
+                .fetchone()[0]
             )
+        else:
+            num_rows = 0
 
+        if (len(self.pydala_dataset_metadata.scan_files) > 1) or (
+            num_rows > max_rows_per_file
+        ):
             batches = scan.to_duckdb(
                 sort_by=sort_by, distinct=distinct
             ).fetch_arrow_reader(batch_size=max_rows_per_file)
@@ -85,7 +84,6 @@ class Optimize(ParquetDataset):
                     **kwargs,
                 )
 
-            # del_files = [os.path.join(self._path, fn) for fn in self.scan_files]
             self.delete_files(self.pydala_dataset_metadata.scan_files)
 
         self.pydala_dataset_metadata.reset_scan()
@@ -110,16 +108,6 @@ class Optimize(ParquetDataset):
                 **kwargs,
             )
 
-        # run_parallel(
-        #     self._compact_partition,
-        #     self.partitions,
-        #     max_rows_per_file=max_rows_per_file,
-        #     sort_by=sort_by,
-        #     distinct=distinct,
-        #     compression=compression,
-        #     row_group_size=row_group_size,
-        #     **kwargs,
-        # )
         self.clear_cache()
         self.load(update_metadata=True)
         self.gen_metadata_table()
@@ -138,21 +126,23 @@ class Optimize(ParquetDataset):
     ):
         filter_ = f"{timestamp_column} >= '{start_date}' AND {timestamp_column} < '{end_date}'"
 
-        self.pydala_dataset_metadata.scan(filter_)
-
-        if len(self.pydala_dataset_metadata.scan_files) > 1:
-            scan = PydalaTable(
-                result=pds.dataset(
-                    [
-                        os.path.join(self._path, f)
-                        for f in self.pydala_dataset_metadata.scan_files
-                    ],
-                    filesystem=self._filesystem,
-                    partitioning=self._partitioning,
-                ),
-                ddb_con=self.ddb_con,
+        scan = self.pydala_dataset_metadata.scan(filter_)
+        if len(self.pydata_dataset_metadata.scan_files) == 1:
+            date_diff = (
+                self.metadata_table.filter(
+                    f"file_path='{self.scan_files[0].replace(self._path,'').lstrip('/')}'"
+                )
+                .aggregate("max(AE_DATUM.max) - min(AE_DATUM.min)")
+                .fetchone()[0]
             )
+        else:
+            date_diff = dt.timedelta(0)
 
+        files_to_delete = []
+        if (len(self.pydala_dataset_metadata.scan_files) > 1) or (
+            date_diff > end_date - start_date
+        ):
+            files_to_delete += self.pydala_dataset_metadata.scan_files
             batches = (
                 scan.to_duckdb(sort_by=sort_by, distinct=distinct)
                 .filter(filter_)
@@ -160,7 +150,6 @@ class Optimize(ParquetDataset):
             )
 
             for batch in batches:
-                # batch = pl.from_arrow(batch).unique(maintain_order=True)
                 self.write_to_dataset(
                     pa.table(batch),
                     mode="append",
@@ -171,8 +160,8 @@ class Optimize(ParquetDataset):
                     unique=True,
                     **kwargs,
                 )
-            # self.delete_files(self.pydala_dataset_metadata.scan_files)
         self.pydala_dataset_metadata.reset_scan()
+        return files_to_delete
 
     def compact_by_timeperiod(
         self,
@@ -214,10 +203,11 @@ class Optimize(ParquetDataset):
         start_dates = dates[:-1]
         end_dates = dates[1:]
 
+        files_to_delete = []
         for start_date, end_date in tqdm.tqdm(list(zip(start_dates, end_dates))):
-            self._compact_by_timeperiod(
-                start_date,
-                end_date,
+            files_to_delete_ = self._compact_by_timeperiod(
+                start_date=start_date,
+                end_date=end_date,
                 timestamp_column=timestamp_column,
                 max_rows_per_file=max_rows_per_file,
                 row_group_size=row_group_size,
@@ -226,21 +216,9 @@ class Optimize(ParquetDataset):
                 distinct=distinct,
                 **kwargs,
             )
+            files_to_delete += files_to_delete_
 
-        # _ = run_parallel(
-        #     self._compact_by_timeperiod,
-        #     start_dates,
-        #     end_dates,
-        #     timestamp_column=timestamp_column,
-        #     max_rows_per_file=max_rows_per_file,
-        #     row_group_size=row_group_size,
-        #     compression=compression,
-        #     sort_by=sort_by,
-        #     distinct=distinct,
-        #     **kwargs,
-        # )
-
-        self.delete_files(self.pydala_dataset_metadata.files)
+        self.delete_files(files_to_delete)
         self.clear_cache()
         self.load(update_metadata=True)
         self.gen_metadata_table()
@@ -264,47 +242,37 @@ class Optimize(ParquetDataset):
                 **kwargs,
             )
         else:
-            self.pydala_dataset_metadata.scan(f"num_rows<{max_rows_per_file}")
+            scan = self.pydala_dataset_metadata.scan(f"num_rows!={max_rows_per_file}")
 
-            if len(self.pydala_dataset_metadata.scan_files) > 1:
-                scan = PydalaTable(
-                    result=pds.dataset(
-                        [
-                            os.path.join(self._path, f)
-                            for f in self.pydala_dataset_metadata.scan_files
-                        ],
-                        filesystem=self._filesystem,
-                        partitioning=self._partitioning,
-                    ),
-                    ddb_con=self.ddb_con,
+            # if len(self.pydala_dataset_metadata.scan_files) > 1:
+            # scan = PydalaTable(
+            #     result=pds.dataset(
+            #         [
+            #             os.path.join(self._path, f)
+            #             for f in self.pydala_dataset_metadata.scan_files
+            #         ],
+            #         filesystem=self._filesystem,
+            #         partitioning=self._partitioning,
+            #     ),
+            #     ddb_con=self.ddb_con,
+            # )
+
+            batches = scan.to_duckdb(
+                sort_by=sort_by, distinct=distinct
+            ).fetch_arrow_reader(batch_size=max_rows_per_file)
+
+            for batch in tqdm.tqdm(batches):
+                self.write_to_dataset(
+                    pa.table(batch),
+                    mode="append",
+                    max_rows_per_file=max_rows_per_file,
+                    row_group_size=row_group_size,
+                    compression=compression,
+                    update_metadata=False,
+                    unique=True,
+                    **kwargs,
                 )
-
-                batches = scan.to_duckdb(
-                    sort_by=sort_by, distinct=distinct
-                ).fetch_arrow_reader(batch_size=max_rows_per_file)
-
-                for batch in tqdm.tqdm(batches):
-                    self.write_to_dataset(
-                        pa.table(batch),
-                        mode="append",
-                        max_rows_per_file=max_rows_per_file,
-                        row_group_size=row_group_size,
-                        compression=compression,
-                        update_metadata=False,
-                        unique=True,
-                        **kwargs,
-                    )
-                # _ = run_parallel(
-                #     self.write_to_dataset,
-                #     batches,
-                #     mode="append",
-                #     max_rows_per_file=max_rows_per_file,
-                #     row_group_size=row_group_size,
-                #     compression=compression,
-                #     update_metadata=False,
-                #     **kwargs,
-                # )
-                self.delete_files(self.pydala_dataset_metadata.scan_files)
+            self.delete_files(self.pydala_dataset_metadata.scan_files)
             self.clear_cache()
             self.load(update_metadata=True)
             self.gen_metadata_table()
@@ -337,17 +305,6 @@ class Optimize(ParquetDataset):
                 unique=True,
                 **kwargs,
             )
-        # _ = run_parallel(
-        #     self.write_to_dataset,
-        #     batches,
-        #     partitioning_columns=partitioning_columns,
-        #     mode="append",
-        #     max_rows_per_file=max_rows_per_file,
-        #     row_group_size=min(max_rows_per_file, row_group_size),
-        #     compression=compression,
-        #     update_metadata=False,
-        #     **kwargs,
-        # )
         self.delete_files(self.pydala_dataset_metadata.files)
         self.clear_cache()
         self.update()
