@@ -67,12 +67,12 @@ def str2pyarrow_filter(string: str, schema: pa.Schema):
 
         elif pa.types.is_integer_value(type_) or pa.types.is_integer(type_):
             if isinstance(val, str):
-                val = int(val.strip("'").replace(",", "."))
+                val = int(float(val.strip("'").replace(",", ".")))
             elif isinstance(val, tuple):
                 val = tuple(
                     [
                         (
-                            int(val_.strip(",").replace(",", "."))
+                            int(float(val_.strip(",").replace(",", ".")))
                             if isinstance(val_, str)
                             else val_
                         )
@@ -82,7 +82,7 @@ def str2pyarrow_filter(string: str, schema: pa.Schema):
             elif isinstance(val, list):
                 val = [
                     (
-                        int(val_.strip("'").replace(",", "."))
+                        int(float(val_.strip("'").replace(",", ".")))
                         if isinstance(val_, str)
                         else val_
                     )
