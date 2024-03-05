@@ -319,7 +319,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             if self._partitioning:
                 if not hasattr(self, "_partitions"):
                     if self.is_loaded:
-                        self._partitions = (
+                        self._partitions = sorted(
                             (self.metadata_table.select(",".join(self.partition_names)))
                             .distinct()
                             .fetchall()

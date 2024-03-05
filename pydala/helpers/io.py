@@ -209,7 +209,7 @@ class Writer:
         if by is not None:
             self._to_arrow()
             by = PydalaTable._get_sort_by(by, type_="pyarrow")
-            self.data = self.data.sort_by(by)
+            self.data = self.data.sort_by(**by)
 
     def unique(self, columns: bool | str | list[str] = False):
         """

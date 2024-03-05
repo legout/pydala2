@@ -153,9 +153,11 @@ class Optimize(ParquetDataset):
                 ddb_con=self.ddb_con,
             )
 
-            batches = scan.to_duckdb(
-                sort_by=sort_by, distinct=distinct
-            ).fetch_arrow_reader(batch_size=max_rows_per_file)
+            batches = (
+                scan.to_duckdb(sort_by=sort_by, distinct=distinct)
+                .filter(filter_)
+                .fetch_arrow_reader(batch_size=max_rows_per_file)
+            )
 
             for batch in batches:
                 # batch = pl.from_arrow(batch).unique(maintain_order=True)
@@ -169,7 +171,7 @@ class Optimize(ParquetDataset):
                     unique=True,
                     **kwargs,
                 )
-            self.delete_files(self.pydala_dataset_metadata.scan_files)
+            # self.delete_files(self.pydala_dataset_metadata.scan_files)
         self.pydala_dataset_metadata.reset_scan()
 
     def compact_by_timeperiod(
@@ -238,7 +240,7 @@ class Optimize(ParquetDataset):
         #     **kwargs,
         # )
 
-        # self.delete_files(self.pydala_dataset_metadata.files)
+        self.delete_files(self.pydala_dataset_metadata.files)
         self.clear_cache()
         self.load(update_metadata=True)
         self.gen_metadata_table()
