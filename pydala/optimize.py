@@ -54,8 +54,8 @@ class Optimize(ParquetDataset):
             [f"{n}='{v}'" for n, v in list(zip(self.partition_names, partition))]
         )
 
-        scan = self.pydala_dataset_metadata.scan(filter_)
-        if len(self.pydala_dataset_metadata.scan_files) == 1:
+        scan = self.scan(filter_)
+        if len(self.scan_files) == 1:
             num_rows = (
                 self.metadata_table.filter(
                     f"file_path='{self.scan_files[0].replace(self._path,'').lstrip('/')}'"
@@ -66,9 +66,7 @@ class Optimize(ParquetDataset):
         else:
             num_rows = 0
 
-        if (len(self.pydala_dataset_metadata.scan_files) > 1) or (
-            num_rows > max_rows_per_file
-        ):
+        if (len(self.scan_files) > 1) or (num_rows > max_rows_per_file):
             batches = scan.to_duckdb(
                 sort_by=sort_by, distinct=distinct
             ).fetch_arrow_reader(batch_size=max_rows_per_file)
@@ -84,9 +82,9 @@ class Optimize(ParquetDataset):
                     **kwargs,
                 )
 
-            self.delete_files(self.pydala_dataset_metadata.scan_files)
+            self.delete_files(self.scan_files)
 
-        self.pydala_dataset_metadata.reset_scan()
+        self.reset_scan()
 
     def compact_partitions(
         self,
@@ -126,8 +124,8 @@ class Optimize(ParquetDataset):
     ):
         filter_ = f"{timestamp_column} >= '{start_date}' AND {timestamp_column} < '{end_date}'"
 
-        scan = self.pydala_dataset_metadata.scan(filter_)
-        if len(self.pydala_dataset_metadata.scan_files) == 1:
+        scan = self.scan(filter_)
+        if len(self.scan_files) == 1:
             date_diff = (
                 self.metadata_table.filter(
                     f"file_path='{self.scan_files[0].replace(self._path,'').lstrip('/')}'"
@@ -139,10 +137,8 @@ class Optimize(ParquetDataset):
             date_diff = dt.timedelta(0)
 
         files_to_delete = []
-        if (len(self.pydala_dataset_metadata.scan_files) > 1) or (
-            date_diff > end_date - start_date
-        ):
-            files_to_delete += self.pydala_dataset_metadata.scan_files
+        if (len(self.scan_files) > 1) or (date_diff > end_date - start_date):
+            files_to_delete += self.scan_files
             batches = (
                 scan.to_duckdb(sort_by=sort_by, distinct=distinct)
                 .filter(filter_)
@@ -160,7 +156,7 @@ class Optimize(ParquetDataset):
                     unique=True,
                     **kwargs,
                 )
-        self.pydala_dataset_metadata.reset_scan()
+        self.reset_scan()
         return files_to_delete
 
     def compact_by_timeperiod(
@@ -242,20 +238,7 @@ class Optimize(ParquetDataset):
                 **kwargs,
             )
         else:
-            scan = self.pydala_dataset_metadata.scan(f"num_rows!={max_rows_per_file}")
-
-            # if len(self.pydala_dataset_metadata.scan_files) > 1:
-            # scan = PydalaTable(
-            #     result=pds.dataset(
-            #         [
-            #             os.path.join(self._path, f)
-            #             for f in self.pydala_dataset_metadata.scan_files
-            #         ],
-            #         filesystem=self._filesystem,
-            #         partitioning=self._partitioning,
-            #     ),
-            #     ddb_con=self.ddb_con,
-            # )
+            scan = self.scan(f"num_rows!={max_rows_per_file}")
 
             batches = scan.to_duckdb(
                 sort_by=sort_by, distinct=distinct
@@ -272,7 +255,7 @@ class Optimize(ParquetDataset):
                     unique=True,
                     **kwargs,
                 )
-            self.delete_files(self.pydala_dataset_metadata.scan_files)
+            self.delete_files(self.scan_files)
             self.clear_cache()
             self.load(update_metadata=True)
             self.gen_metadata_table()
@@ -305,7 +288,7 @@ class Optimize(ParquetDataset):
                 unique=True,
                 **kwargs,
             )
-        self.delete_files(self.pydala_dataset_metadata.files)
+        self.delete_files(self.files)
         self.clear_cache()
         self.update()
         self.load()
