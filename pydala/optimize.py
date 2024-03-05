@@ -55,7 +55,7 @@ class Optimize(ParquetDataset):
         )
 
         scan = self.pydala_dataset_metadata.scan(filter_)
-        if len(self.pydata_dataset_metadata.scan_files) == 1:
+        if len(self.pydala_dataset_metadata.scan_files) == 1:
             num_rows = (
                 self.metadata_table.filter(
                     f"file_path='{self.scan_files[0].replace(self._path,'').lstrip('/')}'"
@@ -127,7 +127,7 @@ class Optimize(ParquetDataset):
         filter_ = f"{timestamp_column} >= '{start_date}' AND {timestamp_column} < '{end_date}'"
 
         scan = self.pydala_dataset_metadata.scan(filter_)
-        if len(self.pydata_dataset_metadata.scan_files) == 1:
+        if len(self.pydala_dataset_metadata.scan_files) == 1:
             date_diff = (
                 self.metadata_table.filter(
                     f"file_path='{self.scan_files[0].replace(self._path,'').lstrip('/')}'"
