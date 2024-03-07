@@ -357,7 +357,7 @@ class Writer:
             None
         """
         self._to_arrow()
-        self.data.cast(self.schema)
+        # self.data.cast(self.schema)
 
         basename_template = f"data-{dt.datetime.now().strftime('%Y%m%d_%H%M%S%f')[:-3]}-{uuid.uuid4().hex[:16]}-{{i}}.parquet"
 
