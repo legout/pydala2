@@ -425,7 +425,14 @@ def repair_schema(
 
     def _repair_schema(f, schema, filesystem):
         table = pq.read_table(f, schema=schema, filesystem=filesystem)
-        pq.write_table(table, f, filesystem=filesystem, **kwargs)
+        pq.write_table(
+            table,
+            f,
+            filesystem=filesystem,
+            coerce_timestamps=ts_unit,
+            allow_truncated_timestamps=True,
+            **kwargs,
+        )
 
     _ = run_parallel(
         _repair_schema,

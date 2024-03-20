@@ -101,6 +101,7 @@ def write_table(
         row_group_size=row_group_size,
         compression=compression,
         metadata_collector=metadata,
+        allow_truncated_timestamps=True,
         **kwargs,
     )
     metadata = metadata[0]
