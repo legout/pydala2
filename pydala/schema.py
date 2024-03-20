@@ -50,7 +50,7 @@ def shrink_large_string(schema: pa.Schema) -> pa.Schema:
 def convert_timestamp(
     schema: pa.Schema,
     timestamp_fields: str | list[str] | None = None,
-    unit: str | None = "us",
+    unit: str | None = None,  #  "us",
     tz: str | None = None,
     remove_tz: bool = False,
 ) -> pa.Schema:
@@ -154,13 +154,13 @@ def replace_schema(
         table (pa.Table): The PyArrow table to modify.
         schema (pa.Schema | None, optional): The new schema to replace the existing schema. Defaults to None.
         field_dtype (dict | None, optional): A dictionary mapping field names to their new data types. Defaults to None.
-        alter_schema (bool, optional): If True, adds missing fields to the table based on the new schema. 
+        alter_schema (bool, optional): If True, adds missing fields to the table based on the new schema.
             If False, drops fields from the table that are not present in the new schema. Defaults to False.
 
     Returns:
         pa.Table: The modified table with the replaced or modified schema.
     """
-    
+
     if field_dtype is not None:
         schema = schema or table.schema
         for field, dtype in field_dtype.items():
@@ -188,7 +188,7 @@ def replace_schema(
 def _unify_schemas(
     schema1: pa.Schema,
     schema2: pa.Schema,
-    ts_unit: str | None = "us",
+    ts_unit: str | None = None,  # "us",
     tz: str | None = None,
     use_large_string: bool = False,
     sort: bool | list[str] | str = False,
@@ -326,7 +326,7 @@ def _unify_schemas(
 
 def unify_schemas(
     schemas: list[pa.Schema],
-    ts_unit: str | None = "us",
+    ts_unit: str | None = None,  # "us",
     tz: str | None = None,
     use_large_string: bool = False,
     sort: bool | list[str] = False,
@@ -372,7 +372,7 @@ def repair_schema(
     n_jobs: int = -1,
     backend: str = "threading",
     verbose: bool = True,
-    ts_unit: str | None = "us",
+    ts_unit: str | None = None,  # "us",
     tz: str | None = None,
     use_large_string: bool = False,
     sort: bool | list[str] = False,

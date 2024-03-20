@@ -204,7 +204,7 @@ class ParquetDatasetMetadata:
 
     def _get_unified_schema(
         self,
-        ts_unit: str | None = "us",
+        ts_unit: str | None = None,
         tz: str | None = None,
         use_large_string: bool = False,
         sort: bool | list[str] = False,
@@ -246,7 +246,7 @@ class ParquetDatasetMetadata:
         schema: pa.Schema | None = None,
         format_version: str | None = None,
         tz: str | None = None,
-        ts_unit: str | None = "us",
+        ts_unit: str | None = None,
         use_large_string: bool = False,
         sort: bool | list[str] = False,
         **kwargs,
@@ -332,7 +332,7 @@ class ParquetDatasetMetadata:
         self,
         reload: bool = False,
         schema: pa.Schema | None = None,
-        ts_unit: str | None = "us",
+        ts_unit: str | None = None,
         tz: str | None = None,
         use_large_string: bool = False,
         format_version: str | None = None,
