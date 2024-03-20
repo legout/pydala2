@@ -50,7 +50,7 @@ def shrink_large_string(schema: pa.Schema) -> pa.Schema:
 def convert_timestamp(
     schema: pa.Schema,
     timestamp_fields: str | list[str] | None = None,
-    unit: str | None = None,  #  "us",
+    unit: str | None = "us",
     tz: str | None = None,
     remove_tz: bool = False,
 ) -> pa.Schema:
@@ -326,7 +326,7 @@ def _unify_schemas(
 
 def unify_schemas(
     schemas: list[pa.Schema],
-    ts_unit: str | None = None,  # "us",
+    ts_unit: str | None = "us",
     tz: str | None = None,
     use_large_string: bool = False,
     sort: bool | list[str] = False,
