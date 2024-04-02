@@ -1,0 +1,33 @@
+tables:
+  symbol-info:
+    path: symbol-info
+    fsspec:
+      profile: swfs
+      bucket: yfin-db
+      protocol: s3
+    filter:
+    columns:
+    partitioning: hive
+    timestamp_column:
+
+  history:
+    path: history
+    fsspec:
+      profile: swfs
+      bucket: yfin-db
+      protocol: s3
+    filter:
+    columns:
+    partitioning: hive
+    timestamp_column: time
+
+  history-2023:
+    path: history
+    fsspec:
+      profile: swfs
+      bucket: yfin-db
+      protocol: s3
+    filter: year=2023
+    columns: time,open,high,low,close,volume
+    partitioning: hive
+    timestamp_column: time
