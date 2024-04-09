@@ -10,6 +10,7 @@ import pyarrow as pa
 
 # import pyarrow.dataset as pds
 import pyarrow.parquet as pq
+import pyarrow.dataset as pds
 from fsspec import AbstractFileSystem
 from fsspec import filesystem as fsspec_filesystem
 
@@ -364,20 +365,26 @@ class Writer:
             basename_template = f"data-{dt.datetime.now().strftime('%Y%m%d_%H%M%S%f')[:-3]}-{uuid.uuid4().hex[:16]}-{{i}}.parquet"
         else:
             basename_template = f"{basename_template}-{{i}}.parquet"
+        print("max_rows_per_file", max_rows_per_file)
+        print("row_group_size", row_group_size)
+        file_options = pds.ParquetFileFormat().make_write_options(
+            compression=compression
+        )
 
-        pq.write_to_dataset(
+        pds.write_dataset(
             self.data,
-            root_path=self.base_path,
+            base_dir=self.base_path,
             filesystem=self.filesystem,
-            # partitioning=partitioning,
+            file_options=file_options,
             partitioning=partitioning_columns,
             partitioning_flavor=partitioning_flavor,
             basename_template=basename_template,
             min_rows_per_group=row_group_size,
             max_rows_per_group=row_group_size,
-            compression=compression,
+            # compression=compression,
             max_rows_per_file=max_rows_per_file,
             existing_data_behavior="overwrite_or_ignore",
             create_dir=create_dir,
+            format="parquet",
             **kwargs,
         )
