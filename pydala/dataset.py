@@ -1076,6 +1076,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             | _duckdb.DuckDBPyConnection
         ),
         mode: str = "append",  # "delta", "overwrite"
+        basename_template: str | None = None,
         partitioning_columns: str | list[str] | None = None,
         max_rows_per_file: int | None = 2_500_000,
         row_group_size: int | None = 250_000,
@@ -1177,6 +1178,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             partitioning_columns=partitioning_columns,
             partitioning_flavor="hive",
             max_rows_per_file=max_rows_per_file,
+            basename_template=basename_template,
             **kwargs,
         )
         if mode == "overwrite":

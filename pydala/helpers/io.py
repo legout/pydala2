@@ -340,6 +340,7 @@ class Writer:
         partitioning_flavor: str = "hive",
         max_rows_per_file: int | None = None,
         create_dir: bool = False,
+        basename_template: str | None = None,
         **kwargs,
     ):
         """
@@ -359,8 +360,10 @@ class Writer:
         """
         self._to_arrow()
         # self.data.cast(self.schema)
-
-        basename_template = f"data-{dt.datetime.now().strftime('%Y%m%d_%H%M%S%f')[:-3]}-{uuid.uuid4().hex[:16]}-{{i}}.parquet"
+        if basename_template is None:
+            basename_template = f"data-{dt.datetime.now().strftime('%Y%m%d_%H%M%S%f')[:-3]}-{uuid.uuid4().hex[:16]}-{{i}}.parquet"
+        else:
+            basename_template = f"{basename_template}-{{i}}.parquet"
 
         pq.write_to_dataset(
             self.data,
