@@ -49,9 +49,7 @@ def unnest_all(df: pl.DataFrame, seperator="_", fields: list[str] | None = None)
             ]
         ).unnest(struct_columns)
 
-    struct_columns = [
-        col for col in df.columns if df[col].dtype == pl.Struct
-    ]  # noqa: F821
+    struct_columns = [col for col in df.columns if df[col].dtype == pl.Struct]  # noqa: F821
     while len(struct_columns):
         df = _unnest_all(struct_columns=struct_columns)
         struct_columns = [col for col in df.columns if df[col].dtype == pl.Struct]
@@ -304,10 +302,10 @@ def delta(
     columns = sorted(set(df1.columns) & set(df2.columns))
 
     if subset is None:
-        subset = df1.columns
+        subset = columns
 
     if isinstance(subset, str):
-        subset = [subset]
+        subset = sorted(set(columns) & set(subset))
 
     if isinstance(df1, pl.LazyFrame) and isinstance(df2, pl.DataFrame):
         df2 = df2.lazy()
