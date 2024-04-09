@@ -1036,7 +1036,7 @@ class ParquetDataset(ParquetDatasetMetadata):
 
         filter_expr = []
         for col in filter_columns or df.columns:
-            if col in self.columns and df.columns:
+            if col in self.columns and col in df.columns:
                 f_max = df.select(_pl.col(col).max())
 
                 if collect:
