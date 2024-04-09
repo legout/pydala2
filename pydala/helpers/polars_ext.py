@@ -303,9 +303,10 @@ def delta(
 
     if subset is None:
         subset = columns
-
     if isinstance(subset, str):
-        subset = sorted(set(columns) & set(subset))
+        subset = [subset]
+
+    subset = sorted(set(columns) & set(subset))
 
     if isinstance(df1, pl.LazyFrame) and isinstance(df2, pl.DataFrame):
         df2 = df2.lazy()
