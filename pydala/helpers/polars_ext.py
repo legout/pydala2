@@ -141,7 +141,7 @@ def opt_dtype(
 
 
 def explode_all(df: pl.DataFrame | pl.LazyFrame):
-    list_columns = [col for col in df.columns if df[col].dtype == pl.List()]
+    list_columns = [col for col in df.columns if df[col].dtype == pl.List]
     for col in list_columns:
         df = df.explode(col)
     return df
