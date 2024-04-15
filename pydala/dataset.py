@@ -1045,7 +1045,7 @@ class ParquetDataset(ParquetDatasetMetadata):
 
         filter_expr = []
         columns = set(df.columns) & set(self.columns)
-        if len(filter_columns) > 0:
+        if filter_columns is not None:
             columns = set(columns) & set(filter_columns)
         if len(columns) == 0:
             return _pl.DataFrame(schema=df.schema)
