@@ -29,21 +29,21 @@ def str2pyarrow_filter(string: str, schema: pa.Schema):
 
     def _parse_part(part):
         split_pattern = (
-            "<=|"
-            "<|"
-            ">=|"
-            ">|"
-            "=|"
-            "!=|"
-            "\s+[n,N][o,O][t,T]\s+[i,I][n,N]\s+|"
-            "\s+[i,I][n,N]\s+|"
-            "\s+[i,I][s,S]\s+[n,N][o,O][t,T]\s+[n,N][u,U][l,L]{2}\s+|"
-            "\s+[i,I][s,S]\s+[n,N][u,U][l,L]{2}\s+"
+            r"<=|"
+            r"<|"
+            r">=|"
+            r">|"
+            r"=|"
+            r"!=|"
+            r"\s+[n,N][o,O][t,T]\s+[i,I][n,N]\s+|"
+            r"\s+[i,I][n,N]\s+|"
+            r"\s+[i,I][s,S]\s+[n,N][o,O][t,T]\s+[n,N][u,U][l,L]{2}\s+|"
+            r"\s+[i,I][s,S]\s+[n,N][u,U][l,L]{2}\s+"
         )
         sign = re.findall(split_pattern, part)[0]
         # print(sign)
         # if "<" in sign or ">" in sign or "=" in sign or "!" in sign:
-        field, val = [p.strip() for p in re.split(f"\s*{sign}\s*", part)]
+        field, val = [p.strip() for p in re.split(f"\\s*{sign}\\s*", part)]
         # else:
         #    field, val = [p.strip() for p in re.split(f"\s+{sign}\s+", part)]
 
@@ -142,10 +142,10 @@ def str2pyarrow_filter(string: str, schema: pa.Schema):
 
     parts = re.split(
         (
-            "\s+[a,A][n,N][d,D] [n,N][o,O][t,T]\s+|"
-            "\s+[a,A][n,N][d,D]\s+|"
-            "\s+[o,O][r,R] [n,N][o,O][t,T]\s+|"
-            "\s+[o,O][r,R]\s+"
+            r"\s+[a,A][n,N][d,D] [n,N][o,O][t,T]\s+|"
+            r"\s+[a,A][n,N][d,D]\s+|"
+            r"\s+[o,O][r,R] [n,N][o,O][t,T]\s+|"
+            r"\s+[o,O][r,R]\s+"
         ),
         string,
     )
@@ -153,10 +153,10 @@ def str2pyarrow_filter(string: str, schema: pa.Schema):
         op.strip()
         for op in re.findall(
             (
-                "\s+[a,A][n,N][d,D]\s+[n,N][o,O][t,T]\s+|"
-                "\s+[a,A][n,N][d,D]\s+|"
-                "[o,O][r,R]\s+[n,N][o,O][t,T]\s+|"
-                "\s+[o,O][r,R]\s+"
+                r"\s+[a,A][n,N][d,D]\s+[n,N][o,O][t,T]\s+|"
+                r"\s+[a,A][n,N][d,D]\s+|"
+                r"[o,O][r,R]\s+[n,N][o,O][t,T]\s+|"
+                r"\s+[o,O][r,R]\s+"
             ),
             string,
         )

@@ -85,16 +85,16 @@ def _opt_dtype(s: pl.Series, strict: bool = True) -> pl.Series:
                     s = s.cast(pl.Int64(), strict=True).shrink_dtype()
         # cast str to datetime
         elif (
-            s.str.contains("^\d{4}-\d{2}-\d{2}$")
-            | s.str.contains("^\d{1,2}\/\d{1,2}\/\d{4}$")
+            s.str.contains(r"^\d{4}-\d{2}-\d{2}$")
+            | s.str.contains(r"^\d{1,2}\/\d{1,2}\/\d{4}$")
             | s.str.contains(
-                "^\d{4}-\d{2}-\d{2}T{0,1}\s{0,1}\d{2}:\d{2}:\d{0,2}.\d{0,}$"
+                r"^\d{4}-\d{2}-\d{2}T{0,1}\s{0,1}\d{2}:\d{2}:\d{0,2}.\d{0,}$"
             )
             | s.str.contains(
-                "^\d{4}-\d{2}-\d{2}T{0,1}\s{0,1}\d{2}:\d{2}:\d{2}\.\d{0,}$"
+                r"^\d{4}-\d{2}-\d{2}T{0,1}\s{0,1}\d{2}:\d{2}:\d{2}\.\d{0,}$"
             )
             | s.str.contains(
-                "^\d{4}-\d{2}-\d{2}T{0,1}\s{0,1}\d{2}:\d{2}:\d{2}\.\d{1,}\w{0,1}\+\d{0,2}:\d{0,2}:\d{0,2}$"
+                r"^\d{4}-\d{2}-\d{2}T{0,1}\s{0,1}\d{2}:\d{2}:\d{2}\.\d{1,}\w{0,1}\+\d{0,2}:\d{0,2}:\d{0,2}$"
             )
             | s.is_null()
             | s.str.contains("^$")
