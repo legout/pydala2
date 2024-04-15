@@ -726,7 +726,7 @@ class PydalaDatasetMetadata:
         self._filter_expr = filter_expr
         if filter_expr is not None:
             filter_expr = re.split(
-                "\s+[a,A][n,N][d,D]\s+",
+                r"\s+[a,A][n,N][d,D]\s+",
                 filter_expr,
             )
 

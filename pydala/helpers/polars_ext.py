@@ -59,19 +59,19 @@ def unnest_all(df: pl.DataFrame, seperator="_", fields: list[str] | None = None)
 def _opt_dtype(s: pl.Series, strict: bool = True) -> pl.Series:
     try:
         if (
-            s.str.contains("^[0-9,\.-]{1,}$") | s.is_null() | s.str.contains("^$")
+            s.str.contains(r"^[0-9,\.-]{1,}$") | s.is_null() | s.str.contains(r"^$")
         ).all() and s.dtype != pl.Date():
             s = (
                 s.str.replace_all(",", ".")
                 .str.replace_all("^0{1,}$", "+0")
                 .str.strip_chars_start("0")
-                .str.replace_all("\.0*$", "")
+                .str.replace_all(r"\.0*$", "")
             )
             if s.dtype == pl.Utf8():
                 s = s.set(s == "-", None)
                 s = s.set(s == "", None)
             if (
-                s.str.contains("\.").any()
+                s.str.contains(r"\.").any()
                 # | s.is_null().any() # null / None is valid in Int
                 # | s.str.contains("^$").any()
                 | s.str.contains("NaN").any()
