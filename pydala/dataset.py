@@ -1064,9 +1064,7 @@ class ParquetDataset(ParquetDatasetMetadata):
                 f_min = f_min.strip("'").replace(",", "")
 
             filter_expr.append(
-                f"{col}<='{f_max}' AND {col}>='{f_min}' OR col IS NULL".replace(
-                    "'None'", "NULL"
-                )
+                f"{col}<='{f_max}' AND {col}>='{f_min}'".replace("'None'", "NULL")
             )
 
         return self.scan(" AND ".join(filter_expr)).pl
