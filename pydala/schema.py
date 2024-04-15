@@ -140,11 +140,25 @@ def modify_field(schema: pa.Schema, field: str, dtype: pa.DataType) -> pa.Schema
     return append_field(schema, field, dtype)
 
 
+def cast_int2timestamp(
+    table: pa.Table, column: str | list[str], unit: str = "us", tz: str = None
+) -> pa.Table:
+    column = [column] if isinstance(column, str) else column
+    columns = table.schema.names
+    for col in column:
+        arr = table.column(col)
+        arr_new = pa.array(arr.to_pylist(), pa.timestamp(unit=unit, tz=tz))
+        table = table.drop(col).append_column(col, arr_new)
+
+    return table.select(columns)
+
+
 def replace_schema(
     table: pa.Table,
     schema: pa.Schema | None = None,
     field_dtype: dict | None = None,
-    # exact: bool = False,
+    ts_unit: str | None = "us",
+    tz: str | None = None,
     alter_schema: bool = False,
 ) -> pa.Table:
     """
@@ -160,7 +174,7 @@ def replace_schema(
     Returns:
         pa.Table: The modified table with the replaced or modified schema.
     """
-
+    schema_org = table.schema
     if field_dtype is not None:
         schema = schema or table.schema
         for field, dtype in field_dtype.items():
@@ -182,7 +196,18 @@ def replace_schema(
             [field for field in table.column_names if field not in schema.names]
         )
 
-    return table.select(schema.names).cast(schema)
+    if schema != schema_org:
+        int2timestamp_columns = [
+            col
+            for col in schema.names
+            if pa.types.is_timestamp(schema.field_by_name(col).type)
+            and pa.types.is_integer(schema_org.field_by_name(col).type)
+        ]
+        table = cast_int2timestamp(table, int2timestamp_columns, unit=ts_unit, tz=tz)
+
+        return table.select(schema.names).cast(schema)
+
+    return table.select(schema.names)
 
 
 def _unify_schemas(
