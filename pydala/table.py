@@ -336,22 +336,22 @@ class PydalaTable:
         """
 
         if self._type == "pyarrow" and sort_by is None and not distinct:
-            return self.to_arrow_scanner(
-                columns=columns,
-                filter=filter,
-                batch_size=batch_size,
-                sort_by=sort_by,
-                batch_readahead=batch_readahead,
-                fragment_readahead=fragment_readahead,
-                fragment_scan_options=fragment_scan_options,
-                use_threads=use_threads,
-                memory_pool=memory_pool,
-            ).to_reader()
+            if batch_size == 131072:
+                return self.to_arrow_scanner(
+                    columns=columns,
+                    filter=filter,
+                    batch_size=batch_size,
+                    sort_by=sort_by,
+                    batch_readahead=batch_readahead,
+                    fragment_readahead=fragment_readahead,
+                    fragment_scan_options=fragment_scan_options,
+                    use_threads=use_threads,
+                    memory_pool=memory_pool,
+                ).to_reader()
 
-        else:
-            return self.to_duckdb(
-                columns=columns, lazy=lazy, sort_by=sort_by, distinct=distinct
-            ).fetch_arrow_reader(batch_size=batch_size)
+        return self.to_duckdb(
+            columns=columns, lazy=lazy, sort_by=sort_by, distinct=distinct
+        ).fetch_arrow_reader(batch_size=batch_size)
 
     def to_batches(
         self,
