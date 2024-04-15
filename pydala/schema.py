@@ -448,7 +448,7 @@ def repair_schema(
         schema = shrink_large_string(schema)
 
     def _repair_schema(f, schema, filesystem):
-        table = pq.read_table(f, schema=schema, filesystem=filesystem)
+        table = replace_schema(pq.read_table(f, filesystem=filesystem), schema=schema)
         pq.write_table(
             table,
             f,
