@@ -84,6 +84,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         try:
             self.load()
         except Exception as e:
+            _ = e
             pass
 
     def load(
@@ -411,9 +412,11 @@ class ParquetDataset(ParquetDatasetMetadata):
         Convert the table to Apache Arrow format.
 
         Args:
-            columns (str | list[str] | None): The columns to include in the conversion. If None, all columns are included.
+            columns (str | list[str] | None): The columns to include in the conversion. If None,
+                all columns are included.
             batch_size (int): The number of rows to include in each converted batch.
-            sort_by (str | list[str] | list[tuple[str, str]] | None): The column(s) to sort by. If None, no sorting is applied.
+            sort_by (str | list[str] | list[tuple[str, str]] | None): The column(s) to sort by. If None,
+                no sorting is applied.
             distinct (bool): Whether to return only distinct rows.
             **kwargs: Additional keyword arguments.
 
@@ -444,9 +447,11 @@ class ParquetDataset(ParquetDatasetMetadata):
         Returns the table in Apache Arrow format.
 
         Args:
-            columns (str | list[str] | None): The columns to include in the conversion. If None, all columns are included.
+            columns (str | list[str] | None): The columns to include in the conversion. If None,
+                all columns are included.
             batch_size (int): The number of rows to include in each converted batch.
-            sort_by (str | list[str] | list[tuple[str, str]] | None): The column(s) to sort by. If None, no sorting is applied.
+            sort_by (str | list[str] | list[tuple[str, str]] | None): The column(s) to sort by. If None,
+                no sorting is applied.
             distinct (bool): Whether to return only distinct rows.
             **kwargs: Additional keyword arguments.
 
@@ -487,7 +492,8 @@ class ParquetDataset(ParquetDatasetMetadata):
         Args:
             columns (str | list[str] | None, optional): The columns to include in the batch reader. Defaults to None.
             batch_size (int, optional): The size of each batch. Defaults to 100_000.
-            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): The column(s) to sort the data by. Defaults to None.
+            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): The column(s) to sort the data by.
+                Defaults to None.
             distinct (bool, optional): Whether to return distinct rows. Defaults to False.
             **kwargs: Additional keyword arguments.
 
@@ -517,7 +523,8 @@ class ParquetDataset(ParquetDatasetMetadata):
         Args:
             columns (str | list[str] | None, optional): Columns to include in the batches. Defaults to None.
             batch_size (int, optional): Size of each batch. Defaults to 100_000.
-            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): Columns to sort the batches by. Defaults to None.
+            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): Columns to sort the batches by.
+                Defaults to None.
             distinct (bool, optional): Whether to return distinct batches. Defaults to False.
             **kwargs: Additional keyword arguments.
 
@@ -703,7 +710,8 @@ class ParquetDataset(ParquetDatasetMetadata):
         Args:
             lazy (bool, optional): Whether to lazily load the DataFrame. Defaults to True.
             columns (str | list[str] | None, optional): The columns to include in the DataFrame. Defaults to None.
-            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): The column(s) to sort by. Defaults to None.
+            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): The column(s) to sort by.
+                Defaults to None.
             distinct (bool, optional): Whether to return only distinct rows. Defaults to False.
             **kwargs: Additional keyword arguments to pass to the underlying to_pandas method.
 
@@ -729,7 +737,8 @@ class ParquetDataset(ParquetDatasetMetadata):
         Args:
             lazy (bool, optional): Whether to lazily load the DataFrame. Defaults to True.
             columns (str | list[str] | None, optional): The columns to include in the DataFrame. Defaults to None.
-            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): The column(s) to sort by. Defaults to None.
+            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): The column(s) to sort by.
+                Defaults to None.
             distinct (bool, optional): Whether to return only distinct rows. Defaults to False.
             **kwargs: Additional keyword arguments to pass to the underlying to_pandas method.
 
@@ -1004,7 +1013,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             files (str | list[str] | None, optional): The name(s) of the file(s) to delete. If None,
                 all files in the dataset will be deleted. Defaults to None.
         """
-        if not self._path in files[0]:
+        if self._path not in files[0]:
             files = [os.path.join(self._path, fn) for fn in files]
         self._filesystem.rm(files, recursive=True)
         # self.load(reload=True)
@@ -1100,20 +1109,23 @@ class ParquetDataset(ParquetDatasetMetadata):
         Write data to the dataset with specified options and handling for different modes and parameters.
 
         Args:
-            df: DataFrame to be written to the dataset. Can be a pandas DataFrame, PyPolars DataFrame, PyArrow Table, PyArrow RecordBatch, DuckDBPyConnection, or LazyFrame.
+            df: DataFrame to be written to the dataset. Can be a pandas DataFrame, PyPolars DataFrame, PyArrow Table,
+                PyArrow RecordBatch, DuckDBPyConnection, or LazyFrame.
             mode: Mode of writing to the dataset, either "append", "delta", or "overwrite".
             partitioning_columns: Columns to partition the dataset by. Can be a string, list of strings, or None.
             max_rows_per_file: Maximum number of rows per file, or None.
             row_group_size: Size of row groups, or None.
             compression: Compression algorithm to use, default is "zstd".
-            sort_by: Columns to sort the dataset by. Can be a string, list of strings, list of tuples of strings, or None.
+            sort_by: Columns to sort the dataset by. Can be a string, list of strings, list of tuples of strings,
+                or None.
             unique: Columns to enforce uniqueness on, can be a bool, string, or list of strings.
             ts_unit: Unit for timestamps, default is "us" (microseconds).
             tz: Timezone to use, or None.
             remove_tz: Whether to remove the timezone, default is False.
             use_large_string: Whether to use large string types, default is False.
             delta_subset: Subset of columns to consider for delta mode, can be a string, list of strings, or None.
-            other_df_filter_columns: Columns to filter the other DataFrame by, can be a string, list of strings, or None.
+            other_df_filter_columns: Columns to filter the other DataFrame by, can be a string, list of strings,
+                or None.
             use: Library to use for writing, default is "pyarrow".
             on: Format of the dataset, default is "parquet_dataset".
             update_metadata: Whether to update the metadata, default is False.

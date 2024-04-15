@@ -400,7 +400,7 @@ def repair_schema(
     tz: str | None = None,
     use_large_string: bool = False,
     sort: bool | list[str] = False,
-    alter_schema: bool = False,
+    alter_schema: bool = True,
     **kwargs,
 ):
     """Repairs the pyarrow schema of a parquet or arrow dataset

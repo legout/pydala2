@@ -249,15 +249,26 @@ class ParquetDatasetMetadata:
         ts_unit: str | None = None,
         use_large_string: bool = False,
         sort: bool | list[str] = False,
+        alter_schema: bool = True,
         **kwargs,
     ):
         """
-        Repairs the schemas of the files in the dataset.
-        This method repairs the schemas of the files in the dataset to match the given schema. If no schema is given,
-        the method will attempt to find the unified schema for the dataset and use that as the target schema.
+        Repairs the schemas of files in the metadata.
+
         Args:
-            schema (pa.Schema, optional): The schema to use for the files in the dataset. Defaults to None.
-            **kwargs: Additional keyword arguments to pass to the `repair_schema` method.
+            schema (pa.Schema | None, optional): The schema to use for repairing the files. If None,
+                the unified schema will be used. Defaults to None.
+            format_version (str | None, optional): The format version to use for repairing the files. If None,
+                the format version from the metadata will be used. Defaults to None.
+            tz (str | None, optional): The timezone to use for repairing the files. Defaults to None.
+            ts_unit (str | None, optional): The timestamp unit to use for repairing the files. Defaults to None.
+            use_large_string (bool, optional): Whether to use large string type for repairing the files.
+                Defaults to False.
+            sort (bool | list[str], optional): Whether to sort the files before repairing. If a list of strings is
+                provided, it specifies the order in which the files should be repaired. Defaults to False.
+            alter_schema (bool, optional): Whether to alter the schema of the files. Defaults to True.
+            **kwargs: Additional keyword arguments to pass to the repair_schema function.
+
         Returns:
             None
         """
@@ -296,6 +307,9 @@ class ParquetDatasetMetadata:
                 base_path=self._path,
                 filesystem=self._filesystem,
                 version=format_version,
+                ts_unit=ts_unit,
+                tz=tz,
+                alter_schema=alter_schema,
                 **kwargs,
             )
             self.clear_cache()
