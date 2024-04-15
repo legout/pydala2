@@ -1068,7 +1068,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             )
 
         return (
-            self.scan(" AND ".join(filter_expr), use=use, on=on)
+            self.scan(" AND ".join(filter_expr))
             .ddb.filter(" AND ".join(filter_expr))
             .pl()
         )
