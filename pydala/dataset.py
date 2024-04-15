@@ -1095,8 +1095,8 @@ class ParquetDataset(ParquetDatasetMetadata):
         use_large_string: bool = False,
         delta_subset: str | list[str] | None = None,
         # other_df_filter_columns: str | list[str] | None = None,
-        use: str = "pyarrow",
-        on: str = "parquet_dataset",
+        # use: str = "pyarrow",
+        # on: str = "parquet_dataset",
         update_metadata: bool = False,
         alter_schema: bool = False,
         timestamp_column: str | None = None,
@@ -1172,8 +1172,8 @@ class ParquetDataset(ParquetDatasetMetadata):
             other_df = self._get_delta_other_df(
                 writer.data,
                 filter_columns=delta_subset,
-                use=use,
-                on=on,
+                # use=use,
+                # on=on,
             )
             if other_df is not None:
                 writer.delta(other=other_df, subset=delta_subset)
