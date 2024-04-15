@@ -201,7 +201,11 @@ def replace_schema(
             col
             for col in schema.names
             if pa.types.is_timestamp(schema.field(col).type)
-            and pa.types.is_integer(schema_org.field(col).type)
+            and (
+                pa.types.is_integer(schema_org.field(col).type)
+                if col in schema_org.names
+                else False
+            )
         ]
         table = cast_int2timestamp(table, int2timestamp_columns, unit=ts_unit, tz=tz)
 
