@@ -1022,8 +1022,8 @@ class ParquetDataset(ParquetDatasetMetadata):
         self,
         df: _pl.DataFrame | _pl.LazyFrame,
         filter_columns: str | list[str] | None = None,
-        use: str = "auto",
-        on: str = "auto",
+        # use: str = "auto",
+        # on: str = "auto",
     ) -> _pl.DataFrame | _pl.LazyFrame:
         """
         Generate the delta dataframe based on the given dataframe, columns, use, and on parameters.
@@ -1064,14 +1064,12 @@ class ParquetDataset(ParquetDatasetMetadata):
                 f_min = f_min.strip("'").replace(",", "")
 
             filter_expr.append(
-                f"{col}<='{f_max}' AND {col}>='{f_min}'".replace("'None'", "NULL")
+                f"{col}<='{f_max}' AND {col}>='{f_min}' OR col IS NULL".replace(
+                    "'None'", "NULL"
+                )
             )
 
-        return (
-            self.scan(" AND ".join(filter_expr))
-            .ddb.filter(" AND ".join(filter_expr))
-            .pl()
-        )
+        return self.scan(" AND ".join(filter_expr)).pl
 
     def write_to_dataset(
         self,
