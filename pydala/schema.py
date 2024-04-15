@@ -271,7 +271,7 @@ def _unify_schemas(
     if sort:
         if isinstance(sort, bool):
             all_names = sorted(all_names)
-        elif isinstance(sort, list[str]):
+        elif isinstance(sort, list):
             sort = [name for name in sort if name in all_names]
             all_names = sort + [name for name in all_names if name not in sort]
 
