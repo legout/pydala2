@@ -1044,35 +1044,34 @@ class ParquetDataset(ParquetDatasetMetadata):
             collect = True
 
         filter_expr = []
-        for col in filter_columns or df.columns:
-            if col in self.columns and col in df.columns:
-                f_max = df.select(_pl.col(col).max())
-
-                if collect:
-                    f_max = f_max.collect()[0, 0]
-                else:
-                    f_max = f_max[0, 0]
-
-                if isinstance(f_max, str):
-                    f_max = f_max.strip("'").replace(",", "")
-
-                f_min = df.select(_pl.col(col).min())
-
-                if collect:
-                    f_min = f_min.collect()[0, 0]
-                else:
-                    f_min = f_min[0, 0]
-
-                if isinstance(f_min, str):
-                    f_min = f_min.strip("'").replace(",", "")
-
-                filter_expr.append(
-                    f"{col}<='{f_max}' AND {col}>='{f_min}'".replace("'None'", "NULL")
-                )
-        if filter_expr == []:
+        columns = set(df.columns) & set(self.columns)
+        if len(filter_columns) > 0:
+            columns = set(columns) & set(filter_columns)
+        if len(columns) == 0:
             return _pl.DataFrame(schema=df.schema)
 
-        return self.filter(" AND ".join(filter_expr), use=use, on=on).to_polars()
+        for col in columns:
+            max_min = df.select(_pl.max(col).alias("max"), _pl.min(col).alias("min"))
+
+            if collect:
+                max_min = max_min.collect()
+            f_max = max_min["max"][0]
+            f_min = max_min["min"][0]
+
+            if isinstance(f_max, str):
+                f_max = f_max.strip("'").replace(",", "")
+            if isinstance(f_min, str):
+                f_min = f_min.strip("'").replace(",", "")
+
+            filter_expr.append(
+                f"{col}<='{f_max}' AND {col}>='{f_min}'".replace("'None'", "NULL")
+            )
+
+        return (
+            self.scan(" AND ".join(filter_expr), use=use, on=on)
+            .ddb.filter(" AND ".join(filter_expr))
+            .pl()
+        )
 
     def write_to_dataset(
         self,
