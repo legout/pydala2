@@ -295,11 +295,10 @@ def _unify_schemas(
                     if isinstance(type1, pa.TimestampType)
                     else 0
                 )
-                rank2 = (
-                    timestamp_units.index(type2.unit)
-                    if isinstance(type1, pa.TimestampType)
-                    else 0
-                )
+                if isinstance(type2, pa.TimestampType):
+                    rank2 = timestamp_units.index(type2.unit)
+                else:
+                    rank2 = 0
                 type_ = type1 if rank1 > rank2 else type2
             else:
                 rank1 = 1
