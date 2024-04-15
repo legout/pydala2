@@ -400,6 +400,7 @@ def repair_schema(
     tz: str | None = None,
     use_large_string: bool = False,
     sort: bool | list[str] = False,
+    alter_schema: bool = False,
     **kwargs,
 ):
     """Repairs the pyarrow schema of a parquet or arrow dataset
@@ -448,7 +449,13 @@ def repair_schema(
         schema = shrink_large_string(schema)
 
     def _repair_schema(f, schema, filesystem):
-        table = replace_schema(pq.read_table(f, filesystem=filesystem), schema=schema)
+        table = replace_schema(
+            pq.read_table(f, filesystem=filesystem),
+            schema=schema,
+            ts_unit=ts_unit,
+            tz=tz,
+            alter_schema=alter_schema,
+        )
         pq.write_table(
             table,
             f,
