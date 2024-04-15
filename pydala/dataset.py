@@ -1096,7 +1096,7 @@ class ParquetDataset(ParquetDatasetMetadata):
         remove_tz: bool = False,
         use_large_string: bool = False,
         delta_subset: str | list[str] | None = None,
-        other_df_filter_columns: str | list[str] | None = None,
+        # other_df_filter_columns: str | list[str] | None = None,
         use: str = "pyarrow",
         on: str = "parquet_dataset",
         update_metadata: bool = False,
@@ -1173,7 +1173,7 @@ class ParquetDataset(ParquetDatasetMetadata):
             writer._to_polars()
             other_df = self._get_delta_other_df(
                 writer.data,
-                filter_columns=other_df_filter_columns,
+                filter_columns=delta_subset,
                 use=use,
                 on=on,
             )
