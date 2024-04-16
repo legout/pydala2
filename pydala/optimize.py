@@ -51,9 +51,7 @@ class Optimize(ParquetDataset):
         if isinstance(partition, str):
             partition = [partition]
 
-        filter_ = " AND ".join(
-            [f"{n}='{v}'" for n, v in list(zip(self.partition_names, partition))]
-        )
+        filter_ = " AND ".join([f"{n}='{v}'" for n, v in partition.items()])
 
         scan = self.scan(filter_)
         if len(self.scan_files) == 1:
@@ -96,7 +94,7 @@ class Optimize(ParquetDataset):
         row_group_size: int | None = 250_000,
         **kwargs,
     ) -> None:
-        for partition in tqdm.tqdm(self.partitions):
+        for partition in tqdm.tqdm(self.partitions.to_pylist()):
             self._compact_partition(
                 partition=partition,
                 max_rows_per_file=max_rows_per_file,
