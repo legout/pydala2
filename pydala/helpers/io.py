@@ -7,10 +7,9 @@ import pandas as pd
 import polars as pl
 import polars.selectors as cs
 import pyarrow as pa
-
+import pyarrow.dataset as pds
 # import pyarrow.dataset as pds
 import pyarrow.parquet as pq
-import pyarrow.dataset as pds
 from fsspec import AbstractFileSystem
 from fsspec import filesystem as fsspec_filesystem
 

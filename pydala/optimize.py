@@ -1,5 +1,6 @@
 import datetime as dt
 import os
+
 import duckdb as _duckdb
 import pyarrow as pa
 import pyarrow.dataset as pds

@@ -1,59 +1,120 @@
-import yaml
-import sqlite3
+from dataclasses import dataclass
+
+from munch import Munch
+
+from .dataset import ParquetDataset
+from .filesystem import FileSystem
+import duckdb
 
 
+@dataclass
 class Catalog:
-    def __init__(self, db_path):
-        self.db_path = db_path
-        self.conn = sqlite3.connect(db_path)
-        self.cursor = self.conn.cursor()
-        self.cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS catalog (
-                id INTEGER PRIMARY KEY,
-                name TEXT,
-                description TEXT,
-                price REAL
+    items: Munch
+    ddb_con: duckdb.DuckDBPyConnection | None
+
+    def __post_init__(self):
+        if self.ddb_con is None:
+            self.ddb_con = duckdb.connect()
+
+        self.load_filesystems()
+
+    def load_filesystems(self):
+        if hasattr(self.items, "filesystem"):
+            self.filesystems = Munch()
+            for name in self.items.filesystem:
+                fs = FileSystem(**self.items.filesystem[name])
+                type(fs).protocol = name
+                if self.item.filesystem[name].type != "file":
+                    self.ddb_con.register_filesystem(fs)
+
+                self.filesystems[name] = fs
+        else:
+            self.filesystems = None
+
+    def load_parquet(self, name: Munch, **kwargs):
+        params = self.items.tables[name]
+
+        if "parquet" not in params.type.lower():
+            return
+
+        if "file" in params.type.lower():
+            return self.filesystems[params.filesystem].read_parquet(
+                params.path, **kwargs
             )
-        """
-        )
-        self.conn.commit()
 
-    def add(self, name, description, price):
-        self.cursor.execute(
-            """
-            INSERT INTO catalog (name, description, price)
-            VALUES (?, ?, ?)
-        """,
-            (name, description, price),
+        return self.filesystems[params.filesystem].read_parquet_dataset(
+            params.path, **kwargs
         )
-        self.conn.commit()
 
-    def get(self, id):
-        self.cursor.execute(
-            """
-            SELECT * FROM catalog WHERE id = ?
-        """,
-            (id,),
+    def load_csv(self, name: Munch, **kwargs):
+        params = self.items.tables[name]
+
+        if "csv" not in params.type.lower():
+            return
+        if "file" in params.type.lower():
+            return self.filesystems[params.filesystem].read_csv(params.path, **kwargs)
+        return self.filesystems[params.filesystem].read_csv_dataset(
+            params.path, **kwargs
         )
-        return self.cursor.fetchone()
 
-    def delete(self, id):
-        self.cursor.execute(
-            """
-            DELETE FROM catalog WHERE id = ?
-        """,
-            (id,),
+    def load_json(self, name: Munch, **kwargs):
+        params = self.items.tables[name]
+
+        if "json" not in params.type.lower():
+            return
+
+        if "file" in params.type.lower():
+            return self.filesystems[params.filesystem].read_json(params.path, **kwargs)
+        return self.filesystems[params.filesystem].read_json_dataset(
+            params.path, **kwargs
         )
-        self.conn.commit()
 
-    def list(self):
-        self.cursor.execute(
-            """
-            SELECT * FROM catalog
-        """
+    def load_pyarrow_dataset(self, name: Munch, **kwargs):
+        params = self.items.tables[name]
+
+        if (
+            "parquet" not in params.type.lower()
+            and "csv" not in params.type.lower()
+            and "arrow" not in params.type.lower()
+        ):
+            return
+
+        return self.filesystems[params.filesystem].pyarrow_dataset(
+            params.path, **kwargs
         )
-        return self.cursor.fetchall()
 
-    def __del__(self):
-        self.conn.close()
+    def load_pydala_dataset(self, name: Munch, **kwargs):
+        params = self.items.tables[name]
+
+        if (
+            "parquet" not in params.type.lower()
+            and "pyarrow" not in params.type.lower()
+            and "pydala" not in params.type.lower()
+        ):
+            return
+
+        return ParquetDataset(
+            params.path,
+            filesystem=self.filesystems[params.filesystem],
+            name=name,
+            ddb_con=self.ddb_con,
+            **kwargs,
+        )
+
+    def load(self, name: Munch, **kwargs):
+        if "parquet" in self.items.tables[name].type.lower():
+            return self.load_parquet(name, **kwargs)
+        elif "csv" in self.items.tables[name].type.lower():
+            return self.load_csv(name, **kwargs)
+        elif "json" in self.items.tables[name].type.lower():
+            return self.load_json(name, **kwargs)
+        elif "pyarrow" in self.items.tables[name].type.lower():
+            return self.load_pyarrow_dataset(name, **kwargs)
+        elif "pydala" in self.items.tables[name].type.lower():
+            return self.load_pydala_dataset(name, **kwargs)
+
+        return None
+
+    @property
+    def table_names(self):
+        return sorted(self.items.tables.keys())

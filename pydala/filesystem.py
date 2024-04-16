@@ -12,6 +12,7 @@ from fsspec import AbstractFileSystem, filesystem
 from fsspec.implementations import cached as cachedfs
 from fsspec.implementations.dirfs import DirFileSystem
 
+from .helpers.io import read_table
 from .helpers.misc import run_parallel
 from .schema import shrink_large_string
 
@@ -48,7 +49,7 @@ def get_new_file_names(src: list[str], dst: list[str]) -> list[str]:
 
 def read_parquet(self, path: str, **kwargs) -> pl.DataFrame:
     with self.open(path) as f:
-        return pl.from_arrow(pq.read_table(f, **kwargs))
+        return pl.from_arrow(read_table(f, fs=self, **kwargs))
 
 
 def read_parquet_schema(self, path: str, **kwargs) -> pa.Schema:

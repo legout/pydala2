@@ -5,7 +5,7 @@
 groups = ["default", "dev", "legacy", "msgpack"]
 strategy = ["cross_platform"]
 lock_version = "4.4.1"
-content_hash = "sha256:c612eddb498c5c05eb4419c0cfaa897d5c2c96528f3fe94352354b08d7eb9c00"
+content_hash = "sha256:811cbfc77601e21b0485ca10c41461d22402e32ccb00632612d658ed6f6afa2c"
 
 [[package]]
 name = "aiobotocore"
@@ -1335,6 +1335,16 @@ files = [
     {file = "multidict-6.0.4-cp311-cp311-win32.whl", hash = "sha256:3601a3cece3819534b11d4efc1eb76047488fddd0c85a3948099d5da4d504636"},
     {file = "multidict-6.0.4-cp311-cp311-win_amd64.whl", hash = "sha256:81a4f0b34bd92df3da93315c6a59034df95866014ac08535fc819f043bfd51f0"},
     {file = "multidict-6.0.4.tar.gz", hash = "sha256:3666906492efb76453c0e7b97f2cf459b0682e7402c0489a95484965dbc1da49"},
+]
+
+[[package]]
+name = "munch"
+version = "4.0.0"
+requires_python = ">=3.6"
+summary = "A dot-accessible dictionary (a la JavaScript objects)"
+files = [
+    {file = "munch-4.0.0-py2.py3-none-any.whl", hash = "sha256:71033c45db9fb677a0b7eb517a4ce70ae09258490e419b0e7f00d1e386ecb1b4"},
+    {file = "munch-4.0.0.tar.gz", hash = "sha256:542cb151461263216a4e37c3fd9afc425feeaf38aaa3025cd2a981fadb422235"},
 ]
 
 [[package]]

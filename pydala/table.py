@@ -24,7 +24,7 @@ class PydalaTable:
             self._dataset = result
             self._ddb = self.ddb_con.from_arrow(result)
         else:
-            self._dataset = None
+            self._dataset = pds.dataset(result.arrow())
             self._ddb = result
 
     @staticmethod
@@ -39,7 +39,8 @@ class PydalaTable:
             type_ (str | None, optional): The type of data storage. Defaults to "pyarrow".
 
         Returns:
-            dict | str: A dictionary or a string of sorted fields and their order, formatted based on the data storage type.
+            dict | str: A dictionary or a string of sorted fields and their order, formatted based on the data
+                storage type.
 
         Raises:
             ValueError: If sort_by is not a string, list of strings, or list of tuples.
@@ -98,8 +99,7 @@ class PydalaTable:
         Returns:
             pds.Dataset: The PyArrow dataset if the type is "pyarrow", otherwise None.
         """
-        if self._type == "pyarrow":
-            return self._dataset
+        return self._dataset
 
     @property
     def arrow_dataset(self) -> pds.Dataset:
@@ -126,13 +126,16 @@ class PydalaTable:
         Converts the table to an Arrow scanner.
 
         Args:
-            columns (str | list[str] | None, optional): Columns to include in the scanner. Defaults to None.
+            columns (str | list[str] | None, optional): Columns to include in the scanner.
+                Defaults to None.
             filter (pds.Expression | None, optional): Filter expression to apply. Defaults to None.
             batch_size (int, optional): Batch size for scanning. Defaults to 131072.
-            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): Columns to sort by. Defaults to None.
+            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): Columns to sort by.
+                Defaults to None.
             batch_readahead (int, optional): Number of batches to read ahead. Defaults to 16.
             fragment_readahead (int, optional): Number of fragments to read ahead. Defaults to 4.
-            fragment_scan_options (pds.FragmentScanOptions | None, optional): Fragment scan options. Defaults to None.
+            fragment_scan_options (pds.FragmentScanOptions | None, optional): Fragment scan options.
+                Defaults to None.
             use_threads (bool, optional): Whether to use multiple threads. Defaults to True.
             memory_pool (pa.MemoryPool | None, optional): Memory pool to use. Defaults to None.
 
@@ -189,14 +192,19 @@ class PydalaTable:
         Converts the table to a scanner object for efficient data scanning.
 
         Args:
-            columns (str | list[str] | None, optional): Columns to include in the scanner. Defaults to None.
-            filter (pds.Expression | None, optional): Filter expression to apply on the data. Defaults to None.
+            columns (str | list[str] | None, optional): Columns to include in the scanner.
+                Defaults to None.
+            filter (pds.Expression | None, optional): Filter expression to apply on the data.
+                Defaults to None.
             batch_size (int, optional): Batch size for scanning. Defaults to 131072.
-            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): Columns to sort by. Defaults to None.
+            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): Columns to sort by.
+                Defaults to None.
             batch_readahead (int, optional): Number of batches to read ahead. Defaults to 16.
             fragment_readahead (int, optional): Number of fragments to read ahead. Defaults to 4.
-            fragment_scan_options (pds.FragmentScanOptions | None, optional): Fragment scan options. Defaults to None.
-            use_threads (bool, optional): Whether to use multiple threads for scanning. Defaults to True.
+            fragment_scan_options (pds.FragmentScanOptions | None, optional): Fragment scan options.
+                Defaults to None.
+            use_threads (bool, optional): Whether to use multiple threads for scanning.
+                Defaults to True.
             memory_pool (pa.MemoryPool | None, optional): Memory pool for scanning. Defaults to None.
 
         Returns:
@@ -232,14 +240,18 @@ class PydalaTable:
 
         Args:
             columns (str | list[str] | None, optional): Columns to include in the scan. Defaults to None.
-            filter (pds.Expression | None, optional): Filter expression to apply during the scan. Defaults to None.
+            filter (pds.Expression | None, optional): Filter expression to apply during the scan.
+                Defaults to None.
             batch_size (int, optional): Number of rows to read per batch. Defaults to 131072.
-            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): Columns to sort the scan by. Defaults to None.
+            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): Columns to sort the scan by.
+                Defaults to None.
             batch_readahead (int, optional): Number of batches to read ahead. Defaults to 16.
             fragment_readahead (int, optional): Number of fragments to read ahead. Defaults to 4.
-            fragment_scan_options (pds.FragmentScanOptions | None, optional): Fragment scan options. Defaults to None.
+            fragment_scan_options (pds.FragmentScanOptions | None, optional): Fragment scan options.
+                Defaults to None.
             use_threads (bool, optional): Whether to use multiple threads for scanning. Defaults to True.
-            memory_pool (pa.MemoryPool | None, optional): Memory pool to use for allocations. Defaults to None.
+            memory_pool (pa.MemoryPool | None, optional): Memory pool to use for allocations.
+                Defaults to None.
 
         Returns:
             pds.Scanner: Scanner object for scanning the table.
@@ -273,7 +285,8 @@ class PydalaTable:
             lazy (bool, optional): If True, the conversion is lazy. Defaults to True.
             columns (str | list[str] | None, optional): The columns to select. Defaults to None.
             batch_size (int, optional): The batch size for scanning the table. Defaults to 131072.
-            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): The columns to sort by. Defaults to None.
+            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): The columns to sort by.
+                Defaults to None.
             distinct (bool, optional): If True, removes duplicate rows. Defaults to False.
             **kwargs: Additional keyword arguments.
 
@@ -323,11 +336,13 @@ class PydalaTable:
             filter (pds.Expression | None, optional): Filter expression to apply. Defaults to None.
             lazy (bool, optional): Whether to lazily evaluate the reader. Defaults to True.
             batch_size (int, optional): Size of each batch. Defaults to 131072.
-            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): Columns to sort by. Defaults to None.
+            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): Columns to sort by.
+                Defaults to None.
             distinct (bool, optional): Whether to return distinct rows. Defaults to False.
             batch_readahead (int, optional): Number of batches to read ahead. Defaults to 16.
             fragment_readahead (int, optional): Number of fragments to read ahead. Defaults to 4.
-            fragment_scan_options (pds.FragmentScanOptions | None, optional): Fragment scan options. Defaults to None.
+            fragment_scan_options (pds.FragmentScanOptions | None, optional): Fragment scan options.
+                Defaults to None.
             use_threads (bool, optional): Whether to use multiple threads. Defaults to True.
             memory_pool (pa.MemoryPool | None, optional): Memory pool to use. Defaults to None.
 
@@ -370,14 +385,17 @@ class PydalaTable:
         Converts the table to a sequence of RecordBatches.
 
         Args:
-            columns (str | list[str] | None, optional): Columns to include in the RecordBatches. Defaults to None.
+            columns (str | list[str] | None, optional): Columns to include in the RecordBatches.
+                Defaults to None.
             filter (pds.Expression | None, optional): Filter expression to apply. Defaults to None.
             batch_size (int, optional): Size of each RecordBatch. Defaults to 131072.
-            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): Columns to sort by. Defaults to None.
+            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): Columns to sort by.
+                Defaults to None.
             distinct (bool, optional): Whether to return distinct rows. Defaults to False.
             batch_readahead (int, optional): Number of batches to read ahead. Defaults to 16.
             fragment_readahead (int, optional): Number of fragments to read ahead. Defaults to 4.
-            fragment_scan_options (pds.FragmentScanOptions | None, optional): Fragment scan options. Defaults to None.
+            fragment_scan_options (pds.FragmentScanOptions | None, optional): Fragment scan options.
+                Defaults to None.
             use_threads (bool, optional): Whether to use multiple threads. Defaults to True.
             memory_pool (pa.MemoryPool | None, optional): Memory pool to use. Defaults to None.
 
@@ -425,14 +443,17 @@ class PydalaTable:
         Converts the table to an Arrow Table.
 
         Args:
-            columns (str | list[str] | None, optional): Columns to include in the Arrow Table. Defaults to None.
+            columns (str | list[str] | None, optional): Columns to include in the Arrow Table.
+                Defaults to None.
             filter (pds.Expression | None, optional): Filter expression to apply. Defaults to None.
             batch_size (int, optional): Batch size for reading data. Defaults to 131072.
-            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): Columns to sort by. Defaults to None.
+            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): Columns to sort by.
+                Defaults to None.
             distinct (bool, optional): Whether to return distinct rows. Defaults to False.
             batch_readahead (int, optional): Number of batches to read ahead. Defaults to 16.
             fragment_readahead (int, optional): Number of fragments to read ahead. Defaults to 4.
-            fragment_scan_options (pds.FragmentScanOptions | None, optional): Fragment scan options. Defaults to None.
+            fragment_scan_options (pds.FragmentScanOptions | None, optional): Fragment scan options.
+                Defaults to None.
             use_threads (bool, optional): Whether to use multiple threads. Defaults to True.
             memory_pool (pa.MemoryPool | None, optional): Memory pool to use. Defaults to None.
 
@@ -478,14 +499,17 @@ class PydalaTable:
         Converts the table to an Arrow table.
 
         Args:
-            columns (str | list[str] | None, optional): Columns to include in the Arrow table. Defaults to None.
+            columns (str | list[str] | None, optional): Columns to include in the Arrow table.
+                Defaults to None.
             filter (pds.Expression | None, optional): Filter expression to apply. Defaults to None.
             batch_size (int, optional): Batch size for reading data. Defaults to 131072.
-            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): Columns to sort by. Defaults to None.
+            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): Columns to sort by.
+                Defaults to None.
             distinct (bool, optional): Whether to return distinct rows. Defaults to False.
             batch_readahead (int, optional): Number of batches to read ahead. Defaults to 16.
             fragment_readahead (int, optional): Number of fragments to read ahead. Defaults to 4.
-            fragment_scan_options (pds.FragmentScanOptions | None, optional): Fragment scan options. Defaults to None.
+            fragment_scan_options (pds.FragmentScanOptions | None, optional): Fragment scan options.
+                Defaults to None.
             use_threads (bool, optional): Whether to use multiple threads. Defaults to True.
             memory_pool (pa.MemoryPool | None, optional): Memory pool to use. Defaults to None.
 
@@ -523,14 +547,17 @@ class PydalaTable:
         Converts the Pydala Table to an Arrow Table.
 
         Args:
-            columns (str | list[str] | None, optional): Columns to include in the resulting table. Defaults to None.
+            columns (str | list[str] | None, optional): Columns to include in the resulting table.
+                Defaults to None.
             filter (pds.Expression | None, optional): Filter expression to apply. Defaults to None.
             batch_size (int, optional): Batch size for reading data. Defaults to 131072.
-            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): Columns to sort by. Defaults to None.
+            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): Columns to sort by.
+                Defaults to None.
             distinct (bool, optional): Whether to return distinct rows. Defaults to False.
             batch_readahead (int, optional): Number of batches to read ahead. Defaults to 16.
             fragment_readahead (int, optional): Number of fragments to read ahead. Defaults to 4.
-            fragment_scan_options (pds.FragmentScanOptions | None, optional): Fragment scan options. Defaults to None.
+            fragment_scan_options (pds.FragmentScanOptions | None, optional): Fragment scan options.
+                Defaults to None.
             use_threads (bool, optional): Whether to use multiple threads. Defaults to True.
             memory_pool (pa.MemoryPool | None, optional): Memory pool to use. Defaults to None.
 
@@ -575,9 +602,12 @@ class PydalaTable:
 
         Args:
             lazy (bool, optional): If True, returns a LazyFrame. If False, returns a DataFrame. Defaults to True.
-            columns (str | list[str] | None, optional): Columns to include in the resulting DataFrame/LazyFrame. Defaults to None.
-            sort_by (str | list[str] | None, optional): Columns to sort the resulting DataFrame/LazyFrame by. Defaults to None.
-            distinct (bool, optional): If True, removes duplicate rows from the resulting DataFrame/LazyFrame. Defaults to False.
+            columns (str | list[str] | None, optional): Columns to include in the resulting DataFrame/LazyFrame.
+                Defaults to None.
+            sort_by (str | list[str] | None, optional): Columns to sort the resulting DataFrame/LazyFrame by.
+                Defaults to None.
+            distinct (bool, optional): If True, removes duplicate rows from the resulting DataFrame/LazyFrame.
+                Defaults to False.
             batch_size (int, optional): The batch size used for scanning the PyArrow dataset. Defaults to 131072.
             **kwargs: Additional keyword arguments to be passed to the underlying functions.
 
@@ -684,6 +714,18 @@ class PydalaTable:
             pd.DataFrame: A pandas DataFrame representation of the table.
         """
         return self.to_pandas()
+
+    def sql(self, sql: str):
+        """
+        Executes the given SQL query on the database connection.
+
+        Args:
+            sql (str): The SQL query to execute.
+
+        Returns:
+            The result of the SQL query execution.
+        """
+        return self.ddb_con.sql(sql)
 
     def __repr__(self):
         # if self._type == "pyarrow":

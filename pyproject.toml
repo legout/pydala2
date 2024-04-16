@@ -1,6 +1,6 @@
 [project]
 name = "pydala2"
-version = "0.5.3"
+version = "0.6.0"
 description = "poor man´s datalake"
 authors = [{ name = "Volker Lorrmann", email = "ligno.blades@gmail.com" }]
 dependencies = [
@@ -13,6 +13,7 @@ dependencies = [
   "pendulum>=2.1.2",
   "msgspec>=0.18.4",
   "polars>=0.20.19",
+  "munch>=4.0.0",
 ]
 
 
