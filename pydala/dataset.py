@@ -527,20 +527,27 @@ class BaseDataset:
         Writes the given DataFrame to the dataset.
 
         Args:
-            df (DataFrame | LazyFrame | Table | RecordBatch | pd.DataFrame | DuckDBPyConnection): The DataFrame to write.
-            mode (str, optional): The mode of writing. Can be "append", "delta", or "overwrite". Defaults to "append".
-            basename_template (str | None, optional): The template for the basename of the files. Defaults to None.
-            partitioning_columns (str | list[str] | None, optional): The columns used for partitioning. Defaults to None.
+            df (DataFrame | LazyFrame | Table | RecordBatch | pd.DataFrame | DuckDBPyConnection):
+                The DataFrame to write.
+            mode (str, optional): The mode of writing. Can be "append", "delta", or "overwrite".
+                Defaults to "append".
+            basename_template (str | None, optional): The template for the basename of the files.
+                Defaults to None.
+            partitioning_columns (str | list[str] | None, optional): The columns used for partitioning.
+                Defaults to None.
             max_rows_per_file (int | None, optional): The maximum number of rows per file. Defaults to 2,500,000.
             row_group_size (int | None, optional): The size of each row group. Defaults to 250,000.
             compression (str, optional): The compression algorithm. Defaults to "zstd".
-            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): The columns to sort by. Defaults to None.
-            unique (bool | str | list[str], optional): Whether to remove duplicate rows. Can be True, False, or a list of columns. Defaults to False.
+            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): The columns to sort by.
+                Defaults to None.
+            unique (bool | str | list[str], optional): Whether to remove duplicate rows. Can be True, False,
+                or a list of columns. Defaults to False.
             ts_unit (str, optional): The timestamp unit. Defaults to "us".
             tz (str | None, optional): The timezone. Defaults to None.
             remove_tz (bool, optional): Whether to remove the timezone. Defaults to False.
             use_large_string (bool, optional): Whether to use large strings. Defaults to False.
-            delta_subset (str | list[str] | None, optional): The subset of columns for delta computation. Defaults to None.
+            delta_subset (str | list[str] | None, optional): The subset of columns for delta computation.
+                Defaults to None.
             alter_schema (bool, optional): Whether to alter the schema. Defaults to False.
             timestamp_column (str | None, optional): The timestamp column. Defaults to None.
             **kwargs: Additional keyword arguments.

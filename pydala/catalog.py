@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-
+import re
 from munch import Munch
 
 from .dataset import ParquetDataset
@@ -100,6 +100,41 @@ class Catalog:
             ddb_con=self.ddb_con,
             **kwargs,
         )
+
+    def _ddb_table_mapping(self, name: str):
+        params = self.items.tables[name]
+
+        if params.path.endswith(params.format):
+            return {
+                name: f"read_{params.format}('{params.filesystem}://{params.path}') {name}"
+            }
+        else:
+            if hasattr(params, "partitioning_columns"):
+                return {
+                    name: f"read_{params.format}('{params.filesystem}://{params.path}/**/*.{params.format}', "
+                    f"hive_partitioning=True) {name}"
+                }
+            return {
+                name: f"read_{params.format}('{params.filesystem}://{params.path}/**/*.{params.format}') "
+                f"{name}"
+            }
+
+    def _replace_table_in_sql(self, sql: str, name: str, **kwargs):
+        table_mapping = self._ddb_table_mapping(name)
+        return re.sub(
+            rf"(FROM|JOIN)\s+({name}))(?=\s+|\s+AS|\s+ON)",
+            rf"\1 {table_mapping[name]}",
+            sql,
+            flags=re.IGNORECASE,
+        )
+
+    def _get_table_names(self, sql: str):
+        return re.findall(
+            r"(?:FROM|JOIN)\s+([a-zA-Z0-9_]+)", sql_query, flags=re.IGNORECASE
+        )
+
+    def sql(self, sql: str, hive_partitioning: bool = False, **kwargs):
+        return self.ddb_con.sql(sql, **kwargs)
 
     def load(self, name: Munch, **kwargs):
         if "parquet" in self.items.tables[name].type.lower():

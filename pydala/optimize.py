@@ -1,15 +1,12 @@
 import datetime as dt
-import os
 
 import duckdb as _duckdb
 import pyarrow as pa
-import pyarrow.dataset as pds
 import tqdm
 from fsspec import AbstractFileSystem
 
 from pydala.dataset import ParquetDataset
 from pydala.helpers.polars_ext import pl
-from pydala.table import PydalaTable
 
 
 class Optimize(ParquetDataset):
