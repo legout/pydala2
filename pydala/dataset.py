@@ -27,7 +27,7 @@ class BaseDataset:
         cached: bool = False,
         timestamp_column: str | None = None,
         ddb_con: _duckdb.DuckDBPyConnection | None = None,
-        **caching_options,
+        **fs_kwargs,
     ):
         self._path = path
         self._bucket = bucket
@@ -35,7 +35,7 @@ class BaseDataset:
         self._format = format
         self._base_filesystem = filesystem
         self._filesystem = FileSystem(
-            bucket=bucket, fs=filesystem, cached=cached, **caching_options
+            bucket=bucket, fs=filesystem, cached=cached, **fs_kwargs
         )
 
         if name is None:
@@ -634,7 +634,7 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
         cached: bool = False,
         timestamp_column: str | None = None,
         ddb_con: _duckdb.DuckDBPyConnection | None = None,
-        **caching_options,
+        **fs_kwargs,
     ):
         """
         Initialize a Dataset object.
@@ -660,7 +660,7 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
             filesystem=filesystem,
             bucket=bucket,
             cached=cached,
-            **caching_options,
+            **fs_kwargs,
         )
         BaseDataset.__init__(
             self,
@@ -672,7 +672,7 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
             cached=cached,
             timestamp_column=timestamp_column,
             ddb_con=ddb_con,
-            **caching_options,
+            **fs_kwargs,
         )
 
         if self.has_metadata:
@@ -1065,7 +1065,7 @@ class PyarrowDataset(BaseDataset):
         cached: bool = False,
         timestamp_column: str | None = None,
         ddb_con: _duckdb.DuckDBPyConnection | None = None,
-        **caching_options,
+        **fs_kwargs,
     ):
         super().__init__(
             path=path,
@@ -1077,11 +1077,11 @@ class PyarrowDataset(BaseDataset):
             cached=cached,
             timestamp_column=timestamp_column,
             ddb_con=ddb_con,
-            **caching_options,
+            **fs_kwargs,
         )
 
 
-class CSVDataset(PyarrowDataset):
+class CsvDataset(PyarrowDataset):
     def __init__(
         self,
         path: str,
@@ -1092,7 +1092,7 @@ class CSVDataset(PyarrowDataset):
         cached: bool = False,
         timestamp_column: str | None = None,
         ddb_con: _duckdb.DuckDBPyConnection | None = None,
-        **caching_options,
+        **fs_kwargs,
     ):
         super().__init__(
             path=path,
@@ -1104,5 +1104,48 @@ class CSVDataset(PyarrowDataset):
             cached=cached,
             timestamp_column=timestamp_column,
             ddb_con=ddb_con,
-            **caching_options,
+            **fs_kwargs,
         )
+
+
+class JsonDataset(BaseDataset):
+    def __init__(
+        self,
+        path: str,
+        name: str | None = None,
+        filesystem: AbstractFileSystem | None = None,
+        bucket: str | None = None,
+        partitioning: str | list[str] | None = None,
+        cached: bool = False,
+        timestamp_column: str | None = None,
+        ddb_con: _duckdb.DuckDBPyConnection | None = None,
+        **fs_kwargs,
+    ):
+        super().__init__(
+            path=path,
+            name=name,
+            filesystem=filesystem,
+            bucket=bucket,
+            partitioning=partitioning,
+            format="csv",
+            cached=cached,
+            timestamp_column=timestamp_column,
+            ddb_con=ddb_con,
+            **fs_kwargs,
+        )
+
+    def load(self):
+        self._arrow_dataset = pds.dataset(
+            self._filesystem.read_json_dataset(
+                self._path,
+            )
+        )
+        self.table = PydalaTable(result=self._arrow_dataset, ddb_con=self.ddb_con)
+
+        self.ddb_con.register(f"{self.name}_dataset", self._arrow_dataset)
+        # self.ddb_con.register("arrow__dataset", self._arrow_parquet_dataset)
+
+        if self._timestamp_column is None:
+            self._timestamp_columns = get_timestamp_column(self.table.pl.head(1))
+            if len(self._timestamp_columns) > 1:
+                self._timestamp_column = self._timestamp_columns[0]

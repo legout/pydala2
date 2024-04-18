@@ -1,155 +1,183 @@
 from dataclasses import dataclass
 import re
-from munch import Munch
+from munch import Munch, munchify, toYAML, from_yaml
 
-from .dataset import ParquetDataset
+from .dataset import ParquetDataset, PyarrowDataset, CsvDataset, JsonDataset
 from .filesystem import FileSystem
+from .helpers.sql import get_table_names, replace_table_names_with_file_paths
 import duckdb
+import yaml
+from fsspec import AbstractFileSystem
 
 
-@dataclass
+# @dataclass
 class Catalog:
-    items: Munch
-    ddb_con: duckdb.DuckDBPyConnection | None
+    def __init__(
+        self,
+        path: str,
+        ddb_con: duckdb.DuckDBPyConnection | None = None,
+        filesystem: AbstractFileSystem | None = None,
+        bucket: str | None = None,
+        **fs_kwargs,
+    ):
+        self._catalog_filesystem = FileSystem(bucket=bucket, fs=filesystem, **fs_kwargs)
 
-    def __post_init__(self):
+        with self._catalog_filesystem.open(path, "r") as f:
+            self._catalog = munchify(yaml.full_load(f))
+
+        self.ddb_con = ddb_con
         if self.ddb_con is None:
             self.ddb_con = duckdb.connect()
 
-        self.load_filesystems()
+        self._load_filesystems()
 
-    def load_filesystems(self):
-        if hasattr(self.items, "filesystem"):
-            self.filesystems = Munch()
-            for name in self.items.filesystem:
-                fs = FileSystem(**self.items.filesystem[name])
+    def _load_filesystems(self):
+        if hasattr(self._catalog, "filesystem"):
+            self.filesystem = Munch()
+
+            for name in self._catalog.filesystem:
+                fs = FileSystem(**self._catalog.filesystem[name])
                 type(fs).protocol = name
-                if self.item.filesystem[name].type != "file":
+
+                if self._catalog.filesystem[name].protocol != "file":
                     self.ddb_con.register_filesystem(fs)
 
-                self.filesystems[name] = fs
+                self.filesystem[name] = fs
         else:
-            self.filesystems = None
+            self.filesystem = None
 
-    def load_parquet(self, name: Munch, **kwargs):
-        params = self.items.tables[name]
+    @property
+    def list_tables(self):
+        return sorted(self._catalog.table.keys())
 
-        if "parquet" not in params.type.lower():
+    @property
+    def table(self):
+        return self._catalog.table
+
+    def show_table(self, name: str):
+        print(toYAML(self.table[name]))
+
+    @property
+    def list_filesystems(self):
+        return sorted(self._catalog.filesystem.keys())
+
+    @property
+    def name(self):
+        return self._catalog.name
+
+    def load_parquet(
+        self, name: Munch, as_dataset=True, with_metadata: bool = True, **kwargs
+    ):
+        params = self._catalog.table[name]
+
+        if "parquet" not in params.format.lower():
             return
+        if not as_dataset:
+            if params.path.endswith(".parquet"):
+                df = self.filesystem[params.filesystem].read_parquet(
+                    params.path, **kwargs
+                )
+                self.ddb_con.register(df, name)
+                return df
 
-        if "file" in params.type.lower():
-            return self.filesystems[params.filesystem].read_parquet(
+            df = self.filesystem[params.filesystem].read_parquet_dataset(
                 params.path, **kwargs
             )
+            self.ddb_con.register(df, name)
+            return df
 
-        return self.filesystems[params.filesystem].read_parquet_dataset(
-            params.path, **kwargs
-        )
+        if with_metadata:
+            return ParquetDataset(
+                params.path,
+                filesystem=self.filesystem[params.filesystem],
+                name=name,
+                ddb_con=self.ddb_con,
+                **kwargs,
+            )
 
-    def load_csv(self, name: Munch, **kwargs):
-        params = self.items.tables[name]
-
-        if "csv" not in params.type.lower():
-            return
-        if "file" in params.type.lower():
-            return self.filesystems[params.filesystem].read_csv(params.path, **kwargs)
-        return self.filesystems[params.filesystem].read_csv_dataset(
-            params.path, **kwargs
-        )
-
-    def load_json(self, name: Munch, **kwargs):
-        params = self.items.tables[name]
-
-        if "json" not in params.type.lower():
-            return
-
-        if "file" in params.type.lower():
-            return self.filesystems[params.filesystem].read_json(params.path, **kwargs)
-        return self.filesystems[params.filesystem].read_json_dataset(
-            params.path, **kwargs
-        )
-
-    def load_pyarrow_dataset(self, name: Munch, **kwargs):
-        params = self.items.tables[name]
-
-        if (
-            "parquet" not in params.type.lower()
-            and "csv" not in params.type.lower()
-            and "arrow" not in params.type.lower()
-        ):
-            return
-
-        return self.filesystems[params.filesystem].pyarrow_dataset(
-            params.path, **kwargs
-        )
-
-    def load_pydala_dataset(self, name: Munch, **kwargs):
-        params = self.items.tables[name]
-
-        if (
-            "parquet" not in params.type.lower()
-            and "pyarrow" not in params.type.lower()
-            and "pydala" not in params.type.lower()
-        ):
-            return
-
-        return ParquetDataset(
+        return PyarrowDataset(
             params.path,
-            filesystem=self.filesystems[params.filesystem],
+            filesystem=self.filesystem[params.filesystem],
             name=name,
             ddb_con=self.ddb_con,
             **kwargs,
         )
 
-    def _ddb_table_mapping(self, name: str):
-        params = self.items.tables[name]
+    def load_csv(self, name: Munch, as_dataset: bool = True, **kwargs):
+        params = self._catalog.table[name]
 
-        if params.path.endswith(params.format):
-            return {
-                name: f"read_{params.format}('{params.filesystem}://{params.path}') {name}"
-            }
-        else:
-            if hasattr(params, "partitioning_columns"):
-                return {
-                    name: f"read_{params.format}('{params.filesystem}://{params.path}/**/*.{params.format}', "
-                    f"hive_partitioning=True) {name}"
-                }
-            return {
-                name: f"read_{params.format}('{params.filesystem}://{params.path}/**/*.{params.format}') "
-                f"{name}"
-            }
+        if "csv" not in params.format.lower():
+            return
+        if not as_dataset:
+            if params.path.endswith(".csv"):
+                df = self.filesystem[params.filesystem].read_parquet(
+                    params.path, **kwargs
+                )
+                self.ddb_con.register(df, name)
+                return df
 
-    def _replace_table_in_sql(self, sql: str, name: str, **kwargs):
-        table_mapping = self._ddb_table_mapping(name)
-        return re.sub(
-            rf"(FROM|JOIN)\s+({name}))(?=\s+|\s+AS|\s+ON)",
-            rf"\1 {table_mapping[name]}",
-            sql,
-            flags=re.IGNORECASE,
+            df = self.filesystem[params.filesystem].read_parquet_dataset(
+                params.path, **kwargs
+            )
+            self.ddb_con.register(df, name)
+            return df
+
+        return CsvDataset(
+            params.path,
+            filesystem=self.filesystem[params.filesystem],
+            name=name,
+            ddb_con=self.ddb_con,
+            **kwargs,
         )
 
-    def _get_table_names(self, sql: str):
-        return re.findall(
-            r"(?:FROM|JOIN)\s+([a-zA-Z0-9_]+)", sql_query, flags=re.IGNORECASE
+    def load_json(self, name: Munch, as_dataset: bool = True, **kwargs):
+        params = self._catalog.table[name]
+
+        if "json" not in params.format.lower():
+            return
+        if not as_dataset:
+            if params.path.endswith(".json"):
+                df = self.filesystem[params.filesystem].read_json(params.path, **kwargs)
+                self.ddb_con.register(df, name)
+                return df
+
+            df = self.filesystem[params.filesystem].read_json_dataset(
+                params.path, **kwargs
+            )
+            self.ddb_con.register(df, name)
+            return df
+        return JsonDataset(
+            params.path,
+            filesystem=self.filesystem[params.filesystem],
+            name=name,
+            ddb_con=self.ddb_con,
+            **kwargs,
         )
 
-    def sql(self, sql: str, hive_partitioning: bool = False, **kwargs):
-        return self.ddb_con.sql(sql, **kwargs)
+    def load(
+        self, name: str, as_dataset: bool = True, with_metadata: bool = True, **kwargs
+    ):
+        params = self._catalog.table[name]
 
-    def load(self, name: Munch, **kwargs):
-        if "parquet" in self.items.tables[name].type.lower():
-            return self.load_parquet(name, **kwargs)
-        elif "csv" in self.items.tables[name].type.lower():
-            return self.load_csv(name, **kwargs)
-        elif "json" in self.items.tables[name].type.lower():
+        if params.format.lower() == "parquet":
+            return self.load_parquet(
+                name, as_dataset=as_dataset, with_metadata=with_metadata, **kwargs
+            )
+
+        elif params.format.lower() == "csv":
+            return self.load_csv(name, as_dataset=as_dataset, **kwargs)
+
+        elif params.format.lower() == "json":
             return self.load_json(name, **kwargs)
-        elif "pyarrow" in self.items.tables[name].type.lower():
-            return self.load_pyarrow_dataset(name, **kwargs)
-        elif "pydala" in self.items.tables[name].type.lower():
-            return self.load_pydala_dataset(name, **kwargs)
 
         return None
 
-    @property
-    def table_names(self):
-        return sorted(self.items.tables.keys())
+    def _ddb_table_mapping(self, name: str):
+        params = self._catalog.table[name]
+
+        return {name: [params.path, params.format, params.hive_partitioning]}
+
+    def sql(
+        self, sql: str, as_dataset: bool = True, with_metadata: bool = True, **kwargs
+    ):
+        table_names = get_table_names(sql)
