@@ -47,16 +47,23 @@ def get_new_file_names(src: list[str], dst: list[str]) -> list[str]:
     ]
 
 
-def read_parquet(self, path: str, **kwargs) -> pl.DataFrame:
+def read_parquet(
+    self, path: str, filename: bool = False, **kwargs
+) -> dict[str, pl.DataFrame] | pl.DataFrame:
     with self.open(path) as f:
-        return pl.from_arrow(read_table(f, fs=self, **kwargs))
+        data = pl.from_arrow(read_table(f, fs=self, **kwargs))
+
+    if filename:
+        return {path: data}
+
+    return data
 
 
 def read_parquet_schema(self, path: str, **kwargs) -> pa.Schema:
     return pq.read_schema(path, filesystem=self, **kwargs)
 
 
-def read_paruet_metadata(self, path: str, **kwargs) -> dict:
+def read_paruet_metadata(self, path: str, **kwargs) -> pq.FileMetaData:
     return pq.read_metadata(path, filesystem=self, **kwargs)
 
 
@@ -69,25 +76,41 @@ def read_json(
 ) -> dict | pl.DataFrame:
     with self.open(path) as f:
         data = msgspec.json.decode(f.read())
-        if as_dataframe:
-            data = pl.from_dicts(data)
-            if flatten:
-                data = data.explode_all().unnest_all()
 
-        if filename:
-            return {path: data}
+    if as_dataframe:
+        data = pl.from_dicts(data)
+        if flatten:
+            data = data.explode_all().unnest_all()
 
-        return data
+    if filename:
+        return {path: data}
+
+    return data
 
 
-def read_csv(self, path: str, **kwargs) -> pl.DataFrame:
+def read_csv(
+    self, path: str, filename: bool = False, **kwargs
+) -> dict[str, pl.DataFrame] | pl.DataFrame:
     with self.open(path) as f:
-        return pl.from_csv(f, **kwargs)
+        data = pl.from_csv(f, **kwargs)
+
+    if filename:
+        return {path: data}
+
+    return data
 
 
 def read_parquet_dataset(
-    self, path: str | list[str], concat: bool = True, **kwargs
-) -> pl.DataFrame | list[pl.DataFrame]:
+    self, path: str | list[str], concat: bool = True, filename: bool = False, **kwargs
+) -> (
+    dict[str, pl.DataFrame]
+    | pl.DataFrame
+    | list[dict[str, pl.DataFrame]]
+    | list[pl.DataFrame]
+):
+    if filename:
+        concat = False
+
     if isinstance(path, str):
         files = self.glob(os.path.join(path, "*.parquet"))
     else:
@@ -98,6 +121,7 @@ def read_parquet_dataset(
     dfs = run_parallel(self.read_parquet, files, **kwargs)
 
     dfs = pl.concat(dfs, how="diagonal_relaxed") if concat else dfs
+
     dfs = dfs[0] if len(dfs) == 1 else dfs
 
     return dfs
@@ -110,13 +134,22 @@ def read_json_dataset(
     as_dataframe: bool = True,
     flatten: bool = True,
     concat: bool = True,
-) -> dict | list[dict] | pl.DataFrame | list[pl.DataFrame]:
+) -> (
+    dict[str, pl.DataFrame]
+    | pl.DataFrame
+    | list[dict[str, pl.DataFrame]]
+    | list[pl.DataFrame]
+):
+    if filename:
+        concat = False
+
     if isinstance(path, str):
         files = self.glob(os.path.join(path, "*.json"))
     else:
         files = path
     if isinstance(files, str):
         files = [files]
+
     data = run_parallel(
         self.read_json,
         files,
@@ -125,7 +158,7 @@ def read_json_dataset(
         flatten=flatten,
     )
     if as_dataframe and concat:
-        pl.concat(data, how="diagonal_relaxed")
+        data = pl.concat(data, how="diagonal_relaxed")
 
     data = data[0] if len(data) == 1 else data
 
@@ -133,8 +166,16 @@ def read_json_dataset(
 
 
 def read_csv_dataset(
-    self, path: str | list[str], concat: bool = True, **kwargs
-) -> pl.DataFrame | list[pl.DataFrame]:
+    self, path: str | list[str], concat: bool = True, filename: bool = False, **kwargs
+) -> (
+    dict[str, pl.DataFrame]
+    | pl.DataFrame
+    | list[dict[str, pl.DataFrame]]
+    | list[pl.DataFrame]
+):
+    if filename:
+        concat = False
+
     if isinstance(path, str):
         files = self.glob(os.path.join(path, "*.csv"))
     else:
@@ -180,12 +221,6 @@ def pyarrow_parquet_dataset(
         schema=schema,
         **kwargs,
     )
-
-
-# def pydala_dataset(
-#     self, path: str, partitioning: str | None = None, **kwargs
-# ) -> ParquetDataset:
-#     return ParquetDataset(path=path, filesystem=self, **kwargs)
 
 
 def write_parquet(

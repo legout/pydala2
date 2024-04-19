@@ -1,10 +1,8 @@
-from dataclasses import dataclass
-import re
-from munch import Munch, munchify, toYAML, from_yaml
+from munch import Munch, munchify, toYAML
 
 from .dataset import ParquetDataset, PyarrowDataset, CsvDataset, JsonDataset
 from .filesystem import FileSystem
-from .helpers.sql import get_table_names, replace_table_names_with_file_paths
+from .helpers.sql import get_table_names
 import duckdb
 import yaml
 from fsspec import AbstractFileSystem
@@ -177,7 +175,22 @@ class Catalog:
 
         return {name: [params.path, params.format, params.hive_partitioning]}
 
+    @property
+    def registered_tables(self):
+        return self.ddb_con.sql("SHOW TABLES")
+
     def sql(
         self, sql: str, as_dataset: bool = True, with_metadata: bool = True, **kwargs
     ):
         table_names = get_table_names(sql)
+        registerd_tables = list(map(lambda x: x[0], self.registered_tables.fetchall()))
+
+        for name in table_names:
+            if name not in registerd_tables:
+                self.load(
+                    name, as_dataset=as_dataset, with_metadata=with_metadata, **kwargs
+                )
+
+        return self.ddb_con.sql(sql)
+
+    # def

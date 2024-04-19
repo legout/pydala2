@@ -119,7 +119,7 @@ class BaseDataset:
         )
         self.table = PydalaTable(result=self._arrow_dataset, ddb_con=self.ddb_con)
 
-        self.ddb_con.register(f"{self.name}_dataset", self._arrow_dataset)
+        self.ddb_con.register(f"{self.name}", self._arrow_dataset)
         # self.ddb_con.register("arrow__dataset", self._arrow_parquet_dataset)
 
         if self._timestamp_column is None:
@@ -197,7 +197,7 @@ class BaseDataset:
         Returns:
             int: The number of rows in the dataset.
         """
-        self.count_rows()
+        return self.count_rows()
 
     @property
     def num_columns(self) -> int:
@@ -242,7 +242,7 @@ class BaseDataset:
         Returns:
             pa.Schema: The partitioning schema of the dataset.
         """
-        if self.has_files:
+        if self.has_files and hasattr(self._arrow_dataset, "partitioning"):
             if not hasattr(self, "_partitioning_schema"):
                 if self.is_loaded:
                     self._partitioning_schema = self._arrow_dataset.partitioning.schema
@@ -260,7 +260,9 @@ class BaseDataset:
         """
 
         if self.has_files:
-            if not hasattr(self, "_partition_names"):
+            if not hasattr(self, "_partition_names") and hasattr(
+                self._arrow_dataset, "partitioning"
+            ):
                 if self.is_loaded:
                     self._partition_names = (
                         self._arrow_dataset.partitioning.schema.names
@@ -268,7 +270,7 @@ class BaseDataset:
                 else:
                     # print(f"No dataset loaded yet. Run {self}.load()")
                     return []
-            return self._partition_names
+                return self._partition_names
 
     @property
     def partition_values(self) -> dict:
@@ -279,7 +281,9 @@ class BaseDataset:
             list: A list of partitioning values.
         """
         if self.has_files:
-            if not hasattr(self, "_partition_values"):
+            if not hasattr(self, "_partition_values") and hasattr(
+                self._arrow_dataset, "partitioning"
+            ):
                 if self.is_loaded:
                     self._partition_values = dict(
                         zip(
@@ -309,7 +313,9 @@ class BaseDataset:
         """
         if self.has_files:
             if self._partitioning:
-                if not hasattr(self, "_partitions"):
+                if not hasattr(self, "_partitions") and hasattr(
+                    self._arrow_dataset, "partitioning"
+                ):
                     if self.is_loaded:
                         self._partitions = sorted(
                             {
@@ -437,14 +443,12 @@ class BaseDataset:
         # self.ddb_con = _duckdb.connect()
         self.interrupt_duckdb()
 
-        if f"{self.name}_table" not in self.registered_tables:
-            if len(self._table_files):
-                self.ddb_con.register(f"{self.name}_table", self._arrow_table)
+        if f"{self.name}" not in self.registered_tables:
+            if hasattr(self, "_arrow_table"):
+                self.ddb_con.register(f"{self.name}", self._arrow_table)
 
-        if f"{self.name}_dataset" not in self.registered_tables:
-            if hasattr(self, "_arrow_dataset"):
-                if len(self._arrow_dataset.files):
-                    self.ddb_con.register(f"{self.name}_dataset", self._arrow_dataset)
+            elif hasattr(self, "_arrow_dataset"):
+                self.ddb_con.register(f"{self.name}", self._arrow_dataset)
 
     def _get_delta_other_df(
         self,
@@ -680,6 +684,7 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
                 metadata=self.metadata, partitioning=partitioning, ddb_con=ddb_con
             )
             self.metadata_table.create_view(f"{self.name}_metadata")
+            self.ddb_con.unregister("metadata_table")
 
         try:
             self.load()
@@ -742,7 +747,7 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
 
             self.table = PydalaTable(result=self._arrow_dataset, ddb_con=self.ddb_con)
 
-            self.ddb_con.register(f"{self.name}_dataset", self._arrow_dataset)
+            self.ddb_con.register(f"{self.name}", self._arrow_dataset)
 
             if self._timestamp_column is None:
                 self._timestamp_columns = get_timestamp_column(self.table.pl.head(1))
@@ -1127,7 +1132,7 @@ class JsonDataset(BaseDataset):
             filesystem=filesystem,
             bucket=bucket,
             partitioning=partitioning,
-            format="csv",
+            format="json",
             cached=cached,
             timestamp_column=timestamp_column,
             ddb_con=ddb_con,
@@ -1139,10 +1144,12 @@ class JsonDataset(BaseDataset):
             self._filesystem.read_json_dataset(
                 self._path,
             )
+            .opt_dtype(strict=False)
+            .to_arrow()
         )
         self.table = PydalaTable(result=self._arrow_dataset, ddb_con=self.ddb_con)
 
-        self.ddb_con.register(f"{self.name}_dataset", self._arrow_dataset)
+        self.ddb_con.register(f"{self.name}", self._arrow_dataset)
         # self.ddb_con.register("arrow__dataset", self._arrow_parquet_dataset)
 
         if self._timestamp_column is None:
