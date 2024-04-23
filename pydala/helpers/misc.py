@@ -285,3 +285,84 @@ def humanized_size_to_bytes(size: str) -> float:
         return int(size * 1024**4)
     elif unit == "pb":
         return int(size * 1024**5)
+
+
+def getattr_rec(obj, attr_str):
+    """
+    Recursively retrieves an attribute from an object based on a dot-separated string.
+
+    Args:
+        obj: The object from which to retrieve the attribute.
+        attr_str: A dot-separated string representing the attribute to retrieve.
+
+    Returns:
+        The value of the attribute.
+
+    Raises:
+        AttributeError: If the attribute does not exist.
+    """
+    attrs = attr_str.split(".")
+    for attr in attrs:
+        obj = getattr(obj, attr)
+    return obj
+
+
+def setattr_rec(obj, attr_str, value):
+    """
+    Recursively sets the value of an attribute in an object.
+
+    Args:
+        obj (object): The object to set the attribute in.
+        attr_str (str): The attribute string in dot notation (e.g., "attr1.attr2.attr3").
+        value: The value to set the attribute to.
+
+    Returns:
+        None
+    """
+    attrs = attr_str.split(".")
+    for attr in attrs[:-1]:
+        obj = getattr(obj, attr)
+    setattr(obj, attrs[-1], value)
+
+
+def delattr_rec(obj, attr_str):
+    """
+    Recursively deletes an attribute from an object.
+
+    Args:
+        obj: The object from which to delete the attribute.
+        attr_str: A string representing the attribute to be deleted.
+                  The attribute can be nested using dot notation (e.g., 'attr1.attr2.attr3').
+
+    Raises:
+        AttributeError: If the attribute does not exist.
+
+    Example:
+        obj = SomeObject()
+        attr_str = 'attr1.attr2.attr3'
+        delattr_rec(obj, attr_str)
+    """
+    attrs = attr_str.split(".")
+    for attr in attrs[:-1]:
+        obj = getattr(obj, attr)
+    delattr(obj, attrs[-1])
+
+
+def get_nested_keys(d, parent_key=""):
+    """
+    Recursively retrieves all the nested keys from a dictionary.
+
+    Args:
+        d (dict): The dictionary to retrieve the keys from.
+        parent_key (str, optional): The parent key to prepend to the nested keys. Defaults to "".
+
+    Returns:
+        list: A list of all the nested keys in the dictionary.
+    """
+    keys = []
+    for k, v in d.items():
+        new_key = f"{parent_key}.{k}" if parent_key else k
+        keys.append(new_key)
+        if isinstance(v, dict):
+            keys.extend(get_nested_keys(v, new_key))
+    return keys

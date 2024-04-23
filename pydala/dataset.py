@@ -7,7 +7,7 @@ import pyarrow.dataset as pds
 from fsspec import AbstractFileSystem
 
 from .filesystem import FileSystem, clear_cache
-from .helpers.io import Writer
+from .io import Writer
 from .helpers.misc import get_timestamp_column, str2pyarrow_filter
 from .helpers.polars_ext import pl as _pl
 from .metadata import ParquetDatasetMetadata, PydalaDatasetMetadata
@@ -150,9 +150,10 @@ class BaseDataset:
         Returns:
             pyarrow.Schema: The schema of the dataset.
         """
-        if not hasattr(self, "_schema"):
-            self._schema = self._arrow_dataset.schema
-        return self._schema
+        if self.is_loaded:
+            if not hasattr(self, "_schema"):
+                self._schema = self._arrow_dataset.schema
+            return self._schema
 
     @property
     def is_loaded(self) -> bool:
@@ -169,7 +170,7 @@ class BaseDataset:
         Returns:
             list: A list of column names.
         """
-        if self.has_files:
+        if self.is_loaded:
             return self.schema.names
 
     def count_rows(self) -> int:
@@ -215,7 +216,7 @@ class BaseDataset:
             # print(f"No dataset loaded yet. Run {self}.load()")
             return 0
 
-    def delete_files(self, files: str | list[str] = None):
+    def delete_files(self, files: str | list[str]):
         """
         Deletes the specified files from the dataset.
 
@@ -223,12 +224,18 @@ class BaseDataset:
             files (str | list[str], optional): The file(s) to be deleted. If not provided, all files in the dataset
                 will be deleted. Defaults to None.
         """
-        if files is None:
-            files = self.files
+
         if self._path not in files[0]:
             files = [os.path.join(self._path, fn) for fn in files]
         self._filesystem.rm(files, recursive=True)
         # self.load(reload=True)
+
+    def vacuum(self):
+        """
+        Deletes all files in the dataset.
+        """
+        self.delete_files(self._files)
+        self.delete_metadata_files()
 
     @property
     def partitioning_schema(self) -> pa.Schema:
@@ -242,12 +249,15 @@ class BaseDataset:
         Returns:
             pa.Schema: The partitioning schema of the dataset.
         """
-        if self.has_files and hasattr(self._arrow_dataset, "partitioning"):
-            if not hasattr(self, "_partitioning_schema"):
-                if self.is_loaded:
-                    self._partitioning_schema = self._arrow_dataset.partitioning.schema
-                else:
-                    return pa.schema([])
+        if self.is_loaded:
+            if hasattr(self._arrow_dataset, "partitioning"):
+                if not hasattr(self, "_partitioning_schema"):
+                    if self.is_loaded:
+                        self._partitioning_schema = (
+                            self._arrow_dataset.partitioning.schema
+                        )
+                    else:
+                        return pa.schema([])
             return self._partitioning_schema
 
     @property
@@ -259,17 +269,12 @@ class BaseDataset:
             list: A list of partitioning names.
         """
 
-        if self.has_files:
+        if self.is_loaded:
             if not hasattr(self, "_partition_names") and hasattr(
                 self._arrow_dataset, "partitioning"
             ):
-                if self.is_loaded:
-                    self._partition_names = (
-                        self._arrow_dataset.partitioning.schema.names
-                    )
-                else:
-                    # print(f"No dataset loaded yet. Run {self}.load()")
-                    return []
+                self._partition_names = self._arrow_dataset.partitioning.schema.names
+
                 return self._partition_names
 
     @property
@@ -280,20 +285,17 @@ class BaseDataset:
         Returns:
             list: A list of partitioning values.
         """
-        if self.has_files:
-            if not hasattr(self, "_partition_values") and hasattr(
-                self._arrow_dataset, "partitioning"
-            ):
-                if self.is_loaded:
-                    self._partition_values = dict(
-                        zip(
-                            self._arrow_dataset.partitioning.schema.names,
-                            [
-                                pa_list.to_pylist()
-                                for pa_list in self._arrow_dataset.partitioning.dictionaries
-                            ],
-                        )
+        if self.is_loaded:
+            if hasattr(self._arrow_dataset, "partitioning"):
+                self._partition_values = dict(
+                    zip(
+                        self._arrow_dataset.partitioning.schema.names,
+                        [
+                            pa_list.to_pylist()
+                            for pa_list in self._arrow_dataset.partitioning.dictionaries
+                        ],
                     )
+                )
             else:
                 # print(f"No dataset loaded yet. Run {self}.load()")
                 return []
@@ -311,36 +313,34 @@ class BaseDataset:
         Returns:
             pa.Table: The partitions of the dataset as a pyarrow Table.
         """
-        if self.has_files:
+        if self.is_loaded:
             if self._partitioning:
                 if not hasattr(self, "_partitions") and hasattr(
                     self._arrow_dataset, "partitioning"
                 ):
-                    if self.is_loaded:
-                        self._partitions = sorted(
-                            {
-                                re.findall(
-                                    r"/".join(
-                                        [
-                                            f"{name}=([^/]+)"
-                                            for name in self._arrow_dataset.partitioning.schema.names
-                                        ]
-                                    ),
-                                    f,
-                                )[0]
-                                for f in self.files
-                            }
+                    self._partitions = sorted(
+                        {
+                            re.findall(
+                                r"/".join(
+                                    [
+                                        f"{name}=([^/]+)"
+                                        for name in self._arrow_dataset.partitioning.schema.names
+                                    ]
+                                ),
+                                f,
+                            )[0]
+                            for f in self.files
+                        }
+                    )
+                    self._partitions = (
+                        _pl.DataFrame(
+                            self._partitions,
+                            schema=self._arrow_dataset.partitioning.schema.names,
                         )
-                        self._partitions = (
-                            _pl.DataFrame(
-                                self._partitions,
-                                schema=self._arrow_dataset.partitioning.schema.names,
-                            )
-                            .to_arrow()
-                            .cast(self._arrow_dataset.partitioning.schema)
-                        )
-                    else:
-                        return pa.Table.from_pylist([])
+                        .to_arrow()
+                        .cast(self._arrow_dataset.partitioning.schema)
+                    )
+
                 return self._partitions
 
     def _filter_duckdb(self, filter_expr: str) -> _duckdb.DuckDBPyRelation:
@@ -369,7 +369,7 @@ class BaseDataset:
         Returns:
             pds.FileSystemDataset: The filtered PyArrow Parquet dataset.
         """
-        if self.has_files:
+        if self.is_loaded:
             if isinstance(filter_expr, str):
                 filter_expr = str2pyarrow_filter(filter_expr, self.schema)
             return self._arrow_dataset.filter(filter_expr)
@@ -567,7 +567,7 @@ class BaseDataset:
             return
 
         if self.partition_names:
-            partitioning_columns = self.partition_names.copy()
+            partitioning_columns = self.partition_names
 
         if timestamp_column is not None:
             self._timestamp_column = timestamp_column
@@ -599,7 +599,7 @@ class BaseDataset:
         if mode == "overwrite":
             del_files = [os.path.join(self._path, fn) for fn in self.files]
 
-        elif mode == "delta" and self.has_files:
+        elif mode == "delta" and self.is_loaded:
             writer._to_polars()
             other_df = self._get_delta_other_df(
                 writer.data,
@@ -985,7 +985,7 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
             return
 
         if self.partition_names:
-            partitioning_columns = self.partition_names.copy()
+            partitioning_columns = self.partition_names
 
         if timestamp_column is not None:
             self._timestamp_column = timestamp_column
@@ -1016,7 +1016,7 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
         if mode == "overwrite":
             del_files = [os.path.join(self._path, fn) for fn in self.files]
 
-        elif mode == "delta" and self.has_files:
+        elif mode == "delta" and self.is_loaded:
             writer._to_polars()
             other_df = self._get_delta_other_df(
                 writer.data,

@@ -12,7 +12,7 @@ from fsspec import AbstractFileSystem, filesystem
 from fsspec.implementations import cached as cachedfs
 from fsspec.implementations.dirfs import DirFileSystem
 
-from .helpers.io import read_table
+from .io import read_table
 from .helpers.misc import run_parallel
 from .schema import shrink_large_string
 

@@ -492,24 +492,25 @@ class ParquetDatasetMetadata:
             self.update_file_metadata()
         return self._file_metadata
 
-    @property
-    def schema(self):
-        """
-        Returns the Arrow schema for the dataset.
+    # @property
+    # def schema(self):
+    #     """
+    #     Returns the Arrow schema for the dataset.
 
-        If the dataset has metadata, the schema includes both the metadata and the data schema.
-        Otherwise, the schema only includes the data schema.
+    #     If the dataset has metadata, the schema includes both the metadata and the data schema.
+    #     Otherwise, the schema only includes the data schema.
 
-        Returns:
-            pyarrow.Schema: The Arrow schema for the dataset.
-        """
-        if not hasattr(self, "_schema"):
-            self._schema = self.metadata.schema.to_arrow_schema()
-            if self.has_metadata:
-                self._file_schema = self.metadata.schema.to_arrow_schema()
-            else:
-                self._file_schema = pa.schema([])
-        return self._schema
+    #     Returns:
+    #         pyarrow.Schema: The Arrow schema for the dataset.
+    #     """
+    #     if self.has_files:
+    #         if not hasattr(self, "_schema"):
+    #             self._schema = self.metadata.schema.to_arrow_schema()
+    #             if self.has_metadata:
+    #                 self._file_schema = self.metadata.schema.to_arrow_schema()
+    #             else:
+    #                 self._file_schema = pa.schema([])
+    #         return self._schema
 
     @property
     def file_schema(self):
@@ -617,8 +618,8 @@ class PydalaDatasetMetadata:
         """
         self._metadata_table_scanned = None
 
-    def gen_metadata_table(
-        self,
+    @staticmethod
+    def _gen_metadata_table(
         metadata: pq.FileMetaData | list[pq.FileMetaData],
         partitioning: None | str | list[str] = None,
     ):
@@ -659,7 +660,16 @@ class PydalaDatasetMetadata:
                     if "statistics" in rgc:
                         rgc.update(rgc.pop("statistics"))
                     metadata_table[col_name].append(rgc)
+        return metadata_table
 
+    def gen_metadata_table(
+        self,
+        metadata: pq.FileMetaData | list[pq.FileMetaData],
+        partitioning: None | str | list[str] = None,
+    ):
+        metadata_table = self._gen_metadata_table(
+            metadata=metadata, partitioning=partitioning
+        )
         # self._metadata_table = pa.Table.from_pydict(metadata_table)
         self._metadata_table = self.ddb_con.from_arrow(
             pa.Table.from_pydict(metadata_table)

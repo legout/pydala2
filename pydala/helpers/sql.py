@@ -1,18 +1,22 @@
+from sqlglot import parse_one, exp
 import sqlparse
+
+# def get_table_names(sql_query):
+#     table_names = set()
+#     parsed_query = sqlparse.parse(sql_query)[0]
+
+#     for token in parsed_query.tokens:
+#         if isinstance(token, sqlparse.sql.IdentifierList):
+#             for identifier in token.get_identifiers():
+#                 table_names.add(identifier.get_real_name())
+#         elif isinstance(token, sqlparse.sql.Identifier):
+#             table_names.add(token.get_real_name())
+
+#     return table_names
 
 
 def get_table_names(sql_query):
-    table_names = set()
-    parsed_query = sqlparse.parse(sql_query)[0]
-
-    for token in parsed_query.tokens:
-        if isinstance(token, sqlparse.sql.IdentifierList):
-            for identifier in token.get_identifiers():
-                table_names.add(identifier.get_real_name())
-        elif isinstance(token, sqlparse.sql.Identifier):
-            table_names.add(token.get_real_name())
-
-    return table_names
+    return [table.name for table in parse_one(sql_query).find_all(exp.Table)]
 
 
 def replace_table_names_with_file_paths(sql_query, table_to_path_mapping):

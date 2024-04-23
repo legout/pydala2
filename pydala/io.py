@@ -4,19 +4,19 @@ import uuid
 
 import duckdb
 import pandas as pd
-import polars as pl
 import polars.selectors as cs
 import pyarrow as pa
 import pyarrow.dataset as pds
+
 # import pyarrow.dataset as pds
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 from fsspec import filesystem as fsspec_filesystem
 
-from ..schema import convert_timestamp, replace_schema, shrink_large_string
-from ..table import PydalaTable
-from .misc import get_partitions_from_path, get_timestamp_column
-from .polars_ext import pl
+from .schema import convert_timestamp, replace_schema, shrink_large_string
+from .table import PydalaTable
+from .helpers.misc import get_partitions_from_path, get_timestamp_column
+from .helpers.polars_ext import pl
 
 
 def read_table(
@@ -146,7 +146,7 @@ class Writer:
         )
         self.base_path = path
         self.path = None
-        self.filesystem = filesystem
+        self._filesystem = filesystem
 
     def _to_polars(self):
         """
@@ -178,7 +178,7 @@ class Writer:
         elif isinstance(self.data, pd.DataFrame):
             self.data = pa.Table.from_pandas(self.data)
         elif isinstance(self.data, duckdb.DuckDBPyRelation):
-            self.data = self.data.to_arrow()
+            self.data = self.data.arrow()
 
     def _set_schema(self):
         """
@@ -200,8 +200,10 @@ class Writer:
         Args:
             by (str | list[str] | list[tuple[str, str]] | None): The column(s) to sort by.
                 If a single string is provided, the data will be sorted in ascending order based on that column.
-                If a list of strings is provided, the data will be sorted in ascending order based on each column in the list.
-                If a list of tuples is provided, each tuple should contain a column name and a sort order ("ascending" or "descending").
+                If a list of strings is provided, the data will be sorted in ascending order based on each
+                    column in the list.
+                If a list of tuples is provided, each tuple should contain a column name and a sort order
+                    ("ascending" or "descending").
                 If None is provided, the data will not be sorted.
 
         Returns:
@@ -361,19 +363,28 @@ class Writer:
         self._to_arrow()
         # self.data.cast(self.schema)
         if basename_template is None:
-            basename_template = f"data-{dt.datetime.now().strftime('%Y%m%d_%H%M%S%f')[:-3]}-{uuid.uuid4().hex[:16]}-{{i}}.parquet"
+            basename_template = (
+                "data-"
+                f"{dt.datetime.now().strftime('%Y%m%d_%H%M%S%f')[:-3]}-{uuid.uuid4().hex[:16]}-{{i}}.parquet"
+            )
         else:
             basename_template = f"{basename_template}-{{i}}.parquet"
-        print("max_rows_per_file", max_rows_per_file)
-        print("row_group_size", row_group_size)
+        # print("max_rows_per_file", max_rows_per_file)
+        # print("row_group_size", row_group_size)
         file_options = pds.ParquetFileFormat().make_write_options(
             compression=compression
         )
+        if self._filesystem.protocol == "dir":
+            if "local" in self._filesystem.fs.protocol:
+                create_dir = True
+        else:
+            if "local" in self._filesystem.protocol:
+                create_dir = True
 
         pds.write_dataset(
             self.data,
             base_dir=self.base_path,
-            filesystem=self.filesystem,
+            filesystem=self._filesystem,
             file_options=file_options,
             partitioning=partitioning_columns,
             partitioning_flavor=partitioning_flavor,
