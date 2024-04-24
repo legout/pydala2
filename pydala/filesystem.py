@@ -50,8 +50,7 @@ def get_new_file_names(src: list[str], dst: list[str]) -> list[str]:
 def read_parquet(
     self, path: str, filename: bool = False, **kwargs
 ) -> dict[str, pl.DataFrame] | pl.DataFrame:
-    with self.open(path) as f:
-        data = pl.from_arrow(read_table(f, filesystem=self, **kwargs))
+    data = pl.from_arrow(read_table(path, filesystem=self, **kwargs))
 
     if filename:
         return {path: data}

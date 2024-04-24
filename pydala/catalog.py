@@ -136,6 +136,14 @@ class Catalog:
     def show_filesystem(self, identifier: str) -> None:
         print(toYAML(self._catalog.filesystem[identifier]))
 
+    def files(self, identifier: str) -> list[str]:
+        params = self._get_table_params(identifier=identifier)
+        return sorted(
+            self._filesystem[params.filesystem].glob(
+                params.path + f"/**/*.{params.format}"
+            )
+        )
+
     def load_parquet(
         self, identifier: str, as_dataset=True, with_metadata: bool = True, **kwargs
     ) -> ParquetDataset | PyarrowDataset | pl.DataFrame | None:
@@ -230,6 +238,8 @@ class Catalog:
             ddb_con=self.ddb_con,
             **kwargs,
         )
+        
+    def 
 
     def load(
         self,

@@ -1,4 +1,3 @@
-name: trace_data
 filesystem:
   mdsp: &filesystem_mdsp
     bucket: datalake-prod-a-sagewn-1595245204497/data/ten=sagewn
