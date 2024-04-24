@@ -1,6 +1,6 @@
 import os
 
-import pyarrow.filesystem as pfs
+import pyarrow.fs as pfs
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 
