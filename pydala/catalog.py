@@ -238,8 +238,6 @@ class Catalog:
             ddb_con=self.ddb_con,
             **kwargs,
         )
-        
-    def 
 
     def load(
         self,
