@@ -49,9 +49,7 @@ def unnest_all(df: pl.DataFrame, seperator="_", fields: list[str] | None = None)
             ]
         ).unnest(struct_columns)
 
-    struct_columns = [
-        col for col in df.columns if df[col].dtype == pl.Struct
-    ]  # noqa: F821
+    struct_columns = [col for col in df.columns if df[col].dtype == pl.Struct]  # noqa: F821
     while len(struct_columns):
         df = _unnest_all(struct_columns=struct_columns)
         struct_columns = [col for col in df.columns if df[col].dtype == pl.Struct]
@@ -451,6 +449,10 @@ def partition_by(
     return [({}, df)]
 
 
+def drop_null_columns(df: pl.DataFrame | pl.LazyFrame) -> pl.DataFrame | pl.LazyFrame:
+    return df.select([col for col in df.columns if not df[col].is_null().all()])
+
+
 pl.DataFrame.unnest_all = unnest_all
 pl.DataFrame.explode_all = explode_all
 pl.DataFrame.opt_dtype = opt_dtype
@@ -460,6 +462,7 @@ pl.DataFrame.with_duration_columns = with_truncated_columns
 pl.DataFrame.with_striftime_columns = with_strftime_columns
 pl.DataFrame.delta = delta
 pl.DataFrame.partition_by_ext = partition_by
+pl.DataFrame.drop_null_columns = drop_null_columns
 
 pl.LazyFrame.unnest_all = unnest_all
 pl.LazyFrame.explode_all = explode_all
@@ -470,3 +473,4 @@ pl.LazyFrame.with_duration_columns = with_truncated_columns
 pl.LazyFrame.with_striftime_columns = with_strftime_columns
 pl.LazyFrame.delta = delta
 pl.LazyFrame.partition_by_ext = partition_by
+pl.LazyFrame.drop_null_columns = drop_null_columns
