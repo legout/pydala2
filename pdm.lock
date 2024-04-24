@@ -5,7 +5,7 @@
 groups = ["default", "dev", "legacy", "msgpack"]
 strategy = ["cross_platform"]
 lock_version = "4.4.1"
-content_hash = "sha256:c4cc24d8306001dbadd8f8fe2e226ea4b4994dfa38b2294fb54501d1e2aa53b0"
+content_hash = "sha256:44b22b392cf17b3cb95ce303f8b1cbe1372ca4406b977d234cf064a49a63567e"
 
 [[package]]
 name = "aiobotocore"
@@ -2232,12 +2232,12 @@ files = [
 
 [[package]]
 name = "sqlglot"
-version = "23.10.0"
+version = "23.11.2"
 requires_python = ">=3.7"
 summary = "An easily customizable SQL parser and transpiler"
 files = [
-    {file = "sqlglot-23.10.0-py3-none-any.whl", hash = "sha256:519ea26007688bbc831939c0c6125762ad5c71339df1ac8184a64d762f75684c"},
-    {file = "sqlglot-23.10.0.tar.gz", hash = "sha256:b80a35de7716464de89cc77678d0a7f972e4a8acaaa7cefcdc6db05ffeb6c951"},
+    {file = "sqlglot-23.11.2-py3-none-any.whl", hash = "sha256:816d045304c3bd2a3ac907953e3540a4aa8f3fb19c124bd56be0c3010ae3851f"},
+    {file = "sqlglot-23.11.2.tar.gz", hash = "sha256:abb31d2924f615f95e5ff2e597e3fd2cc909e8d259b75a1d9bce6c1750649a37"},
 ]
 
 [[package]]
