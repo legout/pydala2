@@ -381,6 +381,13 @@ class Writer:
             if "local" in self._filesystem.protocol:
                 create_dir = True
 
+        if hasattr(self._filesystem, "fs"):
+            if "local" in self._filesystem.fs.protocol:
+                create_dir = True
+        else:
+            if "local" in self._filesystem.protocol:
+                create_dir = True
+
         pds.write_dataset(
             self.data,
             base_dir=self.base_path,
