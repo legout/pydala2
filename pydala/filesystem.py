@@ -117,7 +117,7 @@ def read_parquet_dataset(
     if isinstance(files, str):
         files = [files]
 
-    dfs = run_parallel(self.read_parquet, files, **kwargs)
+    dfs = run_parallel(self.read_parquet, files, filename, **kwargs)
 
     dfs = pl.concat(dfs, how="diagonal_relaxed") if concat else dfs
 
