@@ -566,7 +566,7 @@ class BaseDataset:
         if df.shape[0] == 0:
             return
 
-        if self.partition_names:
+        if not partitioning_columns and self.partition_names:
             partitioning_columns = self.partition_names
 
         if timestamp_column is not None:
@@ -984,7 +984,7 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
         if df.shape[0] == 0:
             return
 
-        if self.partition_names:
+        if not partitioning_columns and self.partition_names:
             partitioning_columns = self.partition_names
 
         if timestamp_column is not None:
