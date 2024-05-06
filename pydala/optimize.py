@@ -345,11 +345,12 @@ class Optimize(ParquetDataset):
         ts_unit: str | None = None,  # "us",
         tz: str | None = None,
         use_large_string: bool = False,
+        infer_schema_size: int = 10_000,
         **kwargs,
     ):
         optimized_schema = (
             self.table.pl.drop(self.partition_names)
-            .head(1000)
+            .head(infer_schema_size)
             .opt_dtype(strict=strict, exclude=exclude, include=include)
             .collect()
             .to_arrow()
