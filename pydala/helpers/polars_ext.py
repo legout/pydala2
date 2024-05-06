@@ -57,60 +57,64 @@ def unnest_all(df: pl.DataFrame, seperator="_", fields: list[str] | None = None)
 
 
 def _opt_dtype(s: pl.Series, strict: bool = True) -> pl.Series:
-    try:
-        if (
-            s.str.contains(r"^[0-9,\.-]{1,}$") | s.is_null() | s.str.contains(r"^$")
-        ).all() and s.dtype != pl.Date():
-            s = (
-                s.str.replace_all(",", ".")
-                .str.replace_all("^0{1,}$", "+0")
-                .str.strip_chars_start("0")
-                .str.replace_all(r"\.0*$", "")
-            )
-            if s.dtype == pl.Utf8():
-                s = s.set(s == "-", None)
-                s = s.set(s == "", None)
+    if s.dtype == pl.Utf8():
+        try:
+            s = s.set(s == "-", None).set(s == "", None).set(s == "None", None)
+
+            # cast string numbers to int or float
             if (
-                s.str.contains(r"\.").any()
-                # | s.is_null().any() # null / None is valid in Int
-                # | s.str.contains("^$").any()
-                | s.str.contains("NaN").any()
-            ):
+                s.str.contains(r"^[0-9,\.-]{1,}$") | s.is_null() | s.str.contains(r"^$")
+            ).all():
                 s = (
-                    # s.str.replace("^$", pl.lit("NaN"))
-                    s.cast(pl.Float64(), strict=True).shrink_dtype()
+                    s.str.replace_all(",", ".")
+                    # .str.replace_all("^0{1,}$", "+0")
+                    .str.strip_chars_start("0")
+                    .str.replace_all(r"\.0*$", "")
                 )
-            else:
-                if (s.str.lengths() > 0).all():
+
+                if s.str.contains(r"\.").any() | s.str.contains("NaN").any():
+                    s = s.cast(pl.Float64(), strict=True).shrink_dtype()
+                else:
+                    # if (s.str.lengths() > 0).all():
                     s = s.cast(pl.Int64(), strict=True).shrink_dtype()
-        # cast str to datetime
-        elif (
-            s.str.contains(r"^\d{4}-\d{2}-\d{2}$")
-            | s.str.contains(r"^\d{1,2}\/\d{1,2}\/\d{4}$")
-            | s.str.contains(
-                r"^\d{4}-\d{2}-\d{2}T{0,1}\s{0,1}\d{2}:\d{2}:\d{0,2}.\d{0,}$"
-            )
-            | s.str.contains(
-                r"^\d{4}-\d{2}-\d{2}T{0,1}\s{0,1}\d{2}:\d{2}:\d{2}\.\d{0,}$"
-            )
-            | s.str.contains(
-                r"^\d{4}-\d{2}-\d{2}T{0,1}\s{0,1}\d{2}:\d{2}:\d{2}\.\d{1,}\w{0,1}\+\d{0,2}:\d{0,2}:\d{0,2}$"
-            )
-            | s.is_null()
-            | s.str.contains("^$")
-        ).all() and s.dtype == pl.Utf8():
-            s = pl.Series(name=s.name, values=pd.to_datetime(s)).cast(pl.Datetime("us"))
 
-        elif s.str.contains("^[T,t]rue|[F,f]alse$").all():
-            s = s.str.contains("^[T,t]rue$", strict=True)
+            # cast str to datetime
 
-    except Exception as e:
-        if strict:
-            e.add_note(
-                "if you were trying to cast Utf8 to temporal dtypes, consider using `strptime`"
-                " or setting `strict=False`"
-            )
-            raise e
+            elif (
+                s.str.contains(r"^\d{4}-\d{2}-\d{2}$")
+                | s.str.contains(r"^\d{1,2}\/\d{1,2}\/\d{4}$")
+                | s.str.contains(
+                    r"^\d{4}-\d{2}-\d{2}T{0,1}\s{0,1}\d{2}:\d{2}(:\d{2})?.\d{0,}$"
+                )
+                | s.str.contains(
+                    r"^\d{4}-\d{2}-\d{2}T{0,1}\s{0,1}\d{2}:\d{2}(:\d{2})?\.\d{0,}$"
+                )
+                | s.str.contains(
+                    r"^\d{4}-\d{2}-\d{2}T{0,1}\s{0,1}\d{2}:\d{2}(:\d{2})?\.\d{1,}\w{0,1}\+\d{0,2}:\d{0,2}:\d{0,2}$"
+                )
+                | s.is_null()
+                | s.str.contains("^$")
+            ).all():
+                s = pl.Series(
+                    name=s.name, values=pd.to_datetime(s, format="mixed")
+                ).cast(pl.Datetime("us"))
+
+            # cast str to bool
+            elif (
+                s.str.to_lowercase()
+                .str.contains("^(true|false|1|0|wahr|falsch)$")
+                .all()
+            ):
+                s = s.str.to_lowercase().str.contains("^(true|1|wahr)$", strict=True)
+
+        except Exception as e:
+            if strict:
+                e.add_note(
+                    "if you were trying to cast Utf8 to temporal dtypes, consider setting `strict=False`"
+                )
+                raise e
+    else:
+        s = s.shrink_dtype()
 
     return s
 
