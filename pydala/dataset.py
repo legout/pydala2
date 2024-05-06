@@ -1043,7 +1043,7 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
             self.delete_files(del_files)
             if update_metadata:
                 self.load(update_metadata=True, verbose=False)
-                self.update_metada_table()
+                self.update_metadata_table()
 
         else:
             if update_metadata:
@@ -1052,7 +1052,7 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
                 except Exception as e:
                     _ = e
                     self.load(reload_metadata=True, verbose=False)
-                self.update_metada_table()
+                self.update_metadata_table()
 
         self.clear_cache()
         self.load_files()
