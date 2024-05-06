@@ -372,7 +372,8 @@ class Optimize(ParquetDataset):
             )
 
         self.clear_cache()
-        self.load(update_metadata=True)
+
+        self.load(reload_metadata=True)
         self.gen_metadata_table()
 
 
