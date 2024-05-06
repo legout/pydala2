@@ -299,26 +299,24 @@ class Optimize(ParquetDataset):
         include: str | list[str] | None = None,
         ts_unit: str | None = None,  # "us",
         tz: str | None = None,
-        use_large_string: bool = False,
         **kwargs,
     ):
         scan = self.scan(f"file_path='{file_path}'")
-        schema = (
-            scan.pl.drop(self.partition_names)
-            .head(1000)
-            .opt_dtype(strict=strict, exclude=exclude, include=include)
-            .collect()
-            .to_arrow()
-            .schema
+        schema = scan.arrow_dataset.schame
+        schema = pa.schema(
+            [
+                field
+                for field in scan.arrow_dataset.schema
+                if field.name not in scan.arrow_dataset.partitioning.schema.names
+            ]
         )
+
         if schema != optimized_schema:
             table = replace_schema(
                 scan.pl.opt_dtype(strict=strict, exclude=exclude, include=include)
                 .collect(streaming=True)
                 .to_arrow(),
-                schema=optimized_schema
-                if use_large_string
-                else shrink_large_string(optimized_schema),
+                schema=optimized_schema,
                 ts_unit=ts_unit,
                 tz=tz,
             )
@@ -329,7 +327,6 @@ class Optimize(ParquetDataset):
                 update_metadata=False,
                 ts_unit=ts_unit,  # "us",
                 tz=tz,
-                use_large_string=use_large_string,
                 alter_schema=True,
                 **kwargs,
             )
@@ -357,6 +354,8 @@ class Optimize(ParquetDataset):
             .to_arrow()
             .schema
         )
+        if not use_large_string:
+            optimized_schema = shrink_large_string(optimized_schema)
 
         for file_path in tqdm.tqdm(self.files):
             self._optimize_dtypes(

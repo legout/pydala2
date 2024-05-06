@@ -811,6 +811,7 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
             result=pds.dataset(
                 self.scan_files,
                 filesystem=self._filesystem,
+                format=self._format,
                 partitioning=self._partitioning,
             ),
             ddb_con=self.ddb_con,
