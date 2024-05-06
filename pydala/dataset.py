@@ -131,6 +131,10 @@ class BaseDataset:
             if len(self._timestamp_columns) > 1:
                 self._timestamp_column = self._timestamp_columns[0]
 
+        if self._timestamp_column is not None:
+            tz = self.schema.field(self._timestamp_column).type.tz
+            self.ddb_con.execute(f"SET timezone='{tz}'")
+
     def clear_cache(self) -> None:
         """
         Clears the cache for the dataset.

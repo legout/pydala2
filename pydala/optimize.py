@@ -43,6 +43,7 @@ class Optimize(ParquetDataset):
         distinct: bool = False,
         compression: str = "zstd",
         row_group_size: int | None = 250_000,
+        unique: bool = True,
         **kwargs,
     ):
         if isinstance(partition, str):
@@ -74,7 +75,7 @@ class Optimize(ParquetDataset):
                     row_group_size=row_group_size,
                     compression=compression,
                     update_metadata=False,
-                    unique=True,
+                    unique=unique,
                     **kwargs,
                 )
 
@@ -89,6 +90,7 @@ class Optimize(ParquetDataset):
         distinct: bool = False,
         compression: str = "zstd",
         row_group_size: int | None = 250_000,
+        unique: bool = True,
         **kwargs,
     ) -> None:
         for partition in tqdm.tqdm(self.partitions.to_pylist()):
@@ -99,6 +101,7 @@ class Optimize(ParquetDataset):
                 distinct=distinct,
                 compression=compression,
                 row_group_size=row_group_size,
+                unique=unique,
                 **kwargs,
             )
 
@@ -289,6 +292,11 @@ class Optimize(ParquetDataset):
         self.update()
         self.load()
 
+
+    def optimize_dtypes(self, exclude: str | list[str] | None = None,
+    strict: bool = True,
+    include: str | list[str] | None = None,):
+        
 
 #        self.gen_metadata_table()
 
