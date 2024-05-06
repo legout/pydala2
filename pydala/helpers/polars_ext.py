@@ -73,7 +73,7 @@ def _opt_dtype(s: pl.Series, strict: bool = True) -> pl.Series:
                     .str.strip_chars_start("0")
                     .str.replace_all(r"\.0*$", "")
                 )
-
+                s = s.set(s == "-", None).set(s == "", None).set(s == "None", None)
                 if s.str.contains(r"\.").any() | s.str.contains("NaN").any():
                     s = s.cast(pl.Float64(), strict=True).shrink_dtype()
                 else:
