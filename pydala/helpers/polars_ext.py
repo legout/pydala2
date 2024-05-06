@@ -63,7 +63,9 @@ def _opt_dtype(s: pl.Series, strict: bool = True) -> pl.Series:
 
             # cast string numbers to int or float
             if (
-                s.str.contains(r"^[0-9,\.-]{1,}$") | s.is_null() | s.str.contains(r"^$")
+                s.str.contains(r"^[-+]?[0-9]*[.,]?[0-9]+([eE][-+]?[0-9]+)?$")
+                | s.is_null()
+                | s.str.contains(r"^$")
             ).all():
                 s = (
                     s.str.replace_all(",", ".")
