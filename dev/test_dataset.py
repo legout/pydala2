@@ -1,6 +1,6 @@
 import pyarrow.dataset as pds
 import pickle
-from pydala.helpers.metadata import collect_parquet_metadata
+from pydala.helpers._metadata import collect_parquet_metadata
 import os
 import glob
 import pyarrow.parquet as pq

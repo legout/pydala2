@@ -705,7 +705,10 @@ class PydalaDatasetMetadata:
             self.ddb_con = duckdb.connect()
         else:
             self.ddb_con = ddb_con
-        self.gen_metadata_table(metadata=metadata, partitioning=partitioning)
+        try:
+            self.gen_metadata_table(metadata=metadata, partitioning=partitioning)
+        except Exception as e:
+            print(e)
 
     def reset_scan(self):
         """
