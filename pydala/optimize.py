@@ -306,9 +306,9 @@ class Optimize(ParquetDataset):
         scan = self.scan(f"file_path='{file_path}'")
 
         table = replace_schema(
-            scan.pl.opt_dtype(
-                strict=strict, exclude=exclude, include=include
-            ).to_arrow(),
+            scan.pl.opt_dtype(strict=strict, exclude=exclude, include=include)
+            .collect(streaming=True)
+            .to_arrow(),
             schema=optimized_schema,
             ts_unit=ts_unit,
             tz=tz,
