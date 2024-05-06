@@ -7,7 +7,7 @@ from fsspec import AbstractFileSystem
 
 from pydala.dataset import ParquetDataset
 from pydala.helpers.polars_ext import pl
-from pydala.schema import replace_schema
+from pydala.schema import replace_schema, shrink_large_string
 
 
 class Optimize(ParquetDataset):
@@ -304,29 +304,38 @@ class Optimize(ParquetDataset):
         **kwargs,
     ):
         scan = self.scan(f"file_path='{file_path}'")
-
-        table = replace_schema(
-            scan.pl.opt_dtype(strict=strict, exclude=exclude, include=include)
-            .collect(streaming=True)
-            .to_arrow(),
-            schema=optimized_schema,
-            ts_unit=ts_unit,
-            tz=tz,
-            use_large_string=use_large_string,
-            sort=sort,
+        schema = (
+            scan.pl.drop(self.partition_names)
+            .head(1000)
+            .opt_dtype(strict=strict, exclude=exclude, include=include)
+            .collect()
+            .to_arrow()
+            .schema
         )
+        if schema != optimized_schema:
+            table = replace_schema(
+                scan.pl.opt_dtype(strict=strict, exclude=exclude, include=include)
+                .collect(streaming=True)
+                .to_arrow(),
+                schema=optimized_schema
+                if use_large_string
+                else shrink_large_string(optimized_schema),
+                ts_unit=ts_unit,
+                tz=tz,
+                sort=sort,
+            )
 
-        self.write_to_dataset(
-            table,
-            mode="append",
-            update_metadata=False,
-            ts_unit=ts_unit,  # "us",
-            tz=tz,
-            use_large_string=use_large_string,
-            **kwargs,
-        )
+            self.write_to_dataset(
+                table,
+                mode="append",
+                update_metadata=False,
+                ts_unit=ts_unit,  # "us",
+                tz=tz,
+                use_large_string=use_large_string,
+                **kwargs,
+            )
 
-        self.delete_files(self.scan_files)
+            self.delete_files(self.scan_files)
 
         self.reset_scan()
 
