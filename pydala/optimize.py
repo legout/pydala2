@@ -300,7 +300,6 @@ class Optimize(ParquetDataset):
         ts_unit: str | None = None,  # "us",
         tz: str | None = None,
         use_large_string: bool = False,
-        sort: bool | list[str] = False,
         **kwargs,
     ):
         scan = self.scan(f"file_path='{file_path}'")
@@ -322,7 +321,6 @@ class Optimize(ParquetDataset):
                 else shrink_large_string(optimized_schema),
                 ts_unit=ts_unit,
                 tz=tz,
-                sort=sort,
             )
 
             self.write_to_dataset(
@@ -347,7 +345,6 @@ class Optimize(ParquetDataset):
         ts_unit: str | None = None,  # "us",
         tz: str | None = None,
         use_large_string: bool = False,
-        sort: bool | list[str] = False,
         **kwargs,
     ):
         optimized_schema = (
@@ -369,7 +366,6 @@ class Optimize(ParquetDataset):
                 ts_unit=ts_unit,
                 tz=tz,
                 use_large_string=use_large_string,
-                sort=sort,
                 **kwargs,
             )
 
