@@ -302,7 +302,7 @@ class Optimize(ParquetDataset):
         **kwargs,
     ):
         scan = self.scan(f"file_path='{file_path}'")
-        schema = scan.arrow_dataset.schame
+        schema = scan.arrow_dataset.schema
         schema = pa.schema(
             [
                 field
