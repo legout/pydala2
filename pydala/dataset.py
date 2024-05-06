@@ -279,7 +279,7 @@ class BaseDataset:
             ):
                 self._partition_names = self._arrow_dataset.partitioning.schema.names
 
-                return self._partition_names
+            return self._partition_names
 
     @property
     def partition_values(self) -> dict:
