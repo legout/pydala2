@@ -330,6 +330,7 @@ class Optimize(ParquetDataset):
                 ts_unit=ts_unit,  # "us",
                 tz=tz,
                 use_large_string=use_large_string,
+                alter_schema=True,
                 **kwargs,
             )
 
