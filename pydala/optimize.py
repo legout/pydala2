@@ -292,11 +292,15 @@ class Optimize(ParquetDataset):
         self.update()
         self.load()
 
+    def optimize_dtypes(
+        self,
+        exclude: str | list[str] | None = None,
+        strict: bool = True,
+        include: str | list[str] | None = None,
+    ):
+        # optimizes_schema = self.table.
+        pass
 
-    def optimize_dtypes(self, exclude: str | list[str] | None = None,
-    strict: bool = True,
-    include: str | list[str] | None = None,):
-        
 
 #        self.gen_metadata_table()
 
