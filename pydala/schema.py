@@ -447,30 +447,33 @@ def repair_schema(
             sort=sort,
         )
 
+        files = [f for f in files if schemas[f] != schema]
+
     if ts_unit is not None or tz is not None:
         schema = convert_timestamp(schema, unit=ts_unit, tz=tz)
 
     if not use_large_string:
         schema = shrink_large_string(schema)
 
-    files = [f for f in files if schemas[f] != schema]
-
     def _repair_schema(f, schema, filesystem):
-        table = replace_schema(
-            pq.read_table(f, filesystem=filesystem),
-            schema=schema,
-            ts_unit=ts_unit,
-            tz=tz,
-            alter_schema=alter_schema,
-        )
-        pq.write_table(
-            table,
-            f,
-            filesystem=filesystem,
-            coerce_timestamps=ts_unit,
-            allow_truncated_timestamps=True,
-            **kwargs,
-        )
+        file_schema = pq.read_schema(f, filesystem=filesystem)
+
+        if file_schema != schema:
+            table = replace_schema(
+                pq.read_table(f, filesystem=filesystem),
+                schema=schema,
+                ts_unit=ts_unit,
+                tz=tz,
+                alter_schema=alter_schema,
+            )
+            pq.write_table(
+                table,
+                f,
+                filesystem=filesystem,
+                coerce_timestamps=ts_unit,
+                allow_truncated_timestamps=True,
+                **kwargs,
+            )
 
     _ = run_parallel(
         _repair_schema,
