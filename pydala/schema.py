@@ -269,8 +269,10 @@ def _unify_schemas(
         file_schemas_equal = False
 
     else:
-        #all_names = list(set(schema1.names + schema2.names))
-        all_names = schema1.names + [name for name in schema2.names if name not in schema1.names]
+        # all_names = list(set(schema1.names + schema2.names))
+        all_names = schema1.names + [
+            name for name in schema2.names if name not in schema1.names
+        ]
         file_schemas_equal = False
 
     if sort:
@@ -279,9 +281,6 @@ def _unify_schemas(
         elif isinstance(sort, list):
             sort = [name for name in sort if name in all_names]
             all_names = sort + [name for name in all_names if name not in sort]
-    else:
-        
-            
 
     schema = []
     for name in all_names:
