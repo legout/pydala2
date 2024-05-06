@@ -2,6 +2,15 @@ import datetime as dt
 import re
 
 import pendulum as pdl
+import polars as pl
+import pyarrow as pa
+import polars.selectors as cs
+
+
+def get_timestamp_column(df: pl.DataFrame | pl.LazyFrame | pa.Table) -> str | list[str]:
+    if isinstance(df, pa.Table):
+        df = pl.from_arrow(df)
+    return df.select(cs.datetime() | cs.date()).columns
 
 
 def get_timedelta_str(timedelta_string: str, to: str = "polars") -> str:

@@ -8,8 +8,9 @@ from fsspec import AbstractFileSystem
 
 from .filesystem import FileSystem, clear_cache
 from .io import Writer
-from .helpers.misc import get_timestamp_column, str2pyarrow_filter
+from .helpers.misc import str2pyarrow_filter
 from .helpers.polars_ext import pl as _pl
+from .helpers.datetime import get_timestamp_column
 from .metadata import ParquetDatasetMetadata, PydalaDatasetMetadata
 from .table import PydalaTable
 # from .optimize import Optimize
@@ -58,6 +59,9 @@ class BaseDataset:
                 self._partitioning = "hive"
             else:
                 self._partitioning = partitioning
+        else:
+            self._partitioning = partitioning
+
         try:
             self.load()
         except Exception as e:

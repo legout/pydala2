@@ -183,13 +183,11 @@ def str2pyarrow_filter(string: str, schema: pa.Schema):
 
 
 def get_timestamp_column(df: pl.DataFrame | pl.LazyFrame | pa.Table) -> str | list[str]:
+    import polars.selectors as cs
+
     if isinstance(df, pa.Table):
         df = pl.from_arrow(df)
-    return [
-        name
-        for name, type_ in df.schema.items()
-        if type_ in [pl.Time(), pl.Datetime(), pl.Date()]
-    ]
+    return df.select(cs.datetime() | cs.date()).columns
 
 
 def run_parallel(

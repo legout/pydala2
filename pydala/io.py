@@ -15,7 +15,8 @@ from fsspec import filesystem as fsspec_filesystem
 
 from .schema import convert_timestamp, replace_schema, shrink_large_string
 from .table import PydalaTable
-from .helpers.misc import get_partitions_from_path, get_timestamp_column
+from .helpers.misc import get_partitions_from_path
+from .helpers.datetime import get_timestamp_column
 from .helpers.polars_ext import pl
 
 
