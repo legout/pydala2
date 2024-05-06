@@ -447,13 +447,13 @@ def repair_schema(
             sort=sort,
         )
 
-        files = [f for f in files if schemas[f] != schema]
-
     if ts_unit is not None or tz is not None:
         schema = convert_timestamp(schema, unit=ts_unit, tz=tz)
 
     if not use_large_string:
         schema = shrink_large_string(schema)
+
+    files = [f for f in files if schemas[f] != schema]
 
     def _repair_schema(f, schema, filesystem):
         table = replace_schema(

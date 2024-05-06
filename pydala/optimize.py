@@ -7,6 +7,7 @@ from fsspec import AbstractFileSystem
 
 from pydala.dataset import ParquetDataset
 from pydala.helpers.polars_ext import pl
+from pydala.schema import replace_schema
 
 
 class Optimize(ParquetDataset):
@@ -40,7 +41,6 @@ class Optimize(ParquetDataset):
         partition: str | list[str],
         max_rows_per_file: int | None = 2_500_000,
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
-        distinct: bool = False,
         compression: str = "zstd",
         row_group_size: int | None = 250_000,
         unique: bool = True,
@@ -65,7 +65,7 @@ class Optimize(ParquetDataset):
 
         if (len(self.scan_files) > 1) or (num_rows > max_rows_per_file):
             batches = scan.to_duckdb(
-                sort_by=sort_by, distinct=distinct
+                sort_by=sort_by, distinct=unique
             ).fetch_arrow_reader(batch_size=max_rows_per_file)
             for batch in batches:
                 self.write_to_dataset(
@@ -87,7 +87,6 @@ class Optimize(ParquetDataset):
         self,
         max_rows_per_file: int | None = 2_500_000,
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
-        distinct: bool = False,
         compression: str = "zstd",
         row_group_size: int | None = 250_000,
         unique: bool = True,
@@ -98,7 +97,6 @@ class Optimize(ParquetDataset):
                 partition=partition,
                 max_rows_per_file=max_rows_per_file,
                 sort_by=sort_by,
-                distinct=distinct,
                 compression=compression,
                 row_group_size=row_group_size,
                 unique=unique,
@@ -118,7 +116,7 @@ class Optimize(ParquetDataset):
         row_group_size: int | None = 250_000,
         compression: str = "zstd",
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
-        distinct: bool = False,
+        unique: bool = False,
         **kwargs,
     ):
         filter_ = f"{timestamp_column} >= '{start_date}' AND {timestamp_column} < '{end_date}'"
@@ -139,7 +137,7 @@ class Optimize(ParquetDataset):
         if (len(self.scan_files) > 1) or (date_diff > end_date - start_date):
             files_to_delete += self.scan_files
             batches = (
-                scan.to_duckdb(sort_by=sort_by, distinct=distinct)
+                scan.to_duckdb(sort_by=sort_by, distinct=unique)
                 .filter(filter_)
                 .fetch_arrow_reader(batch_size=max_rows_per_file)
             )
@@ -152,7 +150,7 @@ class Optimize(ParquetDataset):
                     row_group_size=row_group_size,
                     compression=compression,
                     update_metadata=False,
-                    unique=True,
+                    unique=unique,
                     **kwargs,
                 )
         self.reset_scan()
@@ -164,7 +162,7 @@ class Optimize(ParquetDataset):
         timestamp_column: str | None = None,
         max_rows_per_file: int | None = 2_500_000,
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
-        distinct: bool = False,
+        unique: bool = False,
         compression="zstd",
         row_group_size: int | None = 250_000,
         **kwargs,
@@ -208,7 +206,7 @@ class Optimize(ParquetDataset):
                 row_group_size=row_group_size,
                 compression=compression,
                 sort_by=sort_by,
-                distinct=distinct,
+                unique=unique,
                 **kwargs,
             )
             files_to_delete += files_to_delete_
@@ -222,7 +220,7 @@ class Optimize(ParquetDataset):
         self,
         max_rows_per_file: int | None = 2_500_000,
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
-        distinct: bool = False,
+        unique: bool = False,
         compression: str = "zstd",
         row_group_size: int | None = 250_000,
         **kwargs,
@@ -231,7 +229,7 @@ class Optimize(ParquetDataset):
             self.compact_partitions(
                 max_rows_per_file=max_rows_per_file,
                 sort_by=sort_by,
-                distinct=distinct,
+                unique=unique,
                 compression=compression,
                 row_group_size=row_group_size,
                 **kwargs,
@@ -240,7 +238,7 @@ class Optimize(ParquetDataset):
             scan = self.scan(f"num_rows!={max_rows_per_file}")
 
             batches = scan.to_duckdb(
-                sort_by=sort_by, distinct=distinct
+                sort_by=sort_by, distinct=unique
             ).fetch_arrow_reader(batch_size=max_rows_per_file)
 
             for batch in tqdm.tqdm(batches):
@@ -251,7 +249,7 @@ class Optimize(ParquetDataset):
                     row_group_size=row_group_size,
                     compression=compression,
                     update_metadata=False,
-                    unique=True,
+                    unique=unique,
                     **kwargs,
                 )
             self.delete_files(self.scan_files)
@@ -265,13 +263,13 @@ class Optimize(ParquetDataset):
         partitioning_falvor: str = "hive",
         max_rows_per_file: int | None = 2_500_000,
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
-        distinct: bool = False,
+        unique: bool = False,
         compression="zstd",
         row_group_size: int | None = 250_000,
         **kwargs,
     ):
         batches = self.to_duckdb(
-            sort_by=sort_by, distintinct=distinct
+            sort_by=sort_by, distintinct=unique
         ).fetch_arrow_reader(batch_size=max_rows_per_file)
 
         for batch in tqdm.tqdm(batches):
@@ -284,7 +282,7 @@ class Optimize(ParquetDataset):
                 row_group_size=min(max_rows_per_file, row_group_size),
                 compression=compression,
                 update_metadata=False,
-                unique=True,
+                unique=unique,
                 **kwargs,
             )
         self.delete_files(self.files)
@@ -292,17 +290,83 @@ class Optimize(ParquetDataset):
         self.update()
         self.load()
 
+    def _optimize_dtypes(
+        self,
+        file_path: str,
+        optimized_schema: pa.Schema,
+        exclude: str | list[str] | None = None,
+        strict: bool = True,
+        include: str | list[str] | None = None,
+        ts_unit: str | None = None,  # "us",
+        tz: str | None = None,
+        use_large_string: bool = False,
+        sort: bool | list[str] = False,
+        **kwargs,
+    ):
+        scan = self.scan(f"file_path='{file_path}'")
+
+        table = replace_schema(
+            scan.pl.opt_dtype(
+                strict=strict, exclude=exclude, include=include
+            ).to_arrow(),
+            schema=optimized_schema,
+            ts_unit=ts_unit,
+            tz=tz,
+            use_large_string=use_large_string,
+            sort=sort,
+        )
+
+        self.write_to_dataset(
+            table,
+            mode="append",
+            update_metadata=False,
+            ts_unit=ts_unit,  # "us",
+            tz=tz,
+            use_large_string=use_large_string,
+            **kwargs,
+        )
+
+        self.delete_files(self.scan_files)
+
+        self.reset_scan()
+
     def optimize_dtypes(
         self,
         exclude: str | list[str] | None = None,
         strict: bool = True,
         include: str | list[str] | None = None,
+        ts_unit: str | None = None,  # "us",
+        tz: str | None = None,
+        use_large_string: bool = False,
+        sort: bool | list[str] = False,
+        **kwargs,
     ):
-        # optimizes_schema = self.table.
-        pass
+        optimized_schema = (
+            self.table.pl.drop(self.partition_names)
+            .head(1000)
+            .opt_dtype(strict=strict, exclude=exclude, include=include)
+            .collect()
+            .to_arrow()
+            .schema
+        )
 
+        for file_path in tqdm.tqdm(self.files):
+            self._optimize_dtypes(
+                file_path=file_path,
+                optimized_schema=optimized_schema,
+                exclude=exclude,
+                strict=strict,
+                include=include,
+                ts_unit=ts_unit,
+                tz=tz,
+                use_large_string=use_large_string,
+                sort=sort,
+                **kwargs,
+            )
 
-#        self.gen_metadata_table()
+        self.clear_cache()
+        self.load(update_metadata=True)
+        self.gen_metadata_table()
 
 
 ParquetDataset.compact_partitions = Optimize.compact_partitions
@@ -311,3 +375,5 @@ ParquetDataset.compact_by_timeperiod = Optimize.compact_by_timeperiod
 ParquetDataset._compact_by_timeperiod = Optimize._compact_by_timeperiod
 ParquetDataset.compact_by_rows = Optimize.compact_by_rows
 ParquetDataset.repartition = Optimize.repartition
+ParquetDataset._optimize_dtypes = Optimize._optimize_dtypes
+ParquetDataset.optimize_dtypes = Optimize.optimize_dtypes
