@@ -174,7 +174,7 @@ class BaseDataset:
         """
         Returns True if the dataset has been loaded into memory, False otherwise.
         """
-        return hasattr(self, "table")
+        return hasattr(self, "_arrow_dataset")
 
     @property
     def columns(self) -> list:
