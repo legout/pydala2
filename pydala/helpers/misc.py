@@ -2,7 +2,6 @@ import os
 import re
 
 import pendulum as pdl
-import polars as pl
 import pyarrow as pa
 import pyarrow.compute as pc
 import tqdm
@@ -180,14 +179,6 @@ def str2pyarrow_filter(string: str, schema: pa.Schema):
             expr = expr | ~_parse_part(part)
 
     return expr
-
-
-def get_timestamp_column(df: pl.DataFrame | pl.LazyFrame | pa.Table) -> str | list[str]:
-    import polars.selectors as cs
-
-    if isinstance(df, pa.Table):
-        df = pl.from_arrow(df)
-    return df.select(cs.datetime() | cs.date()).columns
 
 
 def run_parallel(
