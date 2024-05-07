@@ -11,13 +11,9 @@ import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 
 from .filesystem import FileSystem, clear_cache
-
 # from .helpers.metadata import collect_parquet_metadata  # , remove_from_metadata
-from .helpers.misc import get_partitions_from_path
+from .helpers.misc import get_partitions_from_path, run_parallel
 from .schema import repair_schema, unify_schemas
-
-
-from .helpers.misc import run_parallel
 
 
 def collect_parquet_metadata(

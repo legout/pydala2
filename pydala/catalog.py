@@ -1,13 +1,15 @@
-from munch import Munch, munchify, toYAML, unmunchify
-
-from .dataset import ParquetDataset, PyarrowDataset, CsvDataset, JsonDataset
-from .filesystem import FileSystem
-from .helpers.sql import get_table_names
-from .helpers.misc import getattr_rec, setattr_rec, delattr_rec, get_nested_keys
 import duckdb
 import yaml
 from fsspec import AbstractFileSystem
+from munch import Munch, munchify, toYAML, unmunchify
+
 from pydala.helpers.polars_ext import pl
+
+from .dataset import CsvDataset, JsonDataset, ParquetDataset, PyarrowDataset
+from .filesystem import FileSystem
+from .helpers.misc import (delattr_rec, get_nested_keys, getattr_rec,
+                           setattr_rec)
+from .helpers.sql import get_table_names
 
 
 # @dataclass

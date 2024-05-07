@@ -1,5 +1,5 @@
-from sqlglot import parse_one, exp
 import sqlparse
+from sqlglot import exp, parse_one
 
 # def get_table_names(sql_query):
 #     table_names = set()

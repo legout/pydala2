@@ -1,5 +1,6 @@
 import os
 import re
+
 import duckdb as _duckdb
 import pandas as pd
 import pyarrow as pa
@@ -7,12 +8,13 @@ import pyarrow.dataset as pds
 from fsspec import AbstractFileSystem
 
 from .filesystem import FileSystem, clear_cache
-from .io import Writer
+from .helpers.datetime import get_timestamp_column
 from .helpers.misc import str2pyarrow_filter
 from .helpers.polars_ext import pl as _pl
-from .helpers.datetime import get_timestamp_column
+from .io import Writer
 from .metadata import ParquetDatasetMetadata, PydalaDatasetMetadata
 from .table import PydalaTable
+
 # from .optimize import Optimize
 
 

@@ -12,8 +12,8 @@ from fsspec import AbstractFileSystem, filesystem
 from fsspec.implementations import cached as cachedfs
 from fsspec.implementations.dirfs import DirFileSystem
 
-from .io import read_table
 from .helpers.misc import run_parallel
+from .io import read_table
 from .schema import shrink_large_string
 
 

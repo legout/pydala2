@@ -3,8 +3,8 @@ import re
 
 import pendulum as pdl
 import polars as pl
-import pyarrow as pa
 import polars.selectors as cs
+import pyarrow as pa
 
 
 def get_timestamp_column(df: pl.DataFrame | pl.LazyFrame | pa.Table) -> str | list[str]:
