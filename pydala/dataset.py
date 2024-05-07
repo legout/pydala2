@@ -124,7 +124,7 @@ class BaseDataset:
                 format=self._format,
                 partitioning=self._partitioning,
             )
-
+            self.table = PydalaTable(result=self._arrow_dataset, ddb_con=self.ddb_con)
             # self.ddb_con.register("arrow__dataset", self._arrow_parquet_dataset)
 
             if self._timestamp_column is None:
@@ -138,8 +138,6 @@ class BaseDataset:
                 self.ddb_con.execute(f"SET timezone='{tz}'")
             else:
                 self._tz = None
-
-            self.table = PydalaTable(result=self._arrow_dataset, ddb_con=self.ddb_con)
 
             self.ddb_con.register(f"{self.name}", self._arrow_dataset)
 
@@ -761,6 +759,8 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
                 filesystem=self._filesystem,
             )
 
+            self.table = PydalaTable(result=self._arrow_dataset, ddb_con=self.ddb_con)
+
             if self._timestamp_column is None:
                 self._timestamp_columns = get_timestamp_column(self.table.pl.head(1))
                 if len(self._timestamp_columns) > 1:
@@ -771,8 +771,6 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
                 self.ddb_con.execute(f"SET timezone='{tz}'")
             else:
                 self._tz = None
-
-            self.table = PydalaTable(result=self._arrow_dataset, ddb_con=self.ddb_con)
 
             self.ddb_con.register(f"{self.name}", self._arrow_dataset)
 
