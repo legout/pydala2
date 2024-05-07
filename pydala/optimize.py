@@ -332,7 +332,7 @@ class Optimize(ParquetDataset):
             )
 
             self.delete_files(self.scan_files)
-            self._collect_file_metadata(self.scan_files)
+            self.update_file_metadata()
 
         self.reset_scan()
 
