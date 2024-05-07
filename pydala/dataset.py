@@ -350,6 +350,7 @@ class BaseDataset:
                         _pl.DataFrame(
                             self._partitions,
                             schema=self._arrow_dataset.partitioning.schema.names,
+                            orient="row",
                         )
                         .to_arrow()
                         .cast(self._arrow_dataset.partitioning.schema)
