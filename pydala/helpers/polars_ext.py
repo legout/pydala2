@@ -3,8 +3,7 @@ from functools import partial
 import pandas as pd
 import polars as pl
 
-from .datetime import get_timedelta_str
-from .misc import get_timestamp_column
+from .datetime import get_timedelta_str, get_timestamp_column
 
 # import string
 
