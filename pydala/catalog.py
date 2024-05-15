@@ -127,7 +127,7 @@ class Catalog:
             t.split(".path")[0] for t in get_nested_keys(self._tables) if "path" in t
         ]
 
-    def show_table(self, identifier: str) -> None:
+    def show_tables(self, identifier: str) -> None:
         print(toYAML(eval(f"self._tables.{identifier}")))
 
     @property
