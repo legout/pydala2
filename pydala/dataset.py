@@ -129,8 +129,7 @@ class BaseDataset:
 
             if self._timestamp_column is None:
                 self._timestamp_columns = get_timestamp_column(self.table.pl.head(10))
-                if len(self._timestamp_columns) > 1:
-                    self._timestamp_column = self._timestamp_columns[0]
+                self._timestamp_column = self._timestamp_columns[0]
 
             if self._timestamp_column is not None:
                 tz = self.schema.field(self._timestamp_column).type.tz
@@ -765,8 +764,7 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
 
             if self._timestamp_column is None:
                 self._timestamp_columns = get_timestamp_column(self.table.pl.head(10))
-                if len(self._timestamp_columns) > 1:
-                    self._timestamp_column = self._timestamp_columns[0]
+                self._timestamp_column = self._timestamp_columns[0]
             if self._timestamp_column is not None:
                 tz = self.schema.field(self._timestamp_column).type.tz
                 self._tz = tz
