@@ -7,8 +7,7 @@ from pydala.helpers.polars_ext import pl
 
 from .dataset import CsvDataset, JsonDataset, ParquetDataset, PyarrowDataset
 from .filesystem import FileSystem
-from .helpers.misc import (delattr_rec, get_nested_keys, getattr_rec,
-                           setattr_rec)
+from .helpers.misc import delattr_rec, get_nested_keys, getattr_rec, setattr_rec
 from .helpers.sql import get_table_names
 
 
@@ -99,7 +98,7 @@ class Catalog:
         return getattr_rec(self._tables, identifier)
 
     def _set_table_params(self, identifier: str, **fields):
-        if identifier in self.list_tables:
+        if identifier in self.all_tables:
             getattr_rec(
                 self._tables,
                 identifier,
@@ -123,7 +122,7 @@ class Catalog:
         return self._namespace
 
     @property
-    def list_tables(self) -> list[str]:
+    def all_tables(self) -> list[str]:
         return [
             t.split(".path")[0] for t in get_nested_keys(self._tables) if "path" in t
         ]
@@ -132,7 +131,7 @@ class Catalog:
         print(toYAML(self._tables[identifier]))
 
     @property
-    def list_filesystems(self) -> list[str]:
+    def all_filesystems(self) -> list[str]:
         return sorted(self._catalog.filesystem.keys())
 
     def show_filesystem(self, identifier: str) -> None:
@@ -312,7 +311,7 @@ class Catalog:
     ):
         if namespace is not None and namespace not in identifier:
             identifier = f"{namespace}.{identifier}"
-        if identifier in self.list_tables:
+        if identifier in self.all_tables:
             if not overwrite:
                 raise Exception(
                     f"Table {identifier} already exists. Use overwrite=True to overwrite"
@@ -336,7 +335,7 @@ class Catalog:
                 if namespace not in identifier:
                     identifier = f"{namespace}.{identifier}"
 
-        if identifier in self.list_tables:
+        if identifier in self.all_tables:
             if vacuum:
                 self.load(identifier).vacuum()
 
