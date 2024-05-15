@@ -128,7 +128,7 @@ class BaseDataset:
             # self.ddb_con.register("arrow__dataset", self._arrow_parquet_dataset)
 
             if self._timestamp_column is None:
-                self._timestamp_columns = get_timestamp_column(self.table.pl.head(1))
+                self._timestamp_columns = get_timestamp_column(self.table.pl.head(10))
                 if len(self._timestamp_columns) > 1:
                     self._timestamp_column = self._timestamp_columns[0]
 
@@ -764,7 +764,7 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
             self.table = PydalaTable(result=self._arrow_dataset, ddb_con=self.ddb_con)
 
             if self._timestamp_column is None:
-                self._timestamp_columns = get_timestamp_column(self.table.pl.head(1))
+                self._timestamp_columns = get_timestamp_column(self.table.pl.head(10))
                 if len(self._timestamp_columns) > 1:
                     self._timestamp_column = self._timestamp_columns[0]
             if self._timestamp_column is not None:
@@ -1177,6 +1177,6 @@ class JsonDataset(BaseDataset):
         # self.ddb_con.register("arrow__dataset", self._arrow_parquet_dataset)
 
         if self._timestamp_column is None:
-            self._timestamp_columns = get_timestamp_column(self.table.pl.head(1))
+            self._timestamp_columns = get_timestamp_column(self.table.pl.head(10))
             if len(self._timestamp_columns) > 1:
                 self._timestamp_column = self._timestamp_columns[0]
