@@ -128,7 +128,7 @@ class Catalog:
         ]
 
     def show_table(self, identifier: str) -> None:
-        print(toYAML(self._tables[identifier]))
+        print(toYAML(eval(f"self._tables.{identifier}")))
 
     @property
     def all_filesystems(self) -> list[str]:
