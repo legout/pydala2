@@ -135,7 +135,8 @@ class BaseDataset:
             if self._timestamp_column is not None:
                 tz = self.schema.field(self._timestamp_column).type.tz
                 self._tz = tz
-                self.ddb_con.execute(f"SET TimeZone='{tz}'")
+                if tz is not None:
+                    self.ddb_con.execute(f"SET TimeZone='{tz}'")
             else:
                 self._tz = None
 
@@ -769,7 +770,8 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
             if self._timestamp_column is not None:
                 tz = self.schema.field(self._timestamp_column).type.tz
                 self._tz = tz
-                self.ddb_con.execute(f"SET TimeZone='{tz}'")
+                if tz is not None:
+                    self.ddb_con.execute(f"SET TimeZone='{tz}'")
             else:
                 self._tz = None
 
