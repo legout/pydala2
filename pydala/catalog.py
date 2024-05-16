@@ -72,7 +72,8 @@ class Catalog:
             for name in self._catalog.filesystem:
                 if self._catalog.filesystem[name].protocol in ["file", "local"]:
                     self._catalog.filesystem[name].bucket = os.path.join(
-                        self._catalog_path, self._catalog.filesystem[name].bucket
+                        os.path.dirname(self._catalog_path),
+                        self._catalog.filesystem[name].bucket,
                     )
                 fs = FileSystem(**self._catalog.filesystem[name])
                 type(fs).protocol = name
