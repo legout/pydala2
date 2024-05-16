@@ -518,13 +518,21 @@ class BaseDataset:
 
     def write_to_dataset(
         self,
-        df: (
+        data: (
             _pl.DataFrame
             | _pl.LazyFrame
             | pa.Table
             | pa.RecordBatch
             | pd.DataFrame
             | _duckdb.DuckDBPyConnection
+            | list[
+                _pl.DataFrame
+                | _pl.LazyFrame
+                | pa.Table
+                | pa.RecordBatch
+                | pd.DataFrame
+                | _duckdb.DuckDBPyConnection
+            ]
         ),
         mode: str = "append",  # "delta", "overwrite"
         basename_template: str | None = None,
@@ -544,43 +552,45 @@ class BaseDataset:
         **kwargs,
     ):
         """
-        Writes the given DataFrame to the dataset.
+        Writes the given data to the dataset.
 
-        Args:
-            df (DataFrame | LazyFrame | Table | RecordBatch | pd.DataFrame | DuckDBPyConnection):
-                The DataFrame to write.
-            mode (str, optional): The mode of writing. Can be "append", "delta", or "overwrite".
-                Defaults to "append".
-            basename_template (str | None, optional): The template for the basename of the files.
-                Defaults to None.
-            partitioning_columns (str | list[str] | None, optional): The columns used for partitioning.
-                Defaults to None.
-            max_rows_per_file (int | None, optional): The maximum number of rows per file. Defaults to 2,500,000.
-            row_group_size (int | None, optional): The size of each row group. Defaults to 250,000.
-            compression (str, optional): The compression algorithm. Defaults to "zstd".
-            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): The columns to sort by.
-                Defaults to None.
-            unique (bool | str | list[str], optional): Whether to remove duplicate rows. Can be True, False,
-                or a list of columns. Defaults to False.
-            ts_unit (str, optional): The timestamp unit. Defaults to "us".
-            tz (str | None, optional): The timezone. Defaults to None.
-            remove_tz (bool, optional): Whether to remove the timezone. Defaults to False.
-            use_large_string (bool, optional): Whether to use large strings. Defaults to False.
-            delta_subset (str | list[str] | None, optional): The subset of columns for delta computation.
-                Defaults to None.
-            alter_schema (bool, optional): Whether to alter the schema. Defaults to False.
-            timestamp_column (str | None, optional): The timestamp column. Defaults to None.
-            **kwargs: Additional keyword arguments.
+        Parameters:
+        - data: The data to be written to the dataset. It can be one of the following types:
+            - _pl.DataFrame
+            - _pl.LazyFrame
+            - pa.Table
+            - pa.RecordBatch
+            - pa.RecordBatchReader
+            - pd.DataFrame
+            - _duckdb.DuckDBPyConnection
+            - list of any of the above types
+        - mode: The write mode. Possible values are "append", "delta", or "overwrite". Defaults to "append".
+        - basename_template: The template for the basename of the output files. Defaults to None.
+        - partitioning_columns: The columns to be used for partitioning the dataset. Can be a string, a list of strings,
+            or None. Defaults to None.
+        - max_rows_per_file: The maximum number of rows per file. Defaults to 2,500,000.
+        - row_group_size: The size of each row group. Defaults to 250,000.
+        - compression: The compression algorithm to be used. Defaults to "zstd".
+        - sort_by: The column(s) to sort the data by. Can be a string, a list of strings, or a list of tuples (column,
+            order). Defaults to None.
+        - unique: Whether to keep only unique rows. Can be a bool, a string, or a list of strings. Defaults to False.
+        - ts_unit: The unit of the timestamp column. Defaults to "us".
+        - tz: The timezone to be used for the timestamp column. Defaults to None.
+        - remove_tz: Whether to remove the timezone information from the timestamp column. Defaults to False.
+        - use_large_string: Whether to use large string type for string columns. Defaults to False.
+        - delta_subset: The subset of columns to consider for delta updates. Can be a string, a list of strings, or
+            None. Defaults to None.
+        - update_metadata: Whether to update the metadata table after writing. Defaults to False.
+        - alter_schema: Whether to alter the schema of the dataset. Defaults to False.
+        - timestamp_column: The name of the timestamp column. Defaults to None.
+        - **kwargs: Additional keyword arguments to be passed to the writer.
 
         Returns:
-            None
-
-        Raises:
-            None
+        None
         """
 
-        if df.shape[0] == 0:
-            return
+        # if data.shape[0] == 0:
+        #    return
 
         if not partitioning_columns and self.partition_names:
             partitioning_columns = self.partition_names
@@ -588,55 +598,62 @@ class BaseDataset:
         if timestamp_column is not None:
             self._timestamp_column = timestamp_column
 
-        writer = Writer(
-            data=df,
-            path=self._path,
-            filesystem=self._filesystem,
-            schema=self.schema if not alter_schema else None,
-        )
-        writer.sort_data(by=sort_by)
+        if (
+            not isinstance(data, list)
+            and not isinstance(data, tuple)
+            and not isinstance(data, pa.RecordBatchReader)
+        ):
+            data = [data]
 
-        if unique:
-            writer.unique(columns=unique)
+        for data_ in data:
+            writer = Writer(
+                data=data_,
+                path=self._path,
+                filesystem=self._filesystem,
+                schema=self.schema if not alter_schema else None,
+            )
+            if writer.shape[0] == 0:
+                return
+            writer.sort_data(by=sort_by)
 
-        if partitioning_columns:
-            writer.add_datepart_columns(
-                columns=partitioning_columns, timestamp_column=self._timestamp_column
+            if unique:
+                writer.unique(columns=unique)
+
+            if partitioning_columns:
+                writer.add_datepart_columns(
+                    columns=partitioning_columns,
+                    timestamp_column=self._timestamp_column,
+                )
+
+            writer.cast_schema(
+                use_large_string=use_large_string,
+                ts_unit=ts_unit,
+                tz=tz,
+                remove_tz=remove_tz,
+                alter_schema=alter_schema,
             )
 
-        writer.cast_schema(
-            use_large_string=use_large_string,
-            ts_unit=ts_unit,
-            tz=tz,
-            remove_tz=remove_tz,
-            alter_schema=alter_schema,
-        )
+            if mode == "delta" and self.is_loaded:
+                writer._to_polars()
+                other_df = self._get_delta_other_df(
+                    writer.data,
+                    filter_columns=delta_subset,
+                )
+                if other_df is not None:
+                    writer.delta(other=other_df, subset=delta_subset)
+
+            writer.write_to_dataset(
+                row_group_size=row_group_size,
+                compression=compression,
+                partitioning_columns=partitioning_columns,
+                partitioning_flavor="hive",
+                max_rows_per_file=max_rows_per_file,
+                basename_template=basename_template,
+                **kwargs,
+            )
 
         if mode == "overwrite":
             del_files = [os.path.join(self._path, fn) for fn in self.files]
-
-        elif mode == "delta" and self.is_loaded:
-            writer._to_polars()
-            other_df = self._get_delta_other_df(
-                writer.data,
-                filter_columns=delta_subset,
-            )
-            if other_df is not None:
-                writer.delta(other=other_df, subset=delta_subset)
-
-        if writer.shape[0] == 0:
-            return
-
-        writer.write_to_dataset(
-            row_group_size=row_group_size,
-            compression=compression,
-            partitioning_columns=partitioning_columns,
-            partitioning_flavor="hive",
-            max_rows_per_file=max_rows_per_file,
-            basename_template=basename_template,
-            **kwargs,
-        )
-        if mode == "overwrite":
             self.delete_files(del_files)
 
         self.clear_cache()
@@ -947,13 +964,22 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
 
     def write_to_dataset(
         self,
-        df: (
+        data: (
             _pl.DataFrame
             | _pl.LazyFrame
             | pa.Table
             | pa.RecordBatch
+            | pa.RecordBatchReader
             | pd.DataFrame
             | _duckdb.DuckDBPyConnection
+            | list[
+                _pl.DataFrame
+                | _pl.LazyFrame
+                | pa.Table
+                | pa.RecordBatch
+                | pd.DataFrame
+                | _duckdb.DuckDBPyConnection
+            ]
         ),
         mode: str = "append",  # "delta", "overwrite"
         basename_template: str | None = None,
@@ -974,112 +1000,116 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
         **kwargs,
     ):
         """
-        Write data to the dataset with specified options and handling for different modes and parameters.
+        Writes the given data to the dataset.
 
-        Args:
-            df: DataFrame to be written to the dataset. Can be a pandas DataFrame, PyPolars DataFrame, PyArrow Table,
-                PyArrow RecordBatch, DuckDBPyConnection, or LazyFrame.
-            mode: Mode of writing to the dataset, either "append", "delta", or "overwrite".
-            partitioning_columns: Columns to partition the dataset by. Can be a string, list of strings, or None.
-            max_rows_per_file: Maximum number of rows per file, or None.
-            row_group_size: Size of row groups, or None.
-            compression: Compression algorithm to use, default is "zstd".
-            sort_by: Columns to sort the dataset by. Can be a string, list of strings, list of tuples of strings,
-                or None.
-            unique: Columns to enforce uniqueness on, can be a bool, string, or list of strings.
-            ts_unit: Unit for timestamps, default is "us" (microseconds).
-            tz: Timezone to use, or None.
-            remove_tz: Whether to remove the timezone, default is False.
-            use_large_string: Whether to use large string types, default is False.
-            delta_subset: Subset of columns to consider for delta mode, can be a string, list of strings, or None.
-            other_df_filter_columns: Columns to filter the other DataFrame by, can be a string, list of strings,
-                or None.
-            use: Library to use for writing, default is "pyarrow".
-            on: Format of the dataset, default is "parquet_dataset".
-            update_metadata: Whether to update the metadata, default is False.
-            alter_schema: Whether to alter the schema, default is False.
-            **kwargs: Additional keyword arguments.
+        Parameters:
+        - data: The data to be written to the dataset. It can be one of the following types:
+            - _pl.DataFrame
+            - _pl.LazyFrame
+            - pa.Table
+            - pa.RecordBatch
+            - pa.RecordBatchReader
+            - pd.DataFrame
+            - _duckdb.DuckDBPyConnection
+            - list of any of the above types
+        - mode: The write mode. Possible values are "append", "delta", or "overwrite". Defaults to "append".
+        - basename_template: The template for the basename of the output files. Defaults to None.
+        - partitioning_columns: The columns to be used for partitioning the dataset. Can be a string, a list of strings,
+            or None. Defaults to None.
+        - max_rows_per_file: The maximum number of rows per file. Defaults to 2,500,000.
+        - row_group_size: The size of each row group. Defaults to 250,000.
+        - compression: The compression algorithm to be used. Defaults to "zstd".
+        - sort_by: The column(s) to sort the data by. Can be a string, a list of strings, or a list of tuples (column,
+            order). Defaults to None.
+        - unique: Whether to keep only unique rows. Can be a bool, a string, or a list of strings. Defaults to False.
+        - ts_unit: The unit of the timestamp column. Defaults to "us".
+        - tz: The timezone to be used for the timestamp column. Defaults to None.
+        - remove_tz: Whether to remove the timezone information from the timestamp column. Defaults to False.
+        - use_large_string: Whether to use large string type for string columns. Defaults to False.
+        - delta_subset: The subset of columns to consider for delta updates. Can be a string, a list of strings, or
+            None. Defaults to None.
+        - update_metadata: Whether to update the metadata table after writing. Defaults to False.
+        - alter_schema: Whether to alter the schema of the dataset. Defaults to False.
+        - timestamp_column: The name of the timestamp column. Defaults to None.
+        - **kwargs: Additional keyword arguments to be passed to the writer.
+
+        Returns:
+        None
         """
-        if "n_rows" in kwargs:
-            max_rows_per_file = kwargs.pop("n_rows")
-        if "num_rows" in kwargs:
-            max_rows_per_file = kwargs.pop("num_rows")
-
-        if df.shape[0] == 0:
-            return
-
         if not partitioning_columns and self.partition_names:
             partitioning_columns = self.partition_names
 
         if timestamp_column is not None:
             self._timestamp_column = timestamp_column
 
-        writer = Writer(
-            data=df,
-            path=self._path,
-            filesystem=self._filesystem,
-            schema=self.schema if not alter_schema else None,
-        )
-        writer.sort_data(by=sort_by)
+        if (
+            not isinstance(data, list)
+            and not isinstance(data, tuple)
+            and not isinstance(data, pa.RecordBatchReader)
+        ):
+            data = [data]
 
-        if unique:
-            writer.unique(columns=unique)
-        if partitioning_columns:
-            writer.add_datepart_columns(
-                columns=partitioning_columns, timestamp_column=self._timestamp_column
+        for data_ in data:
+            writer = Writer(
+                data=data_,
+                path=self._path,
+                filesystem=self._filesystem,
+                schema=self.schema if not alter_schema else None,
+            )
+            if writer.shape[0] == 0:
+                return
+            writer.sort_data(by=sort_by)
+
+            if unique:
+                writer.unique(columns=unique)
+
+            if partitioning_columns:
+                writer.add_datepart_columns(
+                    columns=partitioning_columns,
+                    timestamp_column=self._timestamp_column,
+                )
+
+            writer.cast_schema(
+                use_large_string=use_large_string,
+                ts_unit=ts_unit,
+                tz=tz,
+                remove_tz=remove_tz,
+                alter_schema=alter_schema,
             )
 
-        writer.cast_schema(
-            use_large_string=use_large_string,
-            ts_unit=ts_unit,
-            tz=tz,
-            remove_tz=remove_tz,
-            alter_schema=alter_schema,
-        )
+            if mode == "delta" and self.is_loaded:
+                writer._to_polars()
+                other_df = self._get_delta_other_df(
+                    writer.data,
+                    filter_columns=delta_subset,
+                )
+                if other_df is not None:
+                    writer.delta(other=other_df, subset=delta_subset)
+
+            writer.write_to_dataset(
+                row_group_size=row_group_size,
+                compression=compression,
+                partitioning_columns=partitioning_columns,
+                partitioning_flavor="hive",
+                max_rows_per_file=max_rows_per_file,
+                basename_template=basename_template,
+                **kwargs,
+            )
 
         if mode == "overwrite":
             del_files = [os.path.join(self._path, fn) for fn in self.files]
-
-        elif mode == "delta" and self.is_loaded:
-            writer._to_polars()
-            other_df = self._get_delta_other_df(
-                writer.data,
-                filter_columns=delta_subset,
-                # use=use,
-                # on=on,
-            )
-            if other_df is not None:
-                writer.delta(other=other_df, subset=delta_subset)
-
-        if writer.shape[0] == 0:
-            return
-
-        writer.write_to_dataset(
-            row_group_size=row_group_size,
-            compression=compression,
-            partitioning_columns=partitioning_columns,
-            partitioning_flavor="hive",
-            max_rows_per_file=max_rows_per_file,
-            basename_template=basename_template,
-            **kwargs,
-        )
-        if mode == "overwrite":
             self.delete_files(del_files)
-            if update_metadata:
-                self.load(update_metadata=True, verbose=False)
-                self.update_metadata_table()
-
-        else:
-            if update_metadata:
-                try:
-                    self.load(update_metadata=True, verbose=False)
-                except Exception as e:
-                    _ = e
-                    self.load(reload_metadata=True, verbose=False)
-                self.update_metadata_table()
 
         self.clear_cache()
         self.load_files()
+
+        if update_metadata:
+            try:
+                self.load(update_metadata=True, verbose=False)
+            except Exception as e:
+                _ = e
+                self.load(reload_metadata=True, verbose=False)
+            self.update_metadata_table()
 
 
 class PyarrowDataset(BaseDataset):
