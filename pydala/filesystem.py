@@ -579,6 +579,9 @@ def FileSystem(
     same_names: bool = False,
     **kwargs,
 ):
+    if protocol is None:
+        protocol = "file"
+
     if all([fs, profile, key, endpoint_url, secret, token, protocol]):
         fs = filesystem("file", use_listings_cache=False)
 
@@ -594,6 +597,9 @@ def FileSystem(
         )
 
     if bucket is not None:
+        if protocol in ["file", "local"]:
+            bucket = os.path.abspath(bucket)
+
         fs = DirFileSystem(path=bucket, fs=fs)
 
     if cached:

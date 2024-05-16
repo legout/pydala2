@@ -2,7 +2,7 @@ import duckdb
 import yaml
 from fsspec import AbstractFileSystem
 from munch import Munch, munchify, toYAML, unmunchify
-
+import os
 from pydala.helpers.polars_ext import pl
 
 from .dataset import CsvDataset, JsonDataset, ParquetDataset, PyarrowDataset
@@ -23,7 +23,7 @@ class Catalog:
         **fs_kwargs,
     ):
         self._catalog_filesystem = FileSystem(bucket=bucket, fs=filesystem, **fs_kwargs)
-        self._catalog_path = path
+        self._catalog_path = self._catalog_filesystem.expand_path(path)[0]
         self._namespace = namespace
         self.load_catalog(namespace=namespace)
 
@@ -70,6 +70,10 @@ class Catalog:
             self._filesystem = Munch()
 
             for name in self._catalog.filesystem:
+                if self._catalog.filesystem[name].protocol in ["file", "local"]:
+                    self._catalog.filesystem[name].bucket = os.path.join(
+                        self._catalog_path, self._catalog.filesystem[name].bucket
+                    )
                 fs = FileSystem(**self._catalog.filesystem[name])
                 type(fs).protocol = name
 
