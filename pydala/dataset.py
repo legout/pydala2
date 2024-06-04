@@ -827,7 +827,7 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
         """
         self.pydala_dataset_metadata.scan(filter_expr=filter_expr)
         if len(self.scan_files) == 0:
-            return PydalaTable(result=self.table.arrow_dataset.head(0))
+            return PydalaTable(result=self.table.ddb.limit(0))
         return PydalaTable(
             result=pds.dataset(
                 self.scan_files,
