@@ -344,33 +344,35 @@ class Writer:
         partitioning_flavor: str = "hive",
         max_rows_per_file: int | None = None,
         create_dir: bool = False,
-        basename_template: str | None = None,
+        basename: str | None = None,
         **kwargs,
     ):
         """
-        Write the dataset to the given path using Parquet format.
+        Writes the data to a dataset in the Parquet format.
 
         Args:
-            row_group_size (int, optional): The row group size to use. Defaults to None.
-            compression (str, optional): The compression type to use. Defaults to "zstd".
-            partitioning ( list[str], optional): The partitioning scheme to use. Defaults to None.
+            row_group_size (int | None, optional): The number of rows per row group. Defaults to None.
+            compression (str, optional): The compression algorithm to use. Defaults to "zstd".
+            partitioning_columns (list[str] | None, optional): The columns to use for partitioning the dataset.
+                Defaults to None.
             partitioning_flavor (str, optional): The partitioning flavor to use. Defaults to "hive".
-            max_rows_per_file (int, optional): The maximum number of rows per file. Defaults to None.
-            create_dir (bool, optional): Whether to create the directory if it does not exist. Defaults to False.
-            **kwargs: Additional keyword arguments to pass to the underlying Parquet writer.
+            max_rows_per_file (int | None, optional): The maximum number of rows per file. Defaults to None.
+            create_dir (bool, optional): Whether to create directories for the dataset. Defaults to False.
+            basename (str | None, optional): The base name for the output files. Defaults to None.
+            **kwargs: Additional keyword arguments.
 
         Returns:
             None
         """
         self._to_arrow()
         # self.data.cast(self.schema)
-        if basename_template is None:
-            basename_template = (
+        if basename is None:
+            basename = (
                 "data-"
                 f"{dt.datetime.now().strftime('%Y%m%d_%H%M%S%f')[:-3]}-{uuid.uuid4().hex[:16]}-{{i}}.parquet"
             )
         else:
-            basename_template = f"{basename_template}-{{i}}.parquet"
+            basename = f"{basename}-{{i}}.parquet"
         # print("max_rows_per_file", max_rows_per_file)
         # print("row_group_size", row_group_size)
         file_options = pds.ParquetFileFormat().make_write_options(
@@ -397,7 +399,7 @@ class Writer:
             file_options=file_options,
             partitioning=partitioning_columns,
             partitioning_flavor=partitioning_flavor,
-            basename_template=basename_template,
+            basename_template=basename,
             min_rows_per_group=row_group_size,
             max_rows_per_group=row_group_size,
             # compression=compression,

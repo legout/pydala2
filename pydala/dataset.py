@@ -535,7 +535,7 @@ class BaseDataset:
             ]
         ),
         mode: str = "append",  # "delta", "overwrite"
-        basename_template: str | None = None,
+        basename: str | None = None,
         partitioning_columns: str | list[str] | None = None,
         max_rows_per_file: int | None = 2_500_000,
         row_group_size: int | None = 250_000,
@@ -565,7 +565,7 @@ class BaseDataset:
             - _duckdb.DuckDBPyConnection
             - list of any of the above types
         - mode: The write mode. Possible values are "append", "delta", or "overwrite". Defaults to "append".
-        - basename_template: The template for the basename of the output files. Defaults to None.
+        - basename: The template for the basename of the output files. Defaults to None.
         - partitioning_columns: The columns to be used for partitioning the dataset. Can be a string, a list of strings,
             or None. Defaults to None.
         - max_rows_per_file: The maximum number of rows per file. Defaults to 2,500,000.
@@ -648,7 +648,7 @@ class BaseDataset:
                 partitioning_columns=partitioning_columns,
                 partitioning_flavor="hive",
                 max_rows_per_file=max_rows_per_file,
-                basename_template=basename_template,
+                basename=basename,
                 **kwargs,
             )
 
@@ -983,7 +983,7 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
             ]
         ),
         mode: str = "append",  # "delta", "overwrite"
-        basename_template: str | None = None,
+        basename: str | None = None,
         partitioning_columns: str | list[str] | None = None,
         max_rows_per_file: int | None = 2_500_000,
         row_group_size: int | None = 250_000,
@@ -1014,7 +1014,7 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
             - _duckdb.DuckDBPyConnection
             - list of any of the above types
         - mode: The write mode. Possible values are "append", "delta", or "overwrite". Defaults to "append".
-        - basename_template: The template for the basename of the output files. Defaults to None.
+        - basename: The template for the basename of the output files. Defaults to None.
         - partitioning_columns: The columns to be used for partitioning the dataset. Can be a string, a list of strings,
             or None. Defaults to None.
         - max_rows_per_file: The maximum number of rows per file. Defaults to 2,500,000.
@@ -1093,7 +1093,7 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
                 partitioning_columns=partitioning_columns,
                 partitioning_flavor="hive",
                 max_rows_per_file=max_rows_per_file,
-                basename_template=basename_template,
+                basename=basename,
                 **kwargs,
             )
 
