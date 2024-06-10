@@ -367,12 +367,13 @@ class Writer:
         self._to_arrow()
         # self.data.cast(self.schema)
         if basename is None:
-            basename = (
+            basename_template = (
                 "data-"
                 f"{dt.datetime.now().strftime('%Y%m%d_%H%M%S%f')[:-3]}-{uuid.uuid4().hex[:16]}-{{i}}.parquet"
             )
         else:
-            basename = f"{basename}-{{i}}.parquet"
+            basename_template = f"{basename}-{{i}}.parquet"
+        print(basename_template)
         # print("max_rows_per_file", max_rows_per_file)
         # print("row_group_size", row_group_size)
         file_options = pds.ParquetFileFormat().make_write_options(
@@ -399,7 +400,7 @@ class Writer:
             file_options=file_options,
             partitioning=partitioning_columns,
             partitioning_flavor=partitioning_flavor,
-            basename_template=basename,
+            basename_template=basename_template,
             min_rows_per_group=row_group_size,
             max_rows_per_group=row_group_size,
             # compression=compression,
