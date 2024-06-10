@@ -44,12 +44,12 @@ class Catalog:
             if catalog.tables[ns] is None:
                 catalog.tables[ns] = Munch()
 
-        self._catalog = catalog
+        self.params = catalog
 
         if namespace is not None:
-            self._tables = self._catalog.tables[namespace]
+            self.params.tables = self.params.tables[namespace]
         else:
-            self._tables = self._catalog.tables
+            self.params.tables = self.params.tables
 
     def _write_catalog(self, delete_table: str = None):
         with self._catalog_filesystem.open(self._catalog_path, "r") as f:
@@ -58,34 +58,34 @@ class Catalog:
             delattr_rec(catalog, delete_table)
 
         if self._namespace is not None:
-            self._catalog.tables[self._namespace].update(self._tables)
+            self.params.tables[self._namespace].update(self.params.tables)
         else:
-            self._catalog.tables.update(self._tables)
+            self.params.tables.update(self.params.tables)
 
-        catalog.update(self._catalog)
+        catalog.update(self.params)
 
         with self._catalog_filesystem.open(self._catalog_path, "w") as f:
             yaml.dump(unmunchify(catalog), f)
 
     def _load_filesystems(self):
-        if hasattr(self._catalog, "filesystem"):
-            self._filesystem = Munch()
+        if hasattr(self.params, "filesystem"):
+            self.fs = Munch()
 
-            for name in self._catalog.filesystem:
-                if self._catalog.filesystem[name].protocol in ["file", "local"]:
-                    self._catalog.filesystem[name].bucket = os.path.join(
+            for name in self.params.filesystem:
+                if self.params.filesystem[name].protocol in ["file", "local"]:
+                    self.params.filesystem[name].bucket = os.path.join(
                         os.path.dirname(self._catalog_path),
-                        self._catalog.filesystem[name].bucket,
+                        self.params.filesystem[name].bucket,
                     )
-                fs = FileSystem(**self._catalog.filesystem[name])
+                fs = FileSystem(**self.params.filesystem[name])
                 type(fs).protocol = name
 
-                if self._catalog.filesystem[name].protocol != "file":
+                if self.params.filesystem[name].protocol != "file":
                     self.ddb_con.register_filesystem(fs)
 
-                self._filesystem[name] = fs
+                self.fs[name] = fs
         else:
-            self._filesystem = None
+            self.fs = None
 
     # @staticmethod
     # def _get_table_from_table_name(self, table_name: str) -> str:
@@ -102,17 +102,17 @@ class Catalog:
     #     return ".".join(table_name_items)
 
     def _get_table_params(self, table_name: str) -> Munch:
-        return getattr_rec(self._tables, table_name)
+        return getattr_rec(self.params.tables, table_name)
 
     def _set_table_params(self, table_name: str, **fields):
         if table_name in self.all_tables:
             getattr_rec(
-                self._tables,
+                self.params.tables,
                 table_name,
             ).update(munchify(fields))
         else:
             setattr_rec(
-                self._tables,
+                self.params.tables,
                 table_name,
                 munchify(fields),
             )
@@ -122,7 +122,7 @@ class Catalog:
         if self._namespace is not None:
             return [self._namespace]
         else:
-            return list(self._tables.keys())
+            return list(self.params.tables.keys())
 
     @property
     def namespace(self) -> str | None:
@@ -131,28 +131,28 @@ class Catalog:
     @property
     def all_tables(self) -> list[str]:
         return [
-            t.split(".path")[0] for t in get_nested_keys(self._tables) if "path" in t
+            t.split(".path")[0]
+            for t in get_nested_keys(self.params.tables)
+            if "path" in t
         ]
 
     def show(self, table_name: str) -> None:
         print(toYAML(self.get(table_name)))
 
     def get(self, table_name: str) -> Munch:
-        return getattr_rec(self._tables, table_name)
+        return getattr_rec(self.params.tables, table_name)
 
     @property
     def all_filesystems(self) -> list[str]:
-        return sorted(self._catalog.filesystem.keys())
+        return sorted(self.params.filesystem.keys())
 
     def show_filesystem(self, table_name: str) -> None:
-        print(toYAML(self._catalog.filesystem[table_name]))
+        print(toYAML(self.params.filesystem[table_name]))
 
     def files(self, table_name: str) -> list[str]:
         params = self._get_table_params(table_name=table_name)
         return sorted(
-            self._filesystem[params.filesystem].glob(
-                params.path + f"/**/*.{params.format}"
-            )
+            self.fs[params.filesystem].glob(params.path + f"/**/*.{params.format}")
         )
 
     def load_parquet(
@@ -164,22 +164,18 @@ class Catalog:
             return
         if not as_dataset:
             if params.path.endswith(".parquet"):
-                df = self._filesystem[params.filesystem].read_parquet(
-                    params.path, **kwargs
-                )
+                df = self.fs[params.filesystem].read_parquet(params.path, **kwargs)
                 self.ddb_con.register(table_name, df)
                 return df
 
-            df = self._filesystem[params.filesystem].read_parquet_dataset(
-                params.path, **kwargs
-            )
+            df = self.fs[params.filesystem].read_parquet_dataset(params.path, **kwargs)
             self.ddb_con.register(table_name, df)
             return df
 
         if with_metadata:
             return ParquetDataset(
                 params.path,
-                filesystem=self._filesystem[params.filesystem],
+                filesystem=self.fs[params.filesystem],
                 name=table_name,
                 ddb_con=self.ddb_con,
                 **kwargs,
@@ -187,7 +183,7 @@ class Catalog:
 
         return PyarrowDataset(
             params.path,
-            filesystem=self._filesystem[params.filesystem],
+            filesystem=self.fs[params.filesystem],
             name=table_name,
             ddb_con=self.ddb_con,
             **kwargs,
@@ -202,21 +198,17 @@ class Catalog:
             return
         if not as_dataset:
             if params.path.endswith(".csv"):
-                df = self._filesystem[params.filesystem].read_parquet(
-                    params.path, **kwargs
-                )
+                df = self.fs[params.filesystem].read_parquet(params.path, **kwargs)
                 self.ddb_con.register(table_name, df)
                 return df
 
-            df = self._filesystem[params.filesystem].read_parquet_dataset(
-                params.path, **kwargs
-            )
+            df = self.fs[params.filesystem].read_parquet_dataset(params.path, **kwargs)
             self.ddb_con.register(table_name, df)
             return df
 
         return CsvDataset(
             params.path,
-            filesystem=self._filesystem[params.filesystem],
+            filesystem=self.fs[params.filesystem],
             name=table_name,
             ddb_con=self.ddb_con,
             **kwargs,
@@ -231,20 +223,16 @@ class Catalog:
             return
         if not as_dataset:
             if params.path.endswith(".json"):
-                df = self._filesystem[params.filesystem].read_json(
-                    params.path, **kwargs
-                )
+                df = self.fs[params.filesystem].read_json(params.path, **kwargs)
                 self.ddb_con.register(table_name, df)
                 return df
 
-            df = self._filesystem[params.filesystem].read_json_dataset(
-                params.path, **kwargs
-            )
+            df = self.fs[params.filesystem].read_json_dataset(params.path, **kwargs)
             self.ddb_con.register(table_name, df)
             return df
         return JsonDataset(
             params.path,
-            filesystem=self._filesystem[params.filesystem],
+            filesystem=self.fs[params.filesystem],
             name=table_name,
             ddb_con=self.ddb_con,
             **kwargs,
@@ -308,8 +296,8 @@ class Catalog:
         return self.ddb_con.sql(sql)
 
     def create_namespace(self, name: str):
-        if name in self._tables:
-            self._tables[name] = Munch()
+        if name in self.params.tables:
+            self.params.tables[name] = Munch()
 
     def create_table(
         self,
@@ -350,7 +338,9 @@ class Catalog:
             raise Exception("table_name is required")
 
         if namespace is not None and namespace not in table_name:
-            table_name = f"{namespace}.{table_name}"
+            table_name = ".".join(
+                namespace.split(".") + table_name.split(".")
+            )  # f"{namespace}.{table_name}"
 
         if table_name in self.all_tables:
             if not overwrite:
@@ -393,11 +383,11 @@ class Catalog:
             if vacuum:
                 self.load(table_name).vacuum()
 
-            delattr_rec(self._tables, table_name)
+            delattr_rec(self.params.tables, table_name)
             if self._namespace is not None:
-                delattr_rec(self._catalog[self._namespace].tables, table_name)
+                delattr_rec(self.params[self._namespace].tables, table_name)
             else:
-                delattr_rec(self._catalog.tables, table_name)
+                delattr_rec(self.params.tables, table_name)
 
             if write_catalog:
                 self._write_catalog(delete_table=table_name)
@@ -452,17 +442,11 @@ class Catalog:
         else:
             # raise("Not implemented yet. You can use ")
             if params.format.lower() == "parquet":
-                self._filesystem[params.filesystem].write_parquet(
-                    data, params.path, **kwargs
-                )
+                self.fs[params.filesystem].write_parquet(data, params.path, **kwargs)
             elif params.format.lower() == "csv":
-                self._filesystem[params.filesystem].write_csv(
-                    data, params.path, **kwargs
-                )
+                self.fs[params.filesystem].write_csv(data, params.path, **kwargs)
             elif params.format.lower() == "json":
-                self._filesystem[params.filesystem].write_json(
-                    data, params.path, **kwargs
-                )
+                self.fs[params.filesystem].write_json(data, params.path, **kwargs)
 
     def schema(self, table_name: str):
         self.load(table_name).schema
