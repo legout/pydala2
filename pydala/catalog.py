@@ -423,6 +423,7 @@ class Catalog:
         table_name: str,
         as_dataset: bool = True,
         with_metadata: bool = True,
+        update_catalog: bool = False,
         **kwargs,
     ):
         params = self._get_table_params(table_name=table_name)
@@ -432,7 +433,8 @@ class Catalog:
                 params.write_args.update(kwargs)
             else:
                 params.write_args = kwargs
-            self.update(table_name=table_name, write_args=params.write_args)
+            if update_catalog:
+                self.update(table_name=table_name, write_args=params.write_args)
 
         if as_dataset:
             if table_name not in self.table:
