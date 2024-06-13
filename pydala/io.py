@@ -373,7 +373,7 @@ class Writer:
             )
         else:
             basename_template = f"{basename}-{{i}}.parquet"
-        print(basename_template)
+        # print(basename_template)
         # print("max_rows_per_file", max_rows_per_file)
         # print("row_group_size", row_group_size)
         file_options = pds.ParquetFileFormat().make_write_options(
