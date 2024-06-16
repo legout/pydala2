@@ -613,7 +613,8 @@ class BaseDataset:
                 schema=self.schema if not alter_schema else None,
             )
             if writer.shape[0] == 0:
-                return
+                continue
+
             writer.sort_data(by=sort_by)
 
             if unique:
@@ -658,6 +659,7 @@ class BaseDataset:
 
         self.clear_cache()
         self.load_files()
+        
 
 
 class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
@@ -1058,7 +1060,8 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
                 schema=self.schema if not alter_schema else None,
             )
             if writer.shape[0] == 0:
-                return
+                continue
+
             writer.sort_data(by=sort_by)
 
             if unique:
