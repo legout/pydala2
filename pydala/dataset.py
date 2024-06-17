@@ -1211,3 +1211,15 @@ class JsonDataset(BaseDataset):
             self._timestamp_columns = get_timestamp_column(self.table.pl.head(10))
             if len(self._timestamp_columns) > 1:
                 self._timestamp_column = self._timestamp_columns[0]
+
+
+from .optimize import Optimize
+
+ParquetDataset.compact_partitions = Optimize.compact_partitions
+ParquetDataset._compact_partition = Optimize._compact_partition
+ParquetDataset.compact_by_timeperiod = Optimize.compact_by_timeperiod
+ParquetDataset._compact_by_timeperiod = Optimize._compact_by_timeperiod
+ParquetDataset.compact_by_rows = Optimize.compact_by_rows
+ParquetDataset.repartition = Optimize.repartition
+ParquetDataset._optimize_dtypes = Optimize._optimize_dtypes
+ParquetDataset.optimize_dtypes = Optimize.optimize_dtypes
