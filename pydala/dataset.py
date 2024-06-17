@@ -14,6 +14,7 @@ from .helpers.polars_ext import pl as _pl
 from .io import Writer
 from .metadata import ParquetDatasetMetadata, PydalaDatasetMetadata
 from .table import PydalaTable
+from .optimize import Optimize
 
 # from .optimize import Optimize
 
@@ -659,7 +660,6 @@ class BaseDataset:
 
         self.clear_cache()
         self.load_files()
-        
 
 
 class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
@@ -1215,8 +1215,6 @@ class JsonDataset(BaseDataset):
             if len(self._timestamp_columns) > 1:
                 self._timestamp_column = self._timestamp_columns[0]
 
-
-from .optimize import Optimize
 
 ParquetDataset.compact_partitions = Optimize.compact_partitions
 ParquetDataset._compact_partition = Optimize._compact_partition
