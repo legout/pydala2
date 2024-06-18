@@ -1478,7 +1478,7 @@ class Optimize(ParquetDataset):
         **kwargs,
     ):
         batches = self.table.to_batch_reader(
-            sort_by=sort_by, distintinct=unique, batch_size=max_rows_per_file
+            sort_by=sort_by, distinct=unique, batch_size=max_rows_per_file
         )
 
         for batch in tqdm.tqdm(batches):
