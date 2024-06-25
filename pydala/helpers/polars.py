@@ -266,7 +266,7 @@ def with_datepart_columns(
         column_names.append("day")
     if day:
         strftime.append("%d")
-        columnn_names.append("day")
+        column_names.append("day")
     if weekday:
         strftime.append("%a")
         column_names.append("week_day")
