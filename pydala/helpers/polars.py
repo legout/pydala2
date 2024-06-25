@@ -350,13 +350,21 @@ def delta(
     subset: list[str] | None = None,
     eager: bool = False,
 ) -> pl.DataFrame:
-    # Wenn kein Subset angegeben ist, verwenden Sie alle Spalten für den Vergleich
+    columns = sorted(set(df1.columns) & set(df2.columns))
+
     if subset is None:
         subset = df1.columns
     if isinstance(subset, str):
         subset = [subset]
 
-    # Führen Sie einen Anti-Join durch, um Zeilen in df1 zu finden, die nicht in df2 basierend auf dem Subset sind
+    subset = sorted(set(columns) & set(subset))
+
+    if isinstance(df1, pl.LazyFrame) and isinstance(df2, pl.DataFrame):
+        df2 = df2.lazy()
+
+    elif isinstance(df1, pl.DataFrame) and isinstance(df2, pl.LazyFrame):
+        df1 = df1.lazy()
+
     df = df1.join(df2, on=subset, how="anti")
 
     if eager and isinstance(df, pl.LazyFrame):
