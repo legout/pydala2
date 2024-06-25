@@ -12,7 +12,7 @@ from fsspec import AbstractFileSystem
 from .filesystem import FileSystem, clear_cache
 from .helpers.datetime import get_timestamp_column
 from .helpers.misc import str2pyarrow_filter
-from .helpers.polars_ext import pl as _pl
+from .helpers.polars import pl as _pl
 from .io import Writer
 from .metadata import ParquetDatasetMetadata, PydalaDatasetMetadata
 from .schema import (
