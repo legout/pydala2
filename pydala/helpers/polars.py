@@ -302,45 +302,66 @@ def with_row_count(
         )
 
 
-def delta(
+# def delta(
+#     df1: pl.DataFrame | pl.LazyFrame,
+#     df2: pl.DataFrame | pl.LazyFrame,
+#     subset: str | list[str] | None = None,
+#     eager: bool = False,
+# ) -> pl.LazyFrame:
+#     columns = sorted(set(df1.columns) & set(df2.columns))
+
+#     if subset is None:
+#         subset = columns
+#     if isinstance(subset, str):
+#         subset = [subset]
+
+#     subset = sorted(set(columns) & set(subset))
+
+#     if isinstance(df1, pl.LazyFrame) and isinstance(df2, pl.DataFrame):
+#         df2 = df2.lazy()
+
+#     elif isinstance(df1, pl.DataFrame) and isinstance(df2, pl.LazyFrame):
+#         df1 = df1.lazy()
+
+#     df = (
+#         pl.concat(
+#             [
+#                 df1.select(columns)
+#                 .with_columns(pl.lit(1).alias("df"))
+#                 .with_row_count(),
+#                 df2.select(columns)
+#                 .with_columns(pl.lit(2).alias("df"))
+#                 .with_row_count(),
+#             ],
+#             how="vertical_relaxed",
+#         )
+#         .filter((pl.count().over(subset) == 1) & (pl.col("df") == 1))
+#         .select(pl.exclude(["df", "row_nr"]))
+#     )
+
+#     if eager and isinstance(df, pl.LazyFrame):
+#         return df.collect()
+#     return df
+
+
+def rows_in_df1_not_in_df2(
     df1: pl.DataFrame | pl.LazyFrame,
     df2: pl.DataFrame | pl.LazyFrame,
-    subset: str | list[str] | None = None,
+    subset: list[str] | None = None,
     eager: bool = False,
-) -> pl.LazyFrame:
-    columns = sorted(set(df1.columns) & set(df2.columns))
-
+) -> pl.DataFrame:
+    # Wenn kein Subset angegeben ist, verwenden Sie alle Spalten für den Vergleich
     if subset is None:
-        subset = columns
+        subset = df1.columns
     if isinstance(subset, str):
         subset = [subset]
 
-    subset = sorted(set(columns) & set(subset))
-
-    if isinstance(df1, pl.LazyFrame) and isinstance(df2, pl.DataFrame):
-        df2 = df2.lazy()
-
-    elif isinstance(df1, pl.DataFrame) and isinstance(df2, pl.LazyFrame):
-        df1 = df1.lazy()
-
-    df = (
-        pl.concat(
-            [
-                df1.select(columns)
-                .with_columns(pl.lit(1).alias("df"))
-                .with_row_count(),
-                df2.select(columns)
-                .with_columns(pl.lit(2).alias("df"))
-                .with_row_count(),
-            ],
-            how="vertical_relaxed",
-        )
-        .filter((pl.count().over(subset) == 1) & (pl.col("df") == 1))
-        .select(pl.exclude(["df", "row_nr"]))
-    )
+    # Führen Sie einen Anti-Join durch, um Zeilen in df1 zu finden, die nicht in df2 basierend auf dem Subset sind
+    df = df1.join(df2, on=subset, how="anti")
 
     if eager and isinstance(df, pl.LazyFrame):
         return df.collect()
+
     return df
 
 
