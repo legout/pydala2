@@ -344,7 +344,7 @@ def with_row_count(
 #     return df
 
 
-def rows_in_df1_not_in_df2(
+def delta(
     df1: pl.DataFrame | pl.LazyFrame,
     df2: pl.DataFrame | pl.LazyFrame,
     subset: list[str] | None = None,
