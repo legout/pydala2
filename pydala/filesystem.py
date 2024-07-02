@@ -587,7 +587,7 @@ def FileSystem(
         fs = filesystem("file", use_listings_cache=False)
 
     elif fs is None:
-        if protocol == "s3":
+        if "client_kwargs" in kwargs:
             fs = s3fs.S3FileSystem(
                 profile=profile,
                 key=key,
