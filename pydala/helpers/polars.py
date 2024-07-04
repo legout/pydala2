@@ -180,7 +180,10 @@ def with_strftime_columns(
     return opt_dtype(
         df.with_columns(
             [
-                pl.col(timestamp_column).dt.strftime(strftime_).alias(column_name)
+                pl.col(timestamp_column)
+                .dt.strftime(strftime_)
+                .fill_null(0)
+                .alias(column_name)
                 for strftime_, column_name in zip(strftime, column_names)
             ]
         ),
