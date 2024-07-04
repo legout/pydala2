@@ -136,11 +136,11 @@ def opt_dtype(
         df.with_columns(
             pl.all()
             .exclude(exclude)
-            .map(_opt_dtype_strict if strict else _opt_dtype_not_strict)
+            .map_batches(_opt_dtype_strict if strict else _opt_dtype_not_strict)
         )
         if exclude is not None
         else df.with_columns(
-            pl.all().map(_opt_dtype_strict if strict else _opt_dtype_not_strict)
+            pl.all().map_batches(_opt_dtype_strict if strict else _opt_dtype_not_strict)
         )
     )
 
