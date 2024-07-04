@@ -265,7 +265,17 @@ class Writer:
                 col: True
                 for col in self.schema.names + columns
                 if col
-                in ["year", "month", "week", "yearday", "monthday", "weekday", "day"]
+                in [
+                    "year",
+                    "month",
+                    "week",
+                    "yearday",
+                    "monthday",
+                    "weekday",
+                    "day",
+                    "hour",
+                    "minute",
+                ]
             }
 
             self.data = self.data.with_datepart_columns(
