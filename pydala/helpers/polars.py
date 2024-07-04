@@ -236,6 +236,8 @@ def with_datepart_columns(
     monthday: bool = False,
     day: bool = False,
     weekday: bool = False,
+    hour: bool = False,
+    minute: bool = False,
     strftime: str | None = None,
 ):
     if strftime:
@@ -270,6 +272,12 @@ def with_datepart_columns(
     if weekday:
         strftime.append("%a")
         column_names.append("week_day")
+    if hour:
+        strftime.append("%H")
+        column_names.append("hour")
+    if minute:
+        strftime.append("%M")
+        column_names.append("minute")
 
     column_names = [col for col in column_names if col not in df.columns]
     # print("timestamp_column, with_datepart_columns", timestamp_column)
@@ -439,6 +447,9 @@ def partition_by(
                 "yearday",
                 "monthday",
                 "weekday",
+                "day",
+                "hour",
+                "minute",
                 "strftime",
             ]
             and col not in df.columns
@@ -453,6 +464,9 @@ def partition_by(
                 "yearday",
                 "monthday",
                 "weekday",
+                "day",
+                "hour",
+                "minute",
                 "strftime",
             ]
         }
