@@ -9,7 +9,11 @@ import pyarrow as pa
 
 def get_timestamp_column(df: pl.DataFrame | pl.LazyFrame | pa.Table) -> str | list[str]:
     if isinstance(df, pa.Table):
-        df = pl.from_arrow(df)
+        df = pl.from_arrow(df).lazy()
+
+    # if isinstance(df, pl.LazyFrame):
+    #    return df.collect_schema().names()
+
     return df.select(cs.datetime() | cs.date()).columns
 
 

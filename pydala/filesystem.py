@@ -11,6 +11,7 @@ import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem, filesystem
 from fsspec.implementations import cached as cachedfs
 from fsspec.implementations.dirfs import DirFileSystem
+import s3fs
 
 from .helpers.misc import run_parallel
 from .io import read_table
@@ -586,15 +587,25 @@ def FileSystem(
         fs = filesystem("file", use_listings_cache=False)
 
     elif fs is None:
-        fs = filesystem(
-            protocol=protocol,
-            profile=profile,
-            key=key,
-            endpoint_url=endpoint_url,
-            secret=secret,
-            token=token,
-            use_listings_cache=False,
-        )
+        if "client_kwargs" in kwargs:
+            fs = s3fs.S3FileSystem(
+                profile=profile,
+                key=key,
+                endpoint_url=endpoint_url,
+                secret=secret,
+                token=token,
+                **kwargs,
+            )
+        else:
+            fs = filesystem(
+                protocol=protocol,
+                profile=profile,
+                key=key,
+                endpoint_url=endpoint_url,
+                secret=secret,
+                token=token,
+                use_listings_cache=False,
+            )
 
     if bucket is not None:
         if protocol in ["file", "local"]:

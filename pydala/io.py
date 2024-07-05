@@ -15,7 +15,7 @@ from fsspec import filesystem as fsspec_filesystem
 
 from .helpers.datetime import get_timestamp_column
 from .helpers.misc import get_partitions_from_path
-from .helpers.polars_ext import pl
+from .helpers.polars import pl
 from .schema import convert_timestamp, replace_schema, shrink_large_string
 from .table import PydalaTable
 
@@ -264,7 +264,18 @@ class Writer:
             datepart_columns = {
                 col: True
                 for col in self.schema.names + columns
-                if col in ["year", "month", "week", "yearday", "monthday", "weekday"]
+                if col
+                in [
+                    "year",
+                    "month",
+                    "week",
+                    "yearday",
+                    "monthday",
+                    "weekday",
+                    "day",
+                    "hour",
+                    "minute",
+                ]
             }
 
             self.data = self.data.with_datepart_columns(

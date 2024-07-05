@@ -1,16 +1,19 @@
+import os
+
 import duckdb
+import pandas as pd
+import pyarrow as pa
 import yaml
 from fsspec import AbstractFileSystem
 from munch import Munch, munchify, toYAML, unmunchify
-import os
-from pydala.helpers.polars_ext import pl
-import pyarrow as pa
-import pandas as pd
+
+from pydala.helpers.polars import pl
+
 from .dataset import CsvDataset, JsonDataset, ParquetDataset, PyarrowDataset
-from .table import PydalaTable
 from .filesystem import FileSystem
 from .helpers.misc import delattr_rec, get_nested_keys, getattr_rec, setattr_rec
 from .helpers.sql import get_table_names
+from .table import PydalaTable
 
 
 # @dataclass

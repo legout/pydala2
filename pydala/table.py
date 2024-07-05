@@ -3,7 +3,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.dataset as pds
 
-from .helpers.polars_ext import pl as _pl
+from .helpers.polars import pl as _pl
 
 
 class PydalaTable:
