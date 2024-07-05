@@ -332,6 +332,8 @@ class Writer:
 
     @property
     def shape(self):
+        if self.data is None:
+            return 0
         if isinstance(self.data, pl.LazyFrame):
             self.data = self.data.collect()
         return self.data.shape
