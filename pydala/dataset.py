@@ -44,7 +44,6 @@ class BaseDataset:
         self._filesystem = FileSystem(
             bucket=bucket, fs=filesystem, cached=cached, **fs_kwargs
         )
-        
 
         if name is None:
             self.name = os.path.basename(path)
@@ -107,6 +106,10 @@ class BaseDataset:
             self.load_files()
 
         return self._files
+
+    @property
+    def path(self):
+        return self._path
 
     @property
     def has_files(self):
@@ -192,25 +195,25 @@ class BaseDataset:
         """
         if self.is_loaded:
             return self.schema.names
-    
+
     @property
     def fs(self):
-            """
-            Returns the filesystem associated with the dataset.
+        """
+        Returns the filesystem associated with the dataset.
 
-            Returns:
-                The filesystem object associated with the dataset.
-            """
-            return self._filesystem
-    
+        Returns:
+            The filesystem object associated with the dataset.
+        """
+        return self._filesystem
+
     def t(self):
-            """
-            Returns the table associated with the dataset.
-            
-            Returns:
-                The table associated with the dataset.
-            """
-            return self.table
+        """
+        Returns the table associated with the dataset.
+
+        Returns:
+            The table associated with the dataset.
+        """
+        return self.table
 
     def count_rows(self) -> int:
         """
