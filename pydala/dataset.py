@@ -206,6 +206,7 @@ class BaseDataset:
         """
         return self._filesystem
 
+    @property
     def t(self):
         """
         Returns the table associated with the dataset.
