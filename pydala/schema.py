@@ -1,6 +1,7 @@
 import os
 
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.fs as pfs
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
@@ -141,7 +142,7 @@ def modify_field(schema: pa.Schema, field: str, dtype: pa.DataType) -> pa.Schema
 
 
 def cast_int2timestamp(
-    table: pa.Table, column: str | list[str], unit: str = "us", tz: str = None
+    table: pa.Table, column: str | list[str], unit: str = "us", tz: str | None = None
 ) -> pa.Table:
     column = [column] if isinstance(column, str) else column
     columns = table.schema.names
@@ -150,6 +151,45 @@ def cast_int2timestamp(
         arr_new = pa.array(arr.to_pylist(), pa.timestamp(unit=unit, tz=tz))
         table = table.drop(col).append_column(col, arr_new)
 
+    return table.select(columns)
+
+
+def cast_str2bool(
+    table: pa.Table,
+    schema: pa.Schema | None = None,
+    column: str | list[str] | None = None,
+    true_values: list[str] = [
+        "true",
+        "wahr",
+        "1",
+        "1.0",
+        "yes",
+        "ja",
+        "ok",
+        "o.k",
+        "okay",
+    ],
+    skip_nulls: bool = False,
+) -> pa.Table:
+    if column is None and schema is not None:
+        column = [
+            col
+            for col in table.schema.names
+            if pa.types.is_boolean(schema.field(col).type)
+            and pa.types.is_string(table.schema.field(col).type)
+        ]
+    column = [column] if isinstance(column, str) else column
+    columns = table.schema.names
+    for col in column:
+        arr = table.column(col)
+        arr_is_in = pc.is_in(
+            pc.utf8_lower(table.column(col)),
+            pa.array(true_values),
+            skip_nulls=skip_nulls,
+        )
+        arr_is_null = pc.is_null(arr)
+        arr_new = pc.if_else(arr_is_null, None, arr_is_in)
+        table = table.drop(col).append_column(col, arr_new)
     return table.select(columns)
 
 
@@ -208,6 +248,8 @@ def replace_schema(
             )
         ]
         table = cast_int2timestamp(table, int2timestamp_columns, unit=ts_unit, tz=tz)
+        # cast str to bool
+        table = cast_str2bool(table, schema=schema)
 
         return table.select(schema.names).cast(schema)
 

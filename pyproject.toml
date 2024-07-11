@@ -15,7 +15,7 @@ dependencies = [
 ]
 description = "poor man´s datalake"
 name = "pydala2"
-version = "0.7.2"
+version = "0.8.0"
 
 license = {text = "MIT"}
 readme = "README.md"
