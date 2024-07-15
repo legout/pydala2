@@ -20,6 +20,7 @@ from .schema import (
     shrink_large_string,
 )
 from .table import PydalaTable
+import psutil
 
 
 class BaseDataset:
@@ -54,6 +55,11 @@ class BaseDataset:
             ddb_con = _duckdb.connect()
 
         self.ddb_con = ddb_con
+        # enable object caching for e.g. parquet metadata
+        self.ddb_con.execute(
+            f"""PRAGMA enable_object_cache;
+                             SET THREADS={psutil.cpu_count()*2};"""
+        )
         self._timestamp_column = timestamp_column
 
         self.load_files()
