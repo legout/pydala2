@@ -376,6 +376,16 @@ def delta(
     elif isinstance(df1, pl.DataFrame) and isinstance(df2, pl.LazyFrame):
         df1 = df1.lazy()
 
+    # cast to equal schema
+    if isinstance(df1, pl.LazyFrame):
+        s1 = df1.collect_schema()
+        s2 = df2.collect_schema()
+    else:
+        s1 = df1.schema
+        s2 = df2.schema
+    if sorted(s1.items()) != sorted(s2.items()):
+        df2 = df2.cast(s1)
+
     df = df1.join(df2, on=subset, how="anti")
 
     if eager and isinstance(df, pl.LazyFrame):
