@@ -654,6 +654,12 @@ class BaseDataset:
             if unique:
                 writer.unique(columns=unique)
 
+            if partitioning_columns:
+                writer.add_datepart_columns(
+                    columns=partitioning_columns,
+                    timestamp_column=self._timestamp_column,
+                )
+
             writer.cast_schema(
                 use_large_string=use_large_string,
                 ts_unit=ts_unit,
@@ -661,20 +667,6 @@ class BaseDataset:
                 remove_tz=remove_tz,
                 alter_schema=alter_schema,
             )
-
-            if partitioning_columns:
-                writer.add_datepart_columns(
-                    columns=partitioning_columns,
-                    timestamp_column=self._timestamp_column,
-                )
-
-            # writer.cast_schema(
-            #     use_large_string=use_large_string,
-            #     ts_unit=ts_unit,
-            #     tz=tz,
-            #     remove_tz=remove_tz,
-            #     alter_schema=alter_schema,
-            # )
 
             if mode == "delta" and self.is_loaded:
                 writer._to_polars()
