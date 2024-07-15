@@ -282,7 +282,11 @@ class Writer:
                 timestamp_column=timestamp_column, **datepart_columns
             )
             self._to_arrow()
-            self.schema = self.data.schema
+            for col in datepart_columns:
+                if col not in self.schema.names:
+                    if col == "weekday":
+                        self.schema.append(pa.field(col, pa.string()))
+                    self.schema = self.schema.append(pa.field(col, pa.int32()))
 
     def cast_schema(
         self,
