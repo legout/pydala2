@@ -15,7 +15,7 @@ dependencies = [
 ]
 description = "poor man´s datalake"
 name = "pydala2"
-version = "0.8.0"
+version = "0.8.1"
 
 license = {text = "MIT"}
 readme = "README.md"
@@ -26,26 +26,26 @@ legacy = ["polars-lts-cpu>=0.20.4"]
 standard = ["polars>=0.20.4"]
 [tool.pdm.dev-dependencies]
 dev = [
-    "memory-profiler>=0.61.0",
-    "black>=23.9.1",
-    "isort>=5.12.0",
-    "jupyterlab>=4.0.5",
-    "jupyter-black>=0.3.4", # "python-lsp-ruff>=1.5.1",  # "python-lsp-server[all]>=1.7.4",
-    "flake8>=6.1.0",
-    "ruff>=0.1.2",
-    "sqlparser>=0.0.9",
-    "sqlparse>=0.5.0",
-    "deltalake>=0.15.3",
-    "lance>=1.2.1",
-    "asyncer>=0.0.4",
-    "orjson>=3.9.13",
-    "ujson>=5.9.0",
-    "dill>=0.3.8",
-    "msgpack>=1.0.7",
-    "marshmallow>=3.20.2",
-    "fusepy>=3.0.1",
-    "sqlglot>=23.10.0",
-    "sshfs>=2024.6.0",
+  "memory-profiler>=0.61.0",
+  "black>=23.9.1",
+  "isort>=5.12.0",
+  "jupyterlab>=4.0.5",
+  "jupyter-black>=0.3.4", # "python-lsp-ruff>=1.5.1",  # "python-lsp-server[all]>=1.7.4",
+  "flake8>=6.1.0",
+  "ruff>=0.1.2",
+  "sqlparser>=0.0.9",
+  "sqlparse>=0.5.0",
+  "deltalake>=0.15.3",
+  "lance>=1.2.1",
+  "asyncer>=0.0.4",
+  "orjson>=3.9.13",
+  "ujson>=5.9.0",
+  "dill>=0.3.8",
+  "msgpack>=1.0.7",
+  "marshmallow>=3.20.2",
+  "fusepy>=3.0.1",
+  "sqlglot>=23.10.0",
+  "sshfs>=2024.6.0",
 ]
 
 [build-system]
