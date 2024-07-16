@@ -199,7 +199,7 @@ def replace_schema(
     field_dtype: dict | None = None,
     ts_unit: str | None = "us",
     tz: str | None = None,
-    alter_schema: bool = False,
+    alter_schema: bool = True,
 ) -> pa.Table:
     """
     Replaces the schema of a PyArrow table with the specified schema or modifies the existing schema.
@@ -209,7 +209,7 @@ def replace_schema(
         schema (pa.Schema | None, optional): The new schema to replace the existing schema. Defaults to None.
         field_dtype (dict | None, optional): A dictionary mapping field names to their new data types. Defaults to None.
         alter_schema (bool, optional): If True, adds missing fields to the table based on the new schema.
-            If False, drops fields from the table that are not present in the new schema. Defaults to False.
+            If False, drops fields from the table that are not present in the new schema. Defaults to True.
 
     Returns:
         pa.Table: The modified table with the replaced or modified schema.
@@ -222,16 +222,17 @@ def replace_schema(
 
     schema = schema or table.schema
 
-    if alter_schema:
-        missing_fields = [
-            field for field in schema.names if field not in table.column_names
-        ]
+    # add missing fields to the table
+    missing_fields = [
+        field for field in schema.names if field not in table.column_names
+    ]
 
-        for field in missing_fields:
-            table = table.append_column(
-                field, pa.array([None] * len(table), type=schema.field(field).type)
-            )
-    else:
+    for field in missing_fields:
+        table = table.append_column(
+            field, pa.array([None] * len(table), type=schema.field(field).type)
+        )
+
+    if not alter_schema:
         table = table.drop(
             [field for field in table.column_names if field not in schema.names]
         )
