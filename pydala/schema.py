@@ -438,7 +438,8 @@ def unify_schemas(
 
 
 def repair_schema(
-    files: list[str],
+    files: list[str] | None = None,
+    file_schemas: dict[str, pa.Schema] | None = None,
     base_path: str | None = None,
     schema: pa.Schema | None = None,
     filesystem: AbstractFileSystem | pfs.FileSystem | None = None,
@@ -471,8 +472,12 @@ def repair_schema(
             order of firt schema is used. Otherwise, the order if the given field names is
             applied.
     """
+    if files is None:
+        files = list(file_schemas.keys())
+
     if base_path is not None:
         files = [os.path.join(base_path, f) for f in files]
+
     if schema is None:
         schemas = collect_file_schemas(
             files=files,
@@ -498,7 +503,10 @@ def repair_schema(
         schema = shrink_large_string(schema)
 
     def _repair_schema(f, schema, filesystem):
-        file_schema = pq.read_schema(f, filesystem=filesystem)
+        if file_schemas is not None:
+            file_schema = file_schemas.get(
+                f.replace(base_path or "", ""), None
+            ) or pq.read_schema(f, filesystem=filesystem)
 
         if file_schema != schema:
             table = replace_schema(
