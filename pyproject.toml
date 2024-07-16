@@ -45,8 +45,7 @@ dev = [
     "marshmallow>=3.20.2",
     "fusepy>=3.0.1",
     "sqlglot>=23.10.0",
-    "cloudpickle>=3.0.0",
-    "rclone>=0.4.4",
+    "sshfs>=2024.6.0",
 ]
 
 [build-system]
