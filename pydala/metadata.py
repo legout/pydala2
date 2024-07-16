@@ -11,6 +11,7 @@ import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 
 from .filesystem import FileSystem, clear_cache
+
 # from .helpers.metadata import collect_parquet_metadata  # , remove_from_metadata
 from .helpers.misc import get_partitions_from_path, run_parallel
 from .schema import repair_schema, unify_schemas
@@ -389,11 +390,14 @@ class ParquetDatasetMetadata:
         # files with different schema
 
         files_to_repair = sorted(set(files_to_repair))
-
+        file_schemas = {
+            f: self._file_metadata[f].schema.to_arrow_schema() for f in files_to_repair
+        }
         # repair schema of files
         if len(files_to_repair):
             repair_schema(
                 files=files_to_repair,
+                file_schemas=file_schemas,
                 schema=schema,
                 base_path=self._path,
                 filesystem=self._filesystem,
