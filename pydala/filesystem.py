@@ -13,8 +13,7 @@ from fsspec.implementations import cached as cachedfs
 from fsspec.implementations.dirfs import DirFileSystem
 import s3fs
 
-from .helpers.misc import run_parallel
-from .io import read_table
+from .helpers.misc import run_parallel, read_table
 from .schema import shrink_large_string
 
 
