@@ -11,7 +11,7 @@ from joblib import Parallel, delayed
 
 from .datetime import timestamp_from_string
 
-from fsspec.core import AbstractFileSystem, filesystem as fsspec_filesystem
+from fsspec import AbstractFileSystem, filesystem as fsspec_filesystem
 
 
 def read_table(
