@@ -508,6 +508,11 @@ def repair_schema(
             file_schema = file_schemas.get(
                 f.replace(base_path or "", ""), None
             ) or pq.read_schema(f, filesystem=filesystem)
+        else:
+            file_schema = None
+
+        if file_schema is None:
+            file_schema = pq.read_schema(f, filesystem=filesystem)
 
         if file_schema != schema:
             table = replace_schema(
