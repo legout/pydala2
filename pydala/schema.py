@@ -473,7 +473,7 @@ def repair_schema(
             order of firt schema is used. Otherwise, the order if the given field names is
             applied.
     """
-    if files is None:
+    if files is None and file_schemas is not None:
         files = list(file_schemas.keys())
 
     if base_path is not None:
