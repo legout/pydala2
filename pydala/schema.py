@@ -7,6 +7,7 @@ import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 
 from .helpers.misc import run_parallel
+from .io import read_table
 
 # from .io import read_table, write_table
 
@@ -222,6 +223,9 @@ def replace_schema(
 
     schema = schema or table.schema
 
+    if schema == schema_org:
+        return table
+
     # add missing fields to the table
     missing_fields = [
         field for field in schema.names if field not in table.column_names
@@ -237,22 +241,21 @@ def replace_schema(
             [field for field in table.column_names if field not in schema.names]
         )
 
-    if schema != schema_org:
-        int2timestamp_columns = [
-            col
-            for col in schema.names
-            if pa.types.is_timestamp(schema.field(col).type)
-            and (
-                pa.types.is_integer(schema_org.field(col).type)
-                if col in schema_org.names
-                else False
-            )
-        ]
-        table = cast_int2timestamp(table, int2timestamp_columns, unit=ts_unit, tz=tz)
-        # cast str to bool
-        table = cast_str2bool(table, schema=schema)
+    int2timestamp_columns = [
+        col
+        for col in schema.names
+        if pa.types.is_timestamp(schema.field(col).type)
+        and (
+            pa.types.is_integer(schema_org.field(col).type)
+            if col in schema_org.names
+            else False
+        )
+    ]
+    table = cast_int2timestamp(table, int2timestamp_columns, unit=ts_unit, tz=tz)
+    # cast str to bool
+    table = cast_str2bool(table, schema=schema)
 
-        return table.select(schema.names).cast(schema)
+    return table.select(schema.names).cast(schema)
 
     return table.select(schema.names)
 
@@ -516,7 +519,7 @@ def repair_schema(
 
         if file_schema != schema:
             table = replace_schema(
-                pq.read_table(f, filesystem=filesystem),
+                read_table(f, filesystem=filesystem, partitioning=None),
                 schema=schema,
                 ts_unit=ts_unit,
                 tz=tz,
