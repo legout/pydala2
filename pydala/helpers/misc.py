@@ -4,13 +4,55 @@ import re
 import pendulum as pdl
 import pyarrow as pa
 import pyarrow.compute as pc
+import pyarrow.parquet as pq
+
 import tqdm
 from joblib import Parallel, delayed
 
 from .datetime import timestamp_from_string
 
-# from .schema import shrink_large_string, convert_timestamp
-# from .polars_ext import pl
+from fsspec.core import AbstractFileSystem, filesystem as fsspec_filesystem
+
+
+def read_table(
+    path: str,
+    schema: pa.Schema | None = None,
+    filesystem: AbstractFileSystem | None = None,
+    partitioning: str | list[str] | None = None,
+) -> pa.Table:
+    """Loads the data for the given file path into a pyarrow table.
+
+    Args:
+        path (str): File path.
+        schema (pa.Schema | None, optional): Pyarrow schema. Defaults to None.
+        filesystem (AbstractFileSystem | None, optional): Filesystem. Defaults to None.
+        partitioning (str | list[str] | None, optional): Partitioning of the file. Could be 'hive' for
+            hive style partitioning or a list of column names. Defaults to None.
+
+    Returns:
+        pa.Table: Pyarrow table.
+    """
+    # sourcery skip: avoid-builtin-shadow
+    if filesystem is None:
+        filesystem = fsspec_filesystem("file")
+
+    filesystem.invalidate_cache()
+
+    table = pq.read_table(pa.BufferReader(filesystem.read_bytes(path)), schema=schema)
+
+    if partitioning is not None:
+        partitions = get_partitions_from_path(path, partitioning=partitioning)
+
+        for key, values in partitions:
+            if key in table.column_names:
+                table = table.drop(key)
+            table = table.append_column(
+                field_=key, column=pa.array([values] * len(table))
+            )
+    if schema is not None:
+        return table.cast(schema)
+
+    return table
 
 
 def str2pyarrow_filter(string: str, schema: pa.Schema):
