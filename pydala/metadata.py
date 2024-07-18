@@ -137,6 +137,9 @@ class ParquetDatasetMetadata:
         self._filesystem = FileSystem(
             bucket=bucket, fs=filesystem, cached=cached, **caching_options
         )
+
+        self._makedirs()
+
         self._caching_options = caching_options
         if not self._filesystem.exists(self._path):
             try:
@@ -165,6 +168,12 @@ class ParquetDatasetMetadata:
         if self.has_file_metadata_file:
             with self._filesystem.open(self._file_metadata_file, "rb") as f:
                 return pickle.load(f)
+
+    def _makedirs(self):
+        if self._filesystem.exists(self._path):
+            return
+        self._filesystem.touch(os.path.join(self._path, "tmp.delete"))
+        self._filesystem.rm(os.path.join(self._path, "tmp.delete"))
 
     def reload_files(self) -> None:
         """

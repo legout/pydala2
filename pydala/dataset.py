@@ -45,6 +45,7 @@ class BaseDataset:
         self._filesystem = FileSystem(
             bucket=bucket, fs=filesystem, cached=cached, **fs_kwargs
         )
+        self._makedirs()
 
         if name is None:
             self.name = os.path.basename(path)
@@ -97,6 +98,12 @@ class BaseDataset:
                 self._filesystem.glob(os.path.join(self._path, f"**/*.{self._format}"))
             )
         ]
+
+    def _makedirs(self):
+        if self._filesystem.exists(self._path):
+            return
+        self._filesystem.touch(os.path.join(self._path, "tmp.delete"))
+        self._filesystem.rm(os.path.join(self._path, "tmp.delete"))
 
     @property
     def files(self) -> list:
