@@ -69,7 +69,7 @@ def _opt_dtype(s: pl.Series, strict: bool = True) -> pl.Series:
                 s = (
                     s.str.replace_all(",", ".")
                     # .str.replace_all("^0{1,}$", "+0")
-                    .str.strip_chars_start("0")
+                    # .str.strip_chars_start("0")
                     .str.replace_all(r"\.0*$", "")
                 )
                 s = s.set(s == "-", None).set(s == "", None).set(s == "None", None)
@@ -103,10 +103,12 @@ def _opt_dtype(s: pl.Series, strict: bool = True) -> pl.Series:
             # cast str to bool
             elif (
                 s.str.to_lowercase()
-                .str.contains("^(true|false|1|0|wahr|falsch)$")
+                .str.contains("^(true|false|1|0|wahr|falsch|nein|nok|ok|ja)$")
                 .all()
             ):
-                s = s.str.to_lowercase().str.contains("^(true|1|wahr)$", strict=True)
+                s = s.str.to_lowercase().str.contains(
+                    "^(true|1|wahr|ja|ok)$", strict=True
+                )
 
         except Exception as e:
             if strict:
