@@ -307,17 +307,17 @@ def with_row_count(
 
     if over:
         return df.with_columns(pl.lit(1).alias("row_nr")).with_columns(
-            pl.col("row_nr").cumsum().over(over)
+            pl.col("row_nr").cum_sum().over(over)
         )
     else:
         return df.with_columns(pl.lit(1).alias("row_nr")).with_columns(
-            pl.col("row_nr").cumsum()
+            pl.col("row_nr").cum_sum()
         )
 
 
 # def delta(
 #     df1: pl.DataFrame | pl.LazyFrame,
-#     df2: pl.DataFrame | pl.LazyFrame,
+#     df2: pl.DataFrame | pl.LazyFrame,CSC-glpat-aH5TFEU9GW6CEdzMxpH9
 #     subset: str | list[str] | None = None,
 #     eager: bool = False,
 # ) -> pl.LazyFrame:
