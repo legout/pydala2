@@ -379,12 +379,12 @@ def delta(
         df1 = df1.lazy()
 
     # cast to equal schema
-    if isinstance(df1, pl.LazyFrame):
-        s1 = df1.collect_schema()
-        s2 = df2.collect_schema()
-    else:
-        s1 = df1.schema
-        s2 = df2.schema
+    # if isinstance(df1, pl.LazyFrame):
+    s1 = df1.collect_schema()
+    s2 = df2.select([col for col in df1.columns if col in df2.columns]).collect_schema()
+    # else:
+    #    s1 = df1.schema
+    #    s2 = df2schema
     if sorted(s1.items()) != sorted(s2.items()):
         df1 = df1.opt_dtype(strict=False).cast(s2)
 
