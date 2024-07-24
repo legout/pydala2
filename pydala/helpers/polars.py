@@ -386,7 +386,7 @@ def delta(
         s1 = df1.schema
         s2 = df2.schema
     if sorted(s1.items()) != sorted(s2.items()):
-        df2 = df2.opt_dtype(strict=False).cast(s1)
+        df1 = df1.opt_dtype(strict=False).cast(s2)
 
     df = df1.join(df2, on=subset, how="anti")
 
