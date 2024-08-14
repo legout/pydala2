@@ -172,9 +172,11 @@ class ParquetDatasetMetadata:
     def _makedirs(self):
         if self._filesystem.exists(self._path):
             return
-        self._filesystem.mkdir(self._path)
-        self._filesystem.touch(os.path.join(self._path, "tmp.delete"))
-        self._filesystem.rm(os.path.join(self._path, "tmp.delete"))
+        try:
+            self._filesystem.mkdir(self._path)
+        except:
+            self._filesystem.touch(os.path.join(self._path, "tmp.delete"))
+            self._filesystem.rm(os.path.join(self._path, "tmp.delete"))
 
     def reload_files(self) -> None:
         """
