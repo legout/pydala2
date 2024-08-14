@@ -102,9 +102,11 @@ class BaseDataset:
     def _makedirs(self):
         if self._filesystem.exists(self._path):
             return
-        self._filesystem.mkdirs(self._path)
-        self._filesystem.touch(os.path.join(self._path, "tmp.delete"))
-        self._filesystem.rm(os.path.join(self._path, "tmp.delete"))
+        try:
+            self._filesystem.mkdirs(self._path)
+        except:
+            self._filesystem.touch(os.path.join(self._path, "tmp.delete"))
+            self._filesystem.rm(os.path.join(self._path, "tmp.delete"))
 
     @property
     def files(self) -> list:

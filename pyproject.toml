@@ -1,5 +1,5 @@
 [project]
-authors = [{name = "Volker Lorrmann", email = "ligno.blades@gmail.com"}]
+authors = [{name = "Volker L.", email = "ligno.blades@gmail.com"}]
 dependencies = [
   "pyarrow>=12.0.1",
   "s3fs>=2023.6.0",
@@ -15,7 +15,9 @@ dependencies = [
 ]
 description = "poor man´s datalake"
 name = "pydala2"
-version = "0.8.3"
+homepage = "https://github.com/legout/pydala2"
+repository = "https://github.com/legout/pydala2"
+version = "0.8.3.4"
 
 license = {text = "MIT"}
 readme = "README.md"
