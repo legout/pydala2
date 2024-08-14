@@ -5,7 +5,7 @@
 groups = ["default", "dev", "legacy", "msgpack"]
 strategy = ["cross_platform"]
 lock_version = "4.4.1"
-content_hash = "sha256:dcd4f1ad26367405db0bda02b3ba03a1ed0b02b9dcf6de668a670d6b3c127c3a"
+content_hash = "sha256:a85a27aace35c77e42e03b1d38ecdeba760d52a6d6208214d38cd8fcacd743e1"
 
 [[package]]
 name = "aiobotocore"
