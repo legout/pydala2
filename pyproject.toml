@@ -19,7 +19,7 @@ description = "poor man´s datalake"
 homepage = "https://github.com/legout/pydala2"
 name = "pydala2"
 repository = "https://github.com/legout/pydala2"
-version = "0.8.3.5"
+version = "0.8.3.6"
 
 license = {text = "MIT"}
 readme = "README.md"
