@@ -7,7 +7,6 @@ import pandas as pd
 import polars.selectors as cs
 import pyarrow as pa
 import pyarrow.dataset as pds
-
 # import pyarrow.dataset as pds
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
@@ -74,7 +73,6 @@ class Writer:
         data: (
             pa.Table
             | pa.RecordBatch
-            # | pa.RecordBatchReader
             | pl.DataFrame
             | pl.LazyFrame
             | pd.DataFrame

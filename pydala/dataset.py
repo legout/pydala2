@@ -4,6 +4,8 @@ import re
 
 import duckdb as _duckdb
 import pandas as pd
+import polars.selectors as cs
+import psutil
 import pyarrow as pa
 import pyarrow.dataset as pds
 import tqdm
@@ -15,12 +17,9 @@ from .helpers.misc import str2pyarrow_filter
 from .helpers.polars import pl as _pl
 from .io import Writer
 from .metadata import ParquetDatasetMetadata, PydalaDatasetMetadata
-from .schema import (
-    replace_schema,  # from .optimize import Optimize
-    shrink_large_string,
-)
+from .schema import replace_schema  # from .optimize import Optimize
+from .schema import shrink_large_string
 from .table import PydalaTable
-import psutil
 
 
 class BaseDataset:
@@ -104,7 +103,8 @@ class BaseDataset:
             return
         try:
             self._filesystem.mkdirs(self._path)
-        except:
+        except Exception as e:
+            _ = e
             self._filesystem.touch(os.path.join(self._path, "tmp.delete"))
             self._filesystem.rm(os.path.join(self._path, "tmp.delete"))
 
@@ -532,14 +532,21 @@ class BaseDataset:
         if isinstance(df, _pl.LazyFrame):
             collect = True
 
-        filter_expr = []
         columns = set(df.columns) & set(self.columns)
+        null_columns = df.select(cs.by_dtype(_pl.Null)).collect_schema().names()
+        columns = columns - set(null_columns)
         if filter_columns is not None:
             columns = set(columns) & set(filter_columns)
         if len(columns) == 0:
             return _pl.DataFrame(schema=df.schema)
 
+        filter_expr = []
         for col in columns:
+            # if df.collect_schema().get(col).is_(_pl.Null):
+            #     max_min = df.select(
+            #         _pl.first(col).alias("max"), _pl.last(col).alias("min")
+            #     )
+            # else:
             max_min = df.select(_pl.max(col).alias("max"), _pl.min(col).alias("min"))
 
             if collect:
@@ -558,7 +565,7 @@ class BaseDataset:
                 )
             )
 
-        return self.filter(" AND ".join(filter_expr), use="duckdb").pl
+        return self.filter(" AND ".join(filter_expr)).pl
 
     def write_to_dataset(
         self,
@@ -959,54 +966,57 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
             ]
         )
 
-    def _get_delta_other_df(
-        self,
-        df: _pl.DataFrame | _pl.LazyFrame,
-        filter_columns: str | list[str] | None = None,
-    ) -> _pl.DataFrame | _pl.LazyFrame:
-        """
-        Generate the delta dataframe based on the given dataframe, columns, use, and on parameters.
+    # def _get_delta_other_df(
+    #     self,
+    #     df: _pl.DataFrame | _pl.LazyFrame,
+    #     filter_columns: str | list[str] | None = None,
+    # ) -> _pl.DataFrame | _pl.LazyFrame:
+    #     """
+    #     Generate the delta dataframe based on the given dataframe, columns, use, and on parameters.
 
-        Parameters:
-            df (_pl.DataFrame | _pl.LazyFrame): The input dataframe or lazyframe.
-            filter_columns (str | list[str] | None, optional): The columns to consider. Defaults to None.
-            use (str, optional): The use parameter. Defaults to "auto".
-            on (str, optional): The on parameter. Defaults to "auto".
+    #     Parameters:
+    #         df (_pl.DataFrame | _pl.LazyFrame): The input dataframe or lazyframe.
+    #         filter_columns (str | list[str] | None, optional): The columns to consider. Defaults to None.
+    #         use (str, optional): The use parameter. Defaults to "auto".
+    #         on (str, optional): The on parameter. Defaults to "auto".
 
-        Returns:
-            _pl.DataFrame: The delta dataframe.
-        """
-        collect = False
-        if len(self.files) == 0:
-            return _pl.DataFrame(schema=df.schema)
-        if isinstance(df, _pl.LazyFrame):
-            collect = True
+    #     Returns:
+    #         _pl.DataFrame: The delta dataframe.
+    #     """
+    #     collect = False
+    #     if len(self.files) == 0:
+    #         return _pl.DataFrame(schema=df.schema)
+    #     if isinstance(df, _pl.LazyFrame):
+    #         collect = True
 
-        filter_expr = []
-        columns = set(df.columns) & set(self.columns)
-        if filter_columns is not None:
-            columns = set(columns) & set(filter_columns)
-        if len(columns) == 0:
-            return _pl.DataFrame(schema=df.schema)
+    #     columns = set(df.columns) & set(self.columns)
+    #     null_columns = df.select(cs.by_dtype(_pl.Null)).collect_schema().names()
+    #     columns = columns - set(null_columns)
+    #     if filter_columns is not None:
+    #         columns = set(columns) & set(filter_columns)
 
-        for col in columns:
-            max_min = df.select(_pl.max(col).alias("max"), _pl.min(col).alias("min"))
+    #     if len(columns) == 0:
+    #         return _pl.DataFrame(schema=df.schema)
 
-            if collect:
-                max_min = max_min.collect()
-            f_max = max_min["max"][0]
-            f_min = max_min["min"][0]
+    #     filter_expr = []
+    #     for col in columns:
+    #         max_min = df.select(_pl.max(col).alias("max"), _pl.min(col).alias("min"))
 
-            if isinstance(f_max, str):
-                f_max = f_max.strip("'").replace(",", "")
-            if isinstance(f_min, str):
-                f_min = f_min.strip("'").replace(",", "")
+    #         if collect:
+    #             max_min = max_min.collect()
+    #         f_max = max_min["max"][0]
+    #         f_min = max_min["min"][0]
 
-            filter_expr.append(
-                f"{col}<='{f_max}' AND {col}>='{f_min}'".replace("'None'", "NULL")
-            )
+    #         if isinstance(f_max, str):
+    #             f_max = f_max.strip("'").replace(",", "")
+    #         if isinstance(f_min, str):
+    #             f_min = f_min.strip("'").replace(",", "")
 
-        return self.scan(" AND ".join(filter_expr)).pl
+    #         filter_expr.append(
+    #             f"{col}<='{f_max}' AND {col}>='{f_min}'".replace("'None'", "NULL")
+    #         )
+
+    #     return self.filter(" AND ".join(filter_expr)).pl
 
     def write_to_dataset(
         self,

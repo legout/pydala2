@@ -8,12 +8,12 @@ import polars as pl
 import pyarrow as pa
 import pyarrow.dataset as pds
 import pyarrow.parquet as pq
+import s3fs
 from fsspec import AbstractFileSystem, filesystem
 from fsspec.implementations import cached as cachedfs
 from fsspec.implementations.dirfs import DirFileSystem
-import s3fs
 
-from .helpers.misc import run_parallel, read_table
+from .helpers.misc import read_table, run_parallel
 from .schema import shrink_large_string
 
 

@@ -14,7 +14,7 @@ def get_timestamp_column(df: pl.DataFrame | pl.LazyFrame | pa.Table) -> str | li
     # if isinstance(df, pl.LazyFrame):
     #    return df.collect_schema().names()
 
-    return df.select(cs.datetime() | cs.date()).columns
+    return df.select(cs.datetime() | cs.date()).collect_schema().names()
 
 
 def get_timedelta_str(timedelta_string: str, to: str = "polars") -> str:

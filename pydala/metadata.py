@@ -11,7 +11,6 @@ import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 
 from .filesystem import FileSystem, clear_cache
-
 # from .helpers.metadata import collect_parquet_metadata  # , remove_from_metadata
 from .helpers.misc import get_partitions_from_path, run_parallel
 from .schema import repair_schema, unify_schemas
@@ -174,7 +173,8 @@ class ParquetDatasetMetadata:
             return
         try:
             self._filesystem.mkdir(self._path)
-        except:
+        except Exception as e:
+            _ = e
             self._filesystem.touch(os.path.join(self._path, "tmp.delete"))
             self._filesystem.rm(os.path.join(self._path, "tmp.delete"))
 
@@ -768,7 +768,21 @@ class PydalaDatasetMetadata:
                     rgc.pop("file_path")
                     rgc.pop("compression")
                     if "statistics" in rgc:
-                        rgc.update(rgc.pop("statistics"))
+                        if rgc["statistics"] is not None:
+                            rgc.update(rgc.pop("statistics"))
+                        else:
+                            rgc.pop("statistics")
+                            rgc.update(
+                                {
+                                    "has_min_max": False,
+                                    "min": None,
+                                    "max": None,
+                                    "null_count": None,
+                                    "distinct_count": None,
+                                    "num_values": None,
+                                    "physical_type": "UNKNOWN",
+                                }
+                            )
                     metadata_table[col_name].append(rgc)
         return metadata_table
 

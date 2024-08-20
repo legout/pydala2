@@ -5,13 +5,12 @@ import pendulum as pdl
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
-
 import tqdm
+from fsspec import AbstractFileSystem
+from fsspec import filesystem as fsspec_filesystem
 from joblib import Parallel, delayed
 
 from .datetime import timestamp_from_string
-
-from fsspec import AbstractFileSystem, filesystem as fsspec_filesystem
 
 
 def read_table(

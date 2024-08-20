@@ -2,6 +2,7 @@ from functools import partial
 
 import pandas as pd
 import polars as pl
+import polars.selectors as cs
 
 from .datetime import get_timedelta_str, get_timestamp_column
 
@@ -363,7 +364,10 @@ def delta(
     subset: list[str] | None = None,
     eager: bool = False,
 ) -> pl.DataFrame:
-    columns = sorted(set(df1.columns) & set(df2.columns))
+    s1 = df1.select(~cs.by_dtype(pl.Null())).collect_schema()
+    s2 = df2.select(~cs.by_dtype(pl.Null())).collect_schema()
+
+    columns = sorted(set(s1.names()) & set(s2.names()))
 
     if subset is None:
         subset = df1.columns
@@ -380,15 +384,15 @@ def delta(
 
     # cast to equal schema
     # if isinstance(df1, pl.LazyFrame):
-    s1 = df1.collect_schema()
-    s2 = df2.select([col for col in df1.columns if col in df2.columns]).collect_schema()
+
+    s2 = df2.select([col for col in s1.names() if col in s2.names()]).collect_schema()
     # else:
     #    s1 = df1.schema
     #    s2 = df2schema
     if sorted(s1.items()) != sorted(s2.items()):
         df1 = df1.opt_dtype(strict=False).cast(s2)
 
-    df = df1.join(df2, on=subset, how="anti")
+    df = df1.join(df2, on=subset, how="anti", join_nulls=True)
 
     if eager and isinstance(df, pl.LazyFrame):
         return df.collect()
