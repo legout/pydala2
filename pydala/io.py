@@ -1,18 +1,21 @@
 import datetime as dt
 import os
 import uuid
+import time
 
 import duckdb
 import pandas as pd
 import polars.selectors as cs
 import pyarrow as pa
 import pyarrow.dataset as pds
+
 # import pyarrow.dataset as pds
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 from fsspec import filesystem as fsspec_filesystem
 
 from .helpers.datetime import get_timestamp_column
+from .filesystem import clear_cache
 from .helpers.polars import pl
 from .schema import convert_timestamp, replace_schema, shrink_large_string
 from .table import PydalaTable
@@ -338,7 +341,7 @@ class Writer:
             None
         """
         self._to_arrow()
-        # self.data.cast(self.schema)
+
         if basename is None:
             basename_template = (
                 "data-"
@@ -346,18 +349,10 @@ class Writer:
             )
         else:
             basename_template = f"{basename}-{{i}}.parquet"
-        # print(basename_template)
-        # print("max_rows_per_file", max_rows_per_file)
-        # print("row_group_size", row_group_size)
+
         file_options = pds.ParquetFileFormat().make_write_options(
             compression=compression
         )
-        if self._filesystem.protocol == "dir":
-            if "local" in self._filesystem.fs.protocol:
-                create_dir = True
-        else:
-            if "local" in self._filesystem.protocol:
-                create_dir = True
 
         if hasattr(self._filesystem, "fs"):
             if "local" in self._filesystem.fs.protocol:
@@ -366,20 +361,44 @@ class Writer:
             if "local" in self._filesystem.protocol:
                 create_dir = True
 
-        pds.write_dataset(
-            self.data,
-            base_dir=self.base_path,
-            filesystem=self._filesystem,
-            file_options=file_options,
-            partitioning=partitioning_columns,
-            partitioning_flavor=partitioning_flavor,
-            basename_template=basename_template,
-            min_rows_per_group=row_group_size,
-            max_rows_per_group=row_group_size,
-            # compression=compression,
-            max_rows_per_file=max_rows_per_file,
-            existing_data_behavior="overwrite_or_ignore",
-            create_dir=create_dir,
-            format="parquet",
-            **kwargs,
-        )
+        retries = 0
+        while retries < 2:
+            try:
+                pds.write_dataset(
+                    self.data,
+                    base_dir=self.base_path,
+                    filesystem=self._filesystem,
+                    file_options=file_options,
+                    partitioning=partitioning_columns,
+                    partitioning_flavor=partitioning_flavor,
+                    basename_template=basename_template,
+                    min_rows_per_group=row_group_size,
+                    max_rows_per_group=row_group_size,
+                    max_rows_per_file=max_rows_per_file,
+                    existing_data_behavior="overwrite_or_ignore",
+                    create_dir=create_dir,
+                    format="parquet",
+                    **kwargs,
+                )
+                break
+            except Exception as e:
+                retries += 1
+                if retries == 2:
+                    raise e
+                self.clear_cache()
+                time.sleep(0.5)
+
+    def clear_cache(self) -> None:
+        """
+        Clears the cache for the dataset's filesystem and base filesystem.
+
+        This method clears the cache for the dataset's filesystem and base filesystem,
+        which can be useful if the dataset has been modified and the cache needs to be
+        updated accordingly.
+
+        Returns:
+            None
+        """
+        if hasattr(self._filesystem, "fs"):
+            clear_cache(self._filesystem.fs)
+        clear_cache(self._filesystem)

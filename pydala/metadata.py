@@ -11,6 +11,7 @@ import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 
 from .filesystem import FileSystem, clear_cache
+
 # from .helpers.metadata import collect_parquet_metadata  # , remove_from_metadata
 from .helpers.misc import get_partitions_from_path, run_parallel
 from .schema import repair_schema, unify_schemas
@@ -114,6 +115,7 @@ class ParquetDatasetMetadata:
         filesystem: AbstractFileSystem | pfs.FileSystem | None = None,
         bucket: str | None = None,
         cached: bool = False,
+        update_metadata: bool = False,
         **caching_options,
     ) -> None:
         """
@@ -138,32 +140,35 @@ class ParquetDatasetMetadata:
         )
 
         self._makedirs()
+        self.load_files()
 
         self._caching_options = caching_options
-        if not self._filesystem.exists(self._path):
-            try:
-                self._filesystem.mkdir(self._path)
-            except Exception:
-                pass  # raise FileNotFoundError(f"Directory {self._path} does not exist.")
+        # if not self._filesystem.exists(self._path):
+        #     try:
+        #         self._filesystem.mkdir(self._path)
+        #     except Exception:
+        #         pass  # raise FileNotFoundError(f"Directory {self._path} does not exist.")
 
         # self._files = sorted(self._filesystem.glob(os.path.join(path, "**/*.parquet")))
-        self.reload_files()
         # if not self._filesystem.exists(os.path.join(path, "metadata")):
         #     try:
         #         self._filesystem.mkdir(os.path.join(path, "metadata"))
         #     except Exception:
         #         pass
         #
+
         self._metadata_file = os.path.join(path, "_metadata")
         self._file_metadata_file = os.path.join(path, "_file_metadata")
         self._metadata = self._read_metadata()
-        self._file_metadata = self._load_file_metadata()
+        self._file_metadata = self._read_file_metadata()
+        if update_metadata:
+            self.update()
 
     def _read_metadata(self) -> pq.FileMetaData | None:
         if self.has_metadata_file:
             return pq.read_metadata(self._metadata_file, filesystem=self._filesystem)
 
-    def _load_file_metadata(self) -> dict[pq.FileMetaData] | None:
+    def _read_file_metadata(self) -> dict[pq.FileMetaData] | None:
         if self.has_file_metadata_file:
             with self._filesystem.open(self._file_metadata_file, "rb") as f:
                 return pickle.load(f)
@@ -178,7 +183,7 @@ class ParquetDatasetMetadata:
             self._filesystem.touch(os.path.join(self._path, "tmp.delete"))
             self._filesystem.rm(os.path.join(self._path, "tmp.delete"))
 
-    def reload_files(self) -> None:
+    def load_files(self) -> None:
         """
         Reloads the list of files in the dataset directory. This method should be called
         after adding or removing files from the directory to ensure that the dataset object
@@ -187,6 +192,7 @@ class ParquetDatasetMetadata:
         Returns:
             None
         """
+        self.clear_cache()
         self._files = [
             fn.replace(self._path, "").lstrip("/")
             for fn in sorted(
@@ -257,11 +263,8 @@ class ParquetDatasetMetadata:
         """
 
         # Add new files to file_metadata
-        self.reload_files()
+        self.load_files()
 
-        # if self.has_metadata:
-        #    new_files = sorted((set(self._files) - set(self.files_in_metadata)))
-        # else:
         new_files = []
         rm_files = []
 
@@ -423,7 +426,7 @@ class ParquetDatasetMetadata:
             # update file metadata
             self.update_file_metadata(files=sorted(files_to_repair), **kwargs)
 
-    def _update_metadata(self, **kwargs):
+    def _update_metadata_file(self, **kwargs):
         """
         Update metadata based on the given keyword arguments.
 
@@ -482,12 +485,9 @@ class ParquetDatasetMetadata:
 
         # update file metadata
         self.update_file_metadata(**kwargs)
+
         if len(self.files) == 0:
             return
-
-        # return if not file metadata
-        # if not hasattr(self, "file_metadata"):
-        #    return
 
         self._repair_file_schemas(
             schema=schema,
@@ -498,12 +498,8 @@ class ParquetDatasetMetadata:
             sort=sort,
         )
 
-        # update metadata
-        self._update_metadata(**kwargs)
-
-        # if self._read_metadata() != self._metadata:
-        #    # write metadata file
-        #    self._write_metadata_file()
+        # update metadata file
+        self._update_metadata_file(**kwargs)
 
     def replace_schema(self, schema: pa.Schema, **kwargs) -> None:
         """
@@ -554,6 +550,8 @@ class ParquetDatasetMetadata:
         Returns:
             None
         """
+        if hasattr(self._filesystem, "fs"):
+            clear_cache(self._filesystem.fs)
         clear_cache(self._filesystem)
         clear_cache(self._base_filesystem)
 
@@ -598,26 +596,6 @@ class ParquetDatasetMetadata:
         if not self.has_file_metadata:
             self.update_file_metadata()
         return self._file_metadata
-
-    # @property
-    # def schema(self):
-    #     """
-    #     Returns the Arrow schema for the dataset.
-
-    #     If the dataset has metadata, the schema includes both the metadata and the data schema.
-    #     Otherwise, the schema only includes the data schema.
-
-    #     Returns:
-    #         pyarrow.Schema: The Arrow schema for the dataset.
-    #     """
-    #     if self.has_files:
-    #         if not hasattr(self, "_schema"):
-    #             self._schema = self.metadata.schema.to_arrow_schema()
-    #             if self.has_metadata:
-    #                 self._file_schema = self.metadata.schema.to_arrow_schema()
-    #             else:
-    #                 self._file_schema = pa.schema([])
-    #         return self._schema
 
     @property
     def file_schema(self):
@@ -683,18 +661,21 @@ class ParquetDatasetMetadata:
             A list of file paths in the dataset.
         """
         if not hasattr(self, "_files"):
-            self._files = sorted(
-                self._filesystem.glob(os.path.join(self._path, "**/*.parquet"))
-            )
+            self.load_files()
         return self._files
 
 
-class PydalaDatasetMetadata:
+class PydalaDatasetMetadata(ParquetDatasetMetadata):
     def __init__(
         self,
-        metadata: pq.FileMetaData,
+        path: str,
+        filesystem: AbstractFileSystem | pfs.FileSystem | None = None,
+        bucket: str | None = None,
+        cached: bool = False,
+        # metadata: pq.FileMetaData,
         partitioning: None | str | list[str] = None,
         ddb_con: duckdb.DuckDBPyConnection | None = None,
+        **caching_options,
     ) -> None:
         """
         A class representing metadata for a Parquet dataset.
@@ -711,14 +692,24 @@ class PydalaDatasetMetadata:
         """
 
         # self._parquet_dataset_metadata = parquet_dataset_metadata
-        # self._partitioning = partitioning
+
+        super().__init__(
+            path=path,
+            filesystem=filesystem,
+            bucket=bucket,
+            cached=cached,
+            **caching_options,
+        )
         self.reset_scan()
+        self._partitioning = partitioning
+
         if ddb_con is None:
             self.ddb_con = duckdb.connect()
         else:
             self.ddb_con = ddb_con
         try:
-            self.gen_metadata_table(metadata=metadata, partitioning=partitioning)
+            self.update_metadata_table()
+
         except Exception as e:
             print(e)
 
@@ -786,13 +777,13 @@ class PydalaDatasetMetadata:
                     metadata_table[col_name].append(rgc)
         return metadata_table
 
-    def gen_metadata_table(
+    def update_metadata_table(
         self,
-        metadata: pq.FileMetaData | list[pq.FileMetaData],
-        partitioning: None | str | list[str] = None,
+        # metadata: pq.FileMetaData | list[pq.FileMetaData],
+        # partitioning: None | str | list[str] = None,
     ):
         metadata_table = self._gen_metadata_table(
-            metadata=metadata, partitioning=partitioning
+            metadata=self.metadata, partitioning=self._partitioning
         )
         # self._metadata_table = pa.Table.from_pydict(metadata_table)
         self._metadata_table = self.ddb_con.from_arrow(
@@ -905,18 +896,18 @@ class PydalaDatasetMetadata:
                 self._filter_expr_mod
             )
 
-    def filter(self, filter_expr: str | None = None):
-        """
-        Filters the dataset for files that match the given filter expression.
+    # def filter(self, filter_expr: str | None = None):
+    #     """
+    #     Filters the dataset for files that match the given filter expression.
 
-        Args:
-            filter_expr (str | None): A filter expression to apply to the dataset. Defaults to None.
-            lazy (bool): Whether to perform the scan lazily or eagerly. Defaults to True.
+    #     Args:
+    #         filter_expr (str | None): A filter expression to apply to the dataset. Defaults to None.
+    #         lazy (bool): Whether to perform the scan lazily or eagerly. Defaults to True.
 
-        Returns:
-            None
-        """
-        self.scan(filter_expr=filter_expr)
+    #     Returns:
+    #         None
+    #     """
+    #     self.scan(filter_expr=filter_expr)
 
     @property
     def latest_filter_expr(self):
@@ -944,11 +935,11 @@ class PydalaDatasetMetadata:
         else:
             return self.files
 
-    @property
-    def files(self):
-        return sorted(
-            set(map(lambda x: x[0], self.metadata_table.select("file_path").fetchall()))
-        )
+    # @property
+    # def files(self):
+    #    return sorted(
+    #        set(map(lambda x: x[0], self.metadata_table.select("file_path").fetchall()))
+    #    )
 
     @property
     def is_scanned(self):

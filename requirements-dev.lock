@@ -48,6 +48,7 @@ jmespath==1.0.1
     # via botocore
 joblib==1.4.2
     # via pydala2
+loguru==0.7.2
 matplotlib-inline==0.1.7
     # via ipython
 msgspec==0.18.6

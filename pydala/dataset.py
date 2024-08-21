@@ -91,6 +91,7 @@ class BaseDataset:
         Returns:
             None
         """
+        self.clear_cache()
         self._files = [
             fn.replace(self._path, "").lstrip("/")
             for fn in sorted(
@@ -176,6 +177,8 @@ class BaseDataset:
         Returns:
             None
         """
+        if hasattr(self._filesystem, "fs"):
+            clear_cache(self._filesystem.fs)
         clear_cache(self._filesystem)
         clear_cache(self._base_filesystem)
 
@@ -587,7 +590,7 @@ class BaseDataset:
         ),
         mode: str = "append",  # "delta", "overwrite"
         basename: str | None = None,
-        partitioning_columns: str | list[str] | None = None,
+        partition_by: str | list[str] | None = None,
         max_rows_per_file: int | None = 2_500_000,
         row_group_size: int | None = 250_000,
         compression: str = "zstd",
@@ -617,7 +620,7 @@ class BaseDataset:
             - list of any of the above types
         - mode: The write mode. Possible values are "append", "delta", or "overwrite". Defaults to "append".
         - basename: The template for the basename of the output files. Defaults to None.
-        - partitioning_columns: The columns to be used for partitioning the dataset. Can be a string, a list of strings,
+        - partition_by: The columns to be used for partitioning the dataset. Can be a string, a list of strings,
             or None. Defaults to None.
         - max_rows_per_file: The maximum number of rows per file. Defaults to 2,500,000.
         - row_group_size: The size of each row group. Defaults to 250,000.
@@ -631,7 +634,6 @@ class BaseDataset:
         - use_large_string: Whether to use large string type for string columns. Defaults to False.
         - delta_subset: The subset of columns to consider for delta updates. Can be a string, a list of strings, or
             None. Defaults to None.
-        - update_metadata: Whether to update the metadata table after writing. Defaults to False.
         - alter_schema: Whether to alter the schema of the dataset. Defaults to False.
         - timestamp_column: The name of the timestamp column. Defaults to None.
         - **kwargs: Additional keyword arguments to be passed to the writer.
@@ -640,11 +642,11 @@ class BaseDataset:
         None
         """
 
-        # if data.shape[0] == 0:
-        #    return
+        if "partitioning_columns" in kwargs:
+            partition_by = kwargs.pop("partitioning_columns")
 
-        if not partitioning_columns and self.partition_names:
-            partitioning_columns = self.partition_names
+        if not partition_by and self.partition_names:
+            partition_by = self.partition_names
 
         if timestamp_column is not None:
             self._timestamp_column = timestamp_column
@@ -671,9 +673,9 @@ class BaseDataset:
             if unique:
                 writer.unique(columns=unique)
 
-            if partitioning_columns:
+            if partition_by:
                 writer.add_datepart_columns(
-                    columns=partitioning_columns,
+                    columns=partition_by,
                     timestamp_column=self._timestamp_column,
                 )
 
@@ -697,7 +699,7 @@ class BaseDataset:
             writer.write_to_dataset(
                 row_group_size=row_group_size,
                 compression=compression,
-                partitioning_columns=partitioning_columns,
+                partitioning_columns=partition_by,
                 partitioning_flavor="hive",
                 max_rows_per_file=max_rows_per_file,
                 basename=basename,
@@ -712,7 +714,7 @@ class BaseDataset:
         self.load_files()
 
 
-class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
+class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
     def __init__(
         self,
         path: str,
@@ -743,12 +745,14 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
             None
         """
 
-        ParquetDatasetMetadata.__init__(
+        PydalaDatasetMetadata.__init__(
             self,
             path=path,
             filesystem=filesystem,
             bucket=bucket,
             cached=cached,
+            partitioning=partitioning,
+            ddb_con=ddb_con,
             **fs_kwargs,
         )
         BaseDataset.__init__(
@@ -760,16 +764,16 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
             partitioning=partitioning,
             cached=cached,
             timestamp_column=timestamp_column,
-            ddb_con=ddb_con,
+            ddb_con=self.ddb_con,
             **fs_kwargs,
         )
 
-        if self.has_metadata:
-            self.pydala_dataset_metadata = PydalaDatasetMetadata(
-                metadata=self.metadata, partitioning=partitioning, ddb_con=ddb_con
-            )
-            self.metadata_table.create_view(f"{self.name}_metadata")
-            self.ddb_con.unregister("metadata_table")
+        # if self.has_metadata:
+        # self.pydala_dataset_metadata = PydalaDatasetMetadata(
+        #    metadata=self.metadata, partitioning=partitioning, ddb_con=ddb_con
+        # )
+        # self.metadata_table.create_view(f"{self.name}_metadata")
+        # self.ddb_con.unregister("metadata_table")
 
         try:
             self.load()
@@ -846,26 +850,26 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
 
             self.ddb_con.register(f"{self.name}", self._arrow_dataset)
 
-    def gen_metadata_table(self):
-        """
-        Generate the metadata table for the dataset.
+    # def gen_metadata_table(self):
+    #     """
+    #     Generate the metadata table for the dataset.
 
-        This function calls the `gen_metadata_table` method of the `pydala_dataset_metadata` object
-        to generate the metadata table for the dataset. It takes two parameters:
+    #     This function calls the `gen_metadata_table` method of the `pydala_dataset_metadata` object
+    #     to generate the metadata table for the dataset. It takes two parameters:
 
-        - `metadata`: The metadata object containing information about the dataset.
-        - `_partitioning`: The partitioning object containing information about the dataset partitioning.
+    #     - `metadata`: The metadata object containing information about the dataset.
+    #     - `_partitioning`: The partitioning object containing information about the dataset partitioning.
 
-        This function does not return anything.
+    #     This function does not return anything.
 
-        Example usage:
-        ```
-        self.gen_metadata_table()
-        ```
-        """
-        self.pydala_dataset_metadata.gen_metadata_table(
-            self.metadata, self._partitioning
-        )
+    #     Example usage:
+    #     ```
+    #     self.gen_metadata_table()
+    #     ```
+    #     """
+    #     self.pydala_dataset_metadata.gen_metadata_table(
+    #         self.metadata, self._partitioning
+    #     )
 
     def scan(self, filter_expr: str | None = None) -> ParquetDatasetMetadata:
         """
@@ -877,12 +881,14 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
         Returns:
             ParquetDatasetMetadata: The ParquetDatasetMetadata object.
         """
-        self.pydala_dataset_metadata.scan(filter_expr=filter_expr)
+        PydalaDatasetMetadata.scan(self, filter_expr=filter_expr)
+
         if len(self.scan_files) == 0:
             return PydalaTable(result=self.table.ddb.limit(0))
+
         return PydalaTable(
             result=pds.dataset(
-                self.scan_files,
+                [os.path.join(self.path, fn) for fn in self.scan_files],
                 filesystem=self._filesystem,
                 format=self._format,
                 partitioning=self._partitioning,
@@ -892,131 +898,6 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
 
     def __repr__(self):
         return self.table.__repr__()
-
-    def reset_scan(self):
-        """
-        Reset the scan of the dataset metadata.
-
-        This function calls the `reset_scan` method of the `pydala_dataset_metadata` object.
-
-        Args:
-            self (object): The instance of the class.
-
-        Returns:
-            None
-        """
-        self.pydala_dataset_metadata.reset_scan()
-
-    def update_metadata_table(self):
-        """
-        Update the metadata table.
-
-        This function updates the metadata table by creating a new instance of the `PydalaDatasetMetadata` class
-        if it does not already exist. The `PydalaDatasetMetadata` class is initialized with the `metadata` and
-        `_partitioning` attributes of the current instance. The `gen_metadata_table` method of the
-        `PydalaDatasetMetadata` instance is then called with the `metadata` and `_partitioning` attributes as
-        arguments to generate the metadata table.
-
-
-        Returns:
-            None
-        """
-        if not hasattr(self, "pydala_dataset_metadata"):
-            self.pydala_dataset_metadata = PydalaDatasetMetadata(
-                metadata=self.metadata,
-                partitioning=self._partitioning,
-            )
-        self.pydala_dataset_metadata.gen_metadata_table(
-            self.metadata, self._partitioning
-        )
-
-    @property
-    def metadata_table(self) -> pa.Table:
-        """
-        A description of the entire function, its parameters, and its return types.
-
-        Returns:
-            pa.Table: A pyarrow Table containing the metadata of the dataset.
-
-        """
-        return self.pydala_dataset_metadata.metadata_table
-
-    @property
-    def metadata_table_scanned(self) -> pa.Table:
-        """
-        Returns a Polars DataFrame containing information about the filtered files in the dataset.
-
-        Returns:
-            _pl.DataFrame: A Pandas DataFrame containing information about the files in the dataset.
-        """
-        return self.pydala_dataset_metadata._metadata_table_scanned
-
-    @property
-    def scan_files(self) -> list[str]:
-        """
-        Returns a list of files in the dataset.
-
-        Returns:
-            list[str]: A list of files in the dataset.
-        """
-        return sorted(
-            [
-                os.path.join(self._path, f)
-                for f in self.pydala_dataset_metadata.scan_files
-            ]
-        )
-
-    # def _get_delta_other_df(
-    #     self,
-    #     df: _pl.DataFrame | _pl.LazyFrame,
-    #     filter_columns: str | list[str] | None = None,
-    # ) -> _pl.DataFrame | _pl.LazyFrame:
-    #     """
-    #     Generate the delta dataframe based on the given dataframe, columns, use, and on parameters.
-
-    #     Parameters:
-    #         df (_pl.DataFrame | _pl.LazyFrame): The input dataframe or lazyframe.
-    #         filter_columns (str | list[str] | None, optional): The columns to consider. Defaults to None.
-    #         use (str, optional): The use parameter. Defaults to "auto".
-    #         on (str, optional): The on parameter. Defaults to "auto".
-
-    #     Returns:
-    #         _pl.DataFrame: The delta dataframe.
-    #     """
-    #     collect = False
-    #     if len(self.files) == 0:
-    #         return _pl.DataFrame(schema=df.schema)
-    #     if isinstance(df, _pl.LazyFrame):
-    #         collect = True
-
-    #     columns = set(df.columns) & set(self.columns)
-    #     null_columns = df.select(cs.by_dtype(_pl.Null)).collect_schema().names()
-    #     columns = columns - set(null_columns)
-    #     if filter_columns is not None:
-    #         columns = set(columns) & set(filter_columns)
-
-    #     if len(columns) == 0:
-    #         return _pl.DataFrame(schema=df.schema)
-
-    #     filter_expr = []
-    #     for col in columns:
-    #         max_min = df.select(_pl.max(col).alias("max"), _pl.min(col).alias("min"))
-
-    #         if collect:
-    #             max_min = max_min.collect()
-    #         f_max = max_min["max"][0]
-    #         f_min = max_min["min"][0]
-
-    #         if isinstance(f_max, str):
-    #             f_max = f_max.strip("'").replace(",", "")
-    #         if isinstance(f_min, str):
-    #             f_min = f_min.strip("'").replace(",", "")
-
-    #         filter_expr.append(
-    #             f"{col}<='{f_max}' AND {col}>='{f_min}'".replace("'None'", "NULL")
-    #         )
-
-    #     return self.filter(" AND ".join(filter_expr)).pl
 
     def write_to_dataset(
         self,
@@ -1039,7 +920,7 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
         ),
         mode: str = "append",  # "delta", "overwrite"
         basename: str | None = None,
-        partitioning_columns: str | list[str] | None = None,
+        partition_by: str | list[str] | None = None,
         max_rows_per_file: int | None = 2_500_000,
         row_group_size: int | None = 250_000,
         compression: str = "zstd",
@@ -1070,7 +951,7 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
             - list of any of the above types
         - mode: The write mode. Possible values are "append", "delta", or "overwrite". Defaults to "append".
         - basename: The template for the basename of the output files. Defaults to None.
-        - partitioning_columns: The columns to be used for partitioning the dataset. Can be a string, a list of strings,
+        - partition_by: The columns to be used for partitioning the dataset. Can be a string, a list of strings,
             or None. Defaults to None.
         - max_rows_per_file: The maximum number of rows per file. Defaults to 2,500,000.
         - row_group_size: The size of each row group. Defaults to 250,000.
@@ -1092,73 +973,93 @@ class ParquetDataset(ParquetDatasetMetadata, BaseDataset):
         Returns:
         None
         """
-        if not partitioning_columns and self.partition_names:
-            partitioning_columns = self.partition_names
+        # if not partitioning_columns and self.partition_names:
+        #     partitioning_columns = self.partition_names
 
-        if timestamp_column is not None:
-            self._timestamp_column = timestamp_column
+        # if timestamp_column is not None:
+        #     self._timestamp_column = timestamp_column
 
-        if (
-            not isinstance(data, list)
-            and not isinstance(data, tuple)
-            and not isinstance(data, pa.RecordBatchReader)
-        ):
-            data = [data]
+        # if (
+        #     not isinstance(data, list)
+        #     and not isinstance(data, tuple)
+        #     and not isinstance(data, pa.RecordBatchReader)
+        # ):
+        #     data = [data]
 
-        for data_ in data:
-            writer = Writer(
-                data=data_,
-                path=self._path,
-                filesystem=self._filesystem,
-                schema=self.schema if not alter_schema else None,
-            )
-            if writer.shape[0] == 0:
-                continue
+        # for data_ in data:
+        #     writer = Writer(
+        #         data=data_,
+        #         path=self._path,
+        #         filesystem=self._filesystem,
+        #         schema=self.schema if not alter_schema else None,
+        #     )
+        #     if writer.shape[0] == 0:
+        #         continue
 
-            writer.sort_data(by=sort_by)
+        #     writer.sort_data(by=sort_by)
 
-            if unique:
-                writer.unique(columns=unique)
+        #     if unique:
+        #         writer.unique(columns=unique)
 
-            if partitioning_columns:
-                writer.add_datepart_columns(
-                    columns=partitioning_columns,
-                    timestamp_column=self._timestamp_column,
-                )
+        #     if partitioning_columns:
+        #         writer.add_datepart_columns(
+        #             columns=partitioning_columns,
+        #             timestamp_column=self._timestamp_column,
+        #         )
 
-            writer.cast_schema(
-                use_large_string=use_large_string,
-                ts_unit=ts_unit,
-                tz=tz,
-                remove_tz=remove_tz,
-                alter_schema=alter_schema,
-            )
+        #     writer.cast_schema(
+        #         use_large_string=use_large_string,
+        #         ts_unit=ts_unit,
+        #         tz=tz,
+        #         remove_tz=remove_tz,
+        #         alter_schema=alter_schema,
+        #     )
 
-            if mode == "delta" and self.is_loaded:
-                writer._to_polars()
-                other_df = self._get_delta_other_df(
-                    writer.data,
-                    filter_columns=delta_subset,
-                )
-                if other_df is not None:
-                    writer.delta(other=other_df, subset=delta_subset)
+        #     if mode == "delta" and self.is_loaded:
+        #         writer._to_polars()
+        #         other_df = self._get_delta_other_df(
+        #             writer.data,
+        #             filter_columns=delta_subset,
+        #         )
+        #         if other_df is not None:
+        #             writer.delta(other=other_df, subset=delta_subset)
 
-            writer.write_to_dataset(
-                row_group_size=row_group_size,
-                compression=compression,
-                partitioning_columns=partitioning_columns,
-                partitioning_flavor="hive",
-                max_rows_per_file=max_rows_per_file,
-                basename=basename,
-                **kwargs,
-            )
+        #     writer.write_to_dataset(
+        #         row_group_size=row_group_size,
+        #         compression=compression,
+        #         partitioning_columns=partitioning_columns,
+        #         partitioning_flavor="hive",
+        #         max_rows_per_file=max_rows_per_file,
+        #         basename=basename,
+        #         **kwargs,
+        #     )
 
-        if mode == "overwrite":
-            del_files = [os.path.join(self._path, fn) for fn in self.files]
-            self.delete_files(del_files)
+        # if mode == "overwrite":
+        #     del_files = [os.path.join(self._path, fn) for fn in self.files]
+        #     self.delete_files(del_files)
 
-        self.clear_cache()
-        self.load_files()
+        # self.clear_cache()
+        # self.load_files()
+        BaseDataset.write_to_dataset(
+            self,
+            data=data,
+            mode=mode,
+            basename=basename,
+            partition_by=partition_by,
+            max_rows_per_file=max_rows_per_file,
+            row_group_size=row_group_size,
+            compression=compression,
+            sort_by=sort_by,
+            unique=unique,
+            ts_unit=ts_unit,
+            tz=tz,
+            remove_tz=remove_tz,
+            use_large_string=use_large_string,
+            delta_subset=delta_subset,
+            alter_schema=alter_schema,
+            timestamp_column=timestamp_column,
+            **kwargs,
+        )
 
         if update_metadata:
             try:
@@ -1364,7 +1265,7 @@ class Optimize(ParquetDataset):
 
         self.clear_cache()
         self.load(update_metadata=True)
-        self.gen_metadata_table()
+        self.update_metadata_table()
 
     def _compact_by_timeperiod(
         self,
@@ -1473,7 +1374,7 @@ class Optimize(ParquetDataset):
         self.delete_files(files_to_delete)
         self.clear_cache()
         self.load(update_metadata=True)
-        self.gen_metadata_table()
+        self.update_metadata_table()
 
     def compact_by_rows(
         self,
@@ -1514,7 +1415,7 @@ class Optimize(ParquetDataset):
             self.delete_files(self.scan_files)
             self.clear_cache()
             self.load(update_metadata=True)
-            self.gen_metadata_table()
+            self.update_metadata_table()
 
     def repartition(
         self,
@@ -1534,7 +1435,7 @@ class Optimize(ParquetDataset):
         for batch in tqdm.tqdm(batches):
             self.write_to_dataset(
                 pa.table(batch),
-                partitioning_columns=partitioning_columns,
+                partition_by=partitioning_columns,
                 # partitioning_falvor=partitioning_falvor,
                 mode="append",
                 max_rows_per_file=max_rows_per_file,
@@ -1632,8 +1533,8 @@ class Optimize(ParquetDataset):
 
         self.clear_cache()
 
-        self._update_metadata()
-        self.gen_metadata_table()
+        self._update_metadata_file()
+        self.update_metadata_table()
 
 
 ParquetDataset.compact_partitions = Optimize.compact_partitions
