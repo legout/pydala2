@@ -13,12 +13,14 @@ from fsspec import AbstractFileSystem
 
 from .filesystem import FileSystem, clear_cache
 from .helpers.datetime import get_timestamp_column
-from .helpers.misc import str2pyarrow_filter
+from .helpers.misc import sql2pyarrow_filter
 from .helpers.polars import pl as _pl
 from .io import Writer
 from .metadata import ParquetDatasetMetadata, PydalaDatasetMetadata
-from .schema import replace_schema  # from .optimize import Optimize
-from .schema import shrink_large_string
+from .schema import (
+    replace_schema,  # from .optimize import Optimize
+    shrink_large_string,
+)
 from .table import PydalaTable
 
 
@@ -434,7 +436,7 @@ class BaseDataset:
         """
         if self.is_loaded:
             if isinstance(filter_expr, str):
-                filter_expr = str2pyarrow_filter(filter_expr, self.schema)
+                filter_expr = sql2pyarrow_filter(filter_expr, self.schema)
             return self._arrow_dataset.filter(filter_expr)
 
     def filter(

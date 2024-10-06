@@ -143,32 +143,19 @@ class ParquetDatasetMetadata:
         self.load_files()
 
         self._caching_options = caching_options
-        # if not self._filesystem.exists(self._path):
-        #     try:
-        #         self._filesystem.mkdir(self._path)
-        #     except Exception:
-        #         pass  # raise FileNotFoundError(f"Directory {self._path} does not exist.")
-
-        # self._files = sorted(self._filesystem.glob(os.path.join(path, "**/*.parquet")))
-        # if not self._filesystem.exists(os.path.join(path, "metadata")):
-        #     try:
-        #         self._filesystem.mkdir(os.path.join(path, "metadata"))
-        #     except Exception:
-        #         pass
-        #
 
         self._metadata_file = os.path.join(path, "_metadata")
         self._file_metadata_file = os.path.join(path, "_file_metadata")
-        self._metadata = self._read_metadata()
-        self._file_metadata = self._read_file_metadata()
-        if update_metadata:
-            self.update()
+        #self._metadata = self._read_metadata()
+        #self._file_metadata = self._read_file_metadata()
+        #if update_metadata:
+        #    self.update()
 
     def _read_metadata(self) -> pq.FileMetaData | None:
         if self.has_metadata_file:
             return pq.read_metadata(self._metadata_file, filesystem=self._filesystem)
 
-    def _read_file_metadata(self) -> dict[pq.FileMetaData] | None:
+    def _read_file_metadata(self) -> dict[str:pq.FileMetaData] | None:
         if self.has_file_metadata_file:
             with self._filesystem.open(self._file_metadata_file, "rb") as f:
                 return pickle.load(f)
