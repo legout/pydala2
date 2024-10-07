@@ -11,8 +11,7 @@ from pydala.helpers.polars import pl
 
 from .dataset import CsvDataset, JsonDataset, ParquetDataset, PyarrowDataset
 from .filesystem import FileSystem
-from .helpers.misc import (delattr_rec, get_nested_keys, getattr_rec,
-                           setattr_rec)
+from .helpers.misc import delattr_rec, get_nested_keys, getattr_rec, setattr_rec
 from .helpers.sql import get_table_names
 from .table import PydalaTable
 
@@ -90,6 +89,9 @@ class Catalog:
                 self.fs[name] = fs
         else:
             self.fs = None
+
+    def _get_table_from_table_name(self, table_name: str) -> list[str]:
+        table_name_items = table_name.split(".")
 
     # @staticmethod
     # def _get_table_from_table_name(self, table_name: str) -> str:

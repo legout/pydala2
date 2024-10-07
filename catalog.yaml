@@ -1,0 +1,15 @@
+filesystems:
+  s3:
+    bucket: my-bucket
+    fs: null
+    path: s3://my-bucket/data
+    protocol: s3
+tables:
+  my_table:
+    filesystem: s3
+    format: parquet
+    partitioning: null
+    partitioning_columns: null
+    path: s3://my-bucket/data/my_table.parquet
+    timestamp_column: null
+    write_args: {}

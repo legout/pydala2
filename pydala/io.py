@@ -1,7 +1,7 @@
 import datetime as dt
 import os
-import uuid
 import time
+import uuid
 
 import duckdb
 import pandas as pd
@@ -14,8 +14,8 @@ import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 from fsspec import filesystem as fsspec_filesystem
 
-from .helpers.datetime import get_timestamp_column
 from .filesystem import clear_cache
+from .helpers.datetime import get_timestamp_column
 from .helpers.polars import pl
 from .schema import convert_timestamp, replace_schema, shrink_large_string
 from .table import PydalaTable

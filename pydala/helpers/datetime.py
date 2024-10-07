@@ -5,6 +5,7 @@ import pendulum as pdl
 import polars as pl
 import polars.selectors as cs
 import pyarrow as pa
+from functools import lru_cache
 
 
 def get_timestamp_column(df: pl.DataFrame | pl.LazyFrame | pa.Table) -> str | list[str]:
@@ -63,25 +64,40 @@ def get_timedelta_str(timedelta_string: str, to: str = "polars") -> str:
     return f"{val} " + re.sub("s$", "", unit)
 
 
+@lru_cache(maxsize=128)
 def timestamp_from_string(
     timestamp: str,
     tz: str | None = None,
     exact: bool = True,
     strict: bool = False,
     naive: bool = False,
-) -> pdl.datetime:
-    tz = extract_timezone(timestamp) if tz is None else tz
-    timestamp = timestamp.replace(tz, "").strip() if tz else timestamp
+) -> pdl.DateTime | pdl.Date | pdl.Time | dt.datetime | dt.date | dt.time:
+    """
+    Converts a string like "2023-01-01 10:00:00" into a datetime.datetime object.
 
-    timestamp = pdl.parse(timestamp, exact=exact, strict=strict)
+    Args:
+        string (str): The string representation of the timestamp, e.g. "2023-01-01 10:00:00".
+        tz (str, optional): The timezone to use for the timestamp. Defaults to None.
+        exact (bool, optional): Whether to use exact parsing. Defaults to True.
+        strict (bool, optional): Whether to use strict parsing. Defaults to False.
+        naive (bool, optional): Whether to return a naive datetime without a timezone. Defaults to False.
 
-    if isinstance(timestamp, pdl.DateTime):
+    Returns:
+        datetime.datetime: The datetime object.
+    """
+    # Extract the timezone from the string if not provided
+    #tz = extract_timezone(timestamp) if tz is None else tz
+    #timestamp = timestamp.replace(tz, "").strip() if tz else timestamp
+
+    pdl_timestamp = pdl.parse(timestamp, exact=exact, strict=strict)
+
+    if isinstance(pdl_timestamp, pdl.DateTime):
         if tz is not None:
-            timestamp = timestamp.naive().set(tz=tz)
+            pdl_timestamp = pdl_timestamp.naive().set(tz=tz)
         if naive or tz is None:
-            timestamp = timestamp.naive()
+            pdl_timestamp = pdl_timestamp.naive()
 
-    return timestamp
+    return pdl_timestamp
 
 
 def timedelta_from_string(
@@ -128,20 +144,20 @@ def timedelta_from_string(
     return delta.as_timedelta if as_timedelta else delta
 
 
-def extract_timezone(timestamp_string):
-    """
-    Extracts the timezone from a timestamp string.
+# def extract_timezone(timestamp_string):
+#     """
+#     Extracts the timezone from a timestamp string.
 
-    Args:
-        timestamp_string (str): The input timestamp string.
+#     Args:
+#         timestamp_string (str): The input timestamp string.
 
-    Returns:
-        str: The extracted timezone.
-    """
-    pattern = r"\b([a-zA-Z]+/{0,1}[a-zA-Z_ ]*)\b"  # Matches the timezone portion
-    match = re.search(pattern, timestamp_string)
-    if match:
-        timezone = match.group(0)
-        return timezone
-    else:
-        return None
+#     Returns:
+#         str: The extracted timezone.
+#     """
+#     pattern = r"\b([a-zA-Z]+/{0,1}[a-zA-Z_ ]*)\b"  # Matches the timezone portion
+#     match = re.search(pattern, timestamp_string)
+#     if match:
+#         timezone = match.group(0)
+#         return timezone
+#     else:
+#         return None

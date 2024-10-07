@@ -7,14 +7,14 @@
 
 import inspect
 import os
-from datetime import timedelta, datetime
+from datetime import datetime, timedelta
 from functools import wraps
+from pathlib import Path
 
 import psutil
 from fsspec.implementations.cache_mapper import AbstractCacheMapper
 from fsspec.implementations.cached import SimpleCacheFileSystem
 from loguru import logger
-from pathlib import Path
 
 
 def get_total_directory_size(directory: str):
@@ -106,8 +106,8 @@ class MonitoredSimpleCacheFileSystem(SimpleCacheFileSystem):
                 return fn
             logger.info(f"Downloading {self.protocol[0]}://{path}")
 
-    def glob(self, path):
-        return [self._strip_protocol(path)]
+    #def glob(self, path):
+    #    return [self._strip_protocol(path)]
 
     def size(self, path):
         cached_file = self._check_file(self._strip_protocol(path))
