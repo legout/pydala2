@@ -40,7 +40,7 @@ fsspec==2024.6.1
     # via s3fs
 idna==3.7
     # via yarl
-ipython==8.26.0
+ipython==8.27.0
 isort==5.13.2
 jedi==0.19.1
     # via ipython
@@ -49,6 +49,7 @@ jmespath==1.0.1
 joblib==1.4.2
     # via pydala2
 loguru==0.7.2
+lxml==5.3.0
 matplotlib-inline==0.1.7
     # via ipython
 msgspec==0.18.6
