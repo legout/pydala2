@@ -12,15 +12,17 @@
 -e file:.
 aiobotocore==2.15.1
     # via s3fs
-aiohappyeyeballs==2.4.0
+aiohappyeyeballs==2.4.3
     # via aiohttp
-aiohttp==3.10.6
+aiohttp==3.10.9
     # via aiobotocore
     # via s3fs
 aioitertools==0.12.0
     # via aiobotocore
 aiosignal==1.3.1
     # via aiohttp
+appnope==0.1.4
+    # via ipykernel
 asttokens==2.4.1
     # via stack-data
 attrs==24.2.0
@@ -48,13 +50,9 @@ fsspec==2024.9.0
     # via s3fs
 idna==3.10
     # via yarl
-<<<<<<< HEAD
-ipython==8.27.0
-=======
 ipykernel==6.29.5
-ipython==8.27.0
+ipython==8.28.0
     # via ipykernel
->>>>>>> refs/remotes/origin/main
 isort==5.13.2
 jedi==0.19.1
     # via ipython
@@ -82,7 +80,7 @@ munch==4.0.0
     # via pydala2
 nest-asyncio==1.6.0
     # via ipykernel
-numpy==2.1.1
+numpy==2.1.2
     # via fastparquet
     # via pandas
     # via pyarrow
@@ -101,7 +99,7 @@ pexpect==4.9.0
     # via ipython
 platformdirs==4.3.6
     # via jupyter-core
-polars==1.8.2
+polars==1.9.0
 prompt-toolkit==3.0.48
     # via ipython
 psutil==6.0.0
@@ -133,7 +131,7 @@ s3fs==2024.9.0
 six==1.16.0
     # via asttokens
     # via python-dateutil
-sqlglot==25.23.2
+sqlglot==25.24.4
     # via pydala2
 sqlparse==0.5.1
     # via pydala2
@@ -162,5 +160,5 @@ wcwidth==0.2.13
     # via prompt-toolkit
 wrapt==1.16.0
     # via aiobotocore
-yarl==1.12.1
+yarl==1.13.1
     # via aiohttp

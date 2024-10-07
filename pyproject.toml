@@ -36,14 +36,15 @@ requires = ["hatchling"]
 
 [tool.rye]
 dev-dependencies = [
-  "ipython>=8.26.0",
-  "isort>=5.13.2",
-  "polars>=1.5.0",
-  "loguru>=0.7.2",
-  "ipykernel>=6.29.5",
-  "msgpack>=1.1.0",
-  "orjson>=3.10.7",
-  "fastparquet>=2024.5.0",
+    "ipython>=8.26.0",
+    "isort>=5.13.2",
+    "polars>=1.5.0",
+    "loguru>=0.7.2",
+    "ipykernel>=6.29.5",
+    "msgpack>=1.1.0",
+    "orjson>=3.10.7",
+    "fastparquet>=2024.5.0",
+    "lxml>=5.3.0",
 ]
 managed = true
 

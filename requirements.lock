@@ -12,9 +12,9 @@
 -e file:.
 aiobotocore==2.15.1
     # via s3fs
-aiohappyeyeballs==2.4.0
+aiohappyeyeballs==2.4.3
     # via aiohttp
-aiohttp==3.10.6
+aiohttp==3.10.9
     # via aiobotocore
     # via s3fs
 aioitertools==0.12.0
@@ -45,7 +45,7 @@ multidict==6.1.0
     # via yarl
 munch==4.0.0
     # via pydala2
-numpy==2.1.1
+numpy==2.1.2
     # via pandas
     # via pyarrow
 pandas==2.2.3
@@ -69,7 +69,7 @@ s3fs==2024.9.0
     # via pydala2
 six==1.16.0
     # via python-dateutil
-sqlglot==25.23.2
+sqlglot==25.24.4
     # via pydala2
 sqlparse==0.5.1
     # via pydala2
@@ -84,5 +84,5 @@ urllib3==2.2.3
     # via botocore
 wrapt==1.16.0
     # via aiobotocore
-yarl==1.12.1
+yarl==1.13.1
     # via aiohttp
