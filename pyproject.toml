@@ -45,6 +45,15 @@ dev-dependencies = [
     "orjson>=3.10.7",
     "fastparquet>=2024.5.0",
     "lxml>=5.3.0",
+    "dill>=0.3.9",
+    "blosc>=1.11.2",
+    "compress-pickle>=2.1.0",
+    "zstandard>=0.23.0",
+    "brotli>=1.1.0",
+    "lz4>=4.3.3",
+    "snappy>=3.1.1",
+    "python-snappy>=0.7.3",
+    "deltalake>=0.20.2",
 ]
 managed = true
 

@@ -52,6 +52,8 @@ pandas==2.2.3
     # via pydala2
 pendulum==3.0.0
     # via pydala2
+propcache==0.2.0
+    # via yarl
 psutil==6.0.0
     # via pydala2
 pyarrow==17.0.0
@@ -69,11 +71,11 @@ s3fs==2024.9.0
     # via pydala2
 six==1.16.0
     # via python-dateutil
-sqlglot==25.24.4
+sqlglot==25.24.5
     # via pydala2
 sqlparse==0.5.1
     # via pydala2
-time-machine==2.15.0
+time-machine==2.16.0
     # via pendulum
 tqdm==4.66.5
     # via pydala2
@@ -84,5 +86,5 @@ urllib3==2.2.3
     # via botocore
 wrapt==1.16.0
     # via aiobotocore
-yarl==1.13.1
+yarl==1.14.0
     # via aiohttp
