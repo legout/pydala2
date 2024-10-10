@@ -148,13 +148,9 @@ class ParquetDatasetMetadata:
         self._file_metadata_file = os.path.join(path, "_file_metadata")
         self._metadata = self._read_metadata()
         self._file_metadata = self._read_file_metadata()
-<<<<<<< HEAD
         if update_metadata:
             self.update()
-=======
-        # if update_metadata:
-        #    self.update()
->>>>>>> refs/remotes/origin/main
+
 
     def _read_metadata(self) -> pq.FileMetaData | None:
         if self.has_metadata_file:
