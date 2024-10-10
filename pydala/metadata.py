@@ -146,16 +146,16 @@ class ParquetDatasetMetadata:
 
         self._metadata_file = os.path.join(path, "_metadata")
         self._file_metadata_file = os.path.join(path, "_file_metadata")
-        #self._metadata = self._read_metadata()
-        #self._file_metadata = self._read_file_metadata()
-        #if update_metadata:
+        self._metadata = self._read_metadata()
+        self._file_metadata = self._read_file_metadata()
+        # if update_metadata:
         #    self.update()
 
     def _read_metadata(self) -> pq.FileMetaData | None:
         if self.has_metadata_file:
             return pq.read_metadata(self._metadata_file, filesystem=self._filesystem)
 
-    def _read_file_metadata(self) -> dict[str:pq.FileMetaData] | None:
+    def _read_file_metadata(self) -> dict[str : pq.FileMetaData] | None:
         if self.has_file_metadata_file:
             with self._filesystem.open(self._file_metadata_file, "rb") as f:
                 return pickle.load(f)
