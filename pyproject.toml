@@ -24,7 +24,7 @@ name = "pydala2"
 readme = "README.md"
 repository = "https://github.com/legout/pydala2"
 requires-python = ">= 3.10"
-version = "0.8.7"
+version = "0.8.7.1"
 
 [project.optional-dependencies]
 legacy = ["polars-lts-cpu>=0.20.4"]
@@ -36,6 +36,7 @@ requires = ["hatchling"]
 
 [tool.rye]
 dev-dependencies = [
+<<<<<<< HEAD
     "ipython>=8.26.0",
     "isort>=5.13.2",
     "polars>=1.5.0",
@@ -54,6 +55,17 @@ dev-dependencies = [
     "snappy>=3.1.1",
     "python-snappy>=0.7.3",
     "deltalake>=0.20.2",
+=======
+  "ipython>=8.26.0",
+  "isort>=5.13.2",
+  "polars>=1.5.0",
+  "loguru>=0.7.2",
+  "ipykernel>=6.29.5",
+  "msgpack>=1.1.0",
+  "orjson>=3.10.7",
+  "fastparquet>=2024.5.0",
+  "lxml>=5.3.0",
+>>>>>>> refs/remotes/origin/main
 ]
 managed = true
 
