@@ -358,6 +358,28 @@ def with_row_count(
 #     return df
 
 
+def unify_schema(dfs: list[pl.DataFrame | pl.LazyFrame]) -> pl.Schema:
+    df = pl.concat(dfs, how="diagonal_relaxed")
+    if isinstance(df, pl.LazyFrame):
+        return df.collect_schema()
+    return df.schema
+
+
+def cast_relaxed(
+    df: pl.DataFrame | pl.LazyFrame, schema: pl.Schema
+) -> pl.DataFrame | pl.LazyFrame:
+    if isinstance(df, pl.LazyFrame):
+        columns = df.collect_schema().names()
+    else:
+        columns = df.schema.names()
+    new_columns = [col for col in schema.names() if col in columns]
+    if len(new_columns):
+        return df.with_columns(
+            [pl.literal(None).alias(new_col) for new_col in new_columns]
+        ).cast(schema)
+    return df.cast(schema)
+
+
 def delta(
     df1: pl.DataFrame | pl.LazyFrame,
     df2: pl.DataFrame | pl.LazyFrame,
@@ -383,10 +405,10 @@ def delta(
         df1 = df1.lazy()
 
     # cast to equal schema
-    unified_schema = pl.concat([df1, df2], how="vertical_relaxed").collect_schema()
+    unified_schema = unify_schema([df1, df2])
 
-    df1 = df1.cast(unified_schema)
-    df2 = df2.cast(unified_schema)
+    df1 = df1.cast_relaxed(unified_schema)
+    df2 = df2.cast_relaxed(unified_schema)
 
     df = df1.join(df2, on=subset, how="anti", join_nulls=True)
 
@@ -527,6 +549,7 @@ pl.DataFrame.with_row_count_ext = with_row_count
 pl.DataFrame.with_datepart_columns = with_datepart_columns
 pl.DataFrame.with_duration_columns = with_truncated_columns
 pl.DataFrame.with_striftime_columns = with_strftime_columns
+pl.DataFrame.cast_relaxed = cast_relaxed
 pl.DataFrame.delta = delta
 pl.DataFrame.partition_by_ext = partition_by
 pl.DataFrame.drop_null_columns = drop_null_columns
@@ -539,5 +562,6 @@ pl.LazyFrame.with_datepart_columns = with_datepart_columns
 pl.LazyFrame.with_duration_columns = with_truncated_columns
 pl.LazyFrame.with_striftime_columns = with_strftime_columns
 pl.LazyFrame.delta = delta
+pl.LazyFrame.cast_relaxed = cast_relaxed
 pl.LazyFrame.partition_by_ext = partition_by
 pl.LazyFrame.drop_null_columns = drop_null_columns
