@@ -60,7 +60,7 @@ class BaseDataset:
         # enable object caching for e.g. parquet metadata
         self.ddb_con.execute(
             f"""PRAGMA enable_object_cache;
-                             SET THREADS={psutil.cpu_count()*2};"""
+            SET THREADS={psutil.cpu_count()*2};"""
         )
         self._timestamp_column = timestamp_column
 

@@ -386,13 +386,19 @@ def delta(
     # if isinstance(df1, pl.LazyFrame):
 
     s2 = df2.select([col for col in s1.names() if col in s2.names()]).collect_schema()
+    s1 = df1.collect_schema()
+
     # else:
     #    s1 = df1.schema
     #    s2 = df2schema
-    if sorted(s1.items()) != sorted(s2.items()):
-        df1 = df1.opt_dtype(strict=False).cast(s2)
 
-    df = df1.join(df2, on=subset, how="anti", join_nulls=True)
+    if sorted(s1.items()) != sorted(s2.items()):
+        try:
+            df1 = df1.cast(s2)
+        except Exception:
+            df2 = df2.cast(s1)
+
+    df = df1.join(df2, on=subset, how="anti", join_nulls=True).opt_dtype()
 
     if eager and isinstance(df, pl.LazyFrame):
         return df.collect()
