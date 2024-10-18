@@ -6,8 +6,6 @@ import polars.selectors as cs
 
 from .datetime import get_timedelta_str, get_timestamp_column
 
-# import string
-
 
 def unnest_all(df: pl.DataFrame, seperator="_", fields: list[str] | None = None):
     def _unnest_all(struct_columns):
