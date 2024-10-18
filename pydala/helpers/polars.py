@@ -375,7 +375,7 @@ def cast_relaxed(
     new_columns = [col for col in schema.names() if col in columns]
     if len(new_columns):
         return df.with_columns(
-            [pl.literal(None).alias(new_col) for new_col in new_columns]
+            [pl.lit(None).alias(new_col) for new_col in new_columns]
         ).cast(schema)
     return df.cast(schema)
 
