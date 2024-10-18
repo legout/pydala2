@@ -318,7 +318,7 @@ def with_row_count(
 
 # def delta(
 #     df1: pl.DataFrame | pl.LazyFrame,
-#     df2: pl.DataFrame | pl.LazyFrame,CSC-glpat-aH5TFEU9GW6CEdzMxpH9
+#     df2: pl.DataFrame | pl.LazyFrame,
 #     subset: str | list[str] | None = None,
 #     eager: bool = False,
 # ) -> pl.LazyFrame:
@@ -392,11 +392,11 @@ def delta(
     #    s1 = df1.schema
     #    s2 = df2schema
 
-    if sorted(s1.items()) != sorted(s2.items()):
-        try:
-            df1 = df1.cast(s2)
-        except Exception:
-            df2 = df2.cast(s1)
+    # if sorted(s1.items()) != sorted(s2.items()):
+    try:
+        df1 = df1.cast(s2)
+    except Exception:
+        df2 = df2.cast(s1)
 
     df = df1.join(df2, on=subset, how="anti", join_nulls=True).opt_dtype()
 
