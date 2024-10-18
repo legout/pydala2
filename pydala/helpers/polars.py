@@ -356,6 +356,7 @@ def with_row_count(
 #     if eager and isinstance(df, pl.LazyFrame):
 #         return df.collect()
 #     return df
+#
 
 
 def delta(
