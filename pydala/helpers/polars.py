@@ -6,6 +6,8 @@ import polars.selectors as cs
 
 from .datetime import get_timedelta_str, get_timestamp_column
 
+# import string
+
 
 def unnest_all(df: pl.DataFrame, seperator="_", fields: list[str] | None = None):
     def _unnest_all(struct_columns):
@@ -354,7 +356,6 @@ def with_row_count(
 #     if eager and isinstance(df, pl.LazyFrame):
 #         return df.collect()
 #     return df
-#
 
 
 def delta(
@@ -382,22 +383,12 @@ def delta(
         df1 = df1.lazy()
 
     # cast to equal schema
-    # if isinstance(df1, pl.LazyFrame):
+    unified_schema = pl.concat([df1, df2], how="vertical_relaxed").collect_schema()
 
-    s2 = df2.select([col for col in s1.names() if col in s2.names()]).collect_schema()
-    s1 = df1.collect_schema()
+    df1 = df1.cast(unified_schema)
+    df2 = df2.cast(unified_schema)
 
-    # else:
-    #    s1 = df1.schema
-    #    s2 = df2schema
-
-    # if sorted(s1.items()) != sorted(s2.items()):
-    try:
-        df1 = df1.cast(s2)
-    except Exception:
-        df2 = df2.cast(s1)
-
-    df = df1.join(df2, on=subset, how="anti", join_nulls=True).opt_dtype()
+    df = df1.join(df2, on=subset, how="anti", join_nulls=True)
 
     if eager and isinstance(df, pl.LazyFrame):
         return df.collect()
