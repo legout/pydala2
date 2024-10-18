@@ -405,7 +405,7 @@ def delta(
         df1 = df1.lazy()
 
     # cast to equal schema
-    unified_schema = unify_schema([df1, df2])
+    unified_schema = unify_schema([df1.select(subset), df2.select(subset)])
 
     df1 = df1.cast_relaxed(unified_schema)
     df2 = df2.cast_relaxed(unified_schema)
