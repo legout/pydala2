@@ -18,7 +18,7 @@ from fsspec import AbstractFileSystem, filesystem
 from fsspec.implementations.cache_mapper import AbstractCacheMapper
 from fsspec.implementations.cached import SimpleCacheFileSystem
 
-#from fsspec.implementations import cached as cachedfs
+# from fsspec.implementations import cached as cachedfs
 from fsspec.implementations.dirfs import DirFileSystem
 from loguru import logger
 
@@ -97,6 +97,7 @@ def get_friendly_disk_usage(storage: str) -> str:
     last_free = usage.free
     return message
 
+
 #############################################################################################################
 # This was originally implemented by Burak Emre Kabakcı (@buremba on github) in its universql project
 # project: https://github.com/buremba/universql
@@ -109,6 +110,7 @@ class MonitoredSimpleCacheFileSystem(SimpleCacheFileSystem):
         kwargs["cache_storage"] = os.path.join(
             kwargs.get("cache_storage"), kwargs.get("fs").protocol[0]
         )
+        self._verbose = kwargs.get("verbose", False)
         super().__init__(**kwargs)
         self._mapper = FileNameCacheMapper(kwargs.get("cache_storage"))
 
@@ -119,9 +121,10 @@ class MonitoredSimpleCacheFileSystem(SimpleCacheFileSystem):
             fn = os.path.join(storage, cache_path)
             if os.path.exists(fn):
                 return fn
-            logger.info(f"Downloading {self.protocol[0]}://{path}")
+            if self._verbose:
+                logger.info(f"Downloading {self.protocol[0]}://{path}")
 
-    #def glob(self, path):
+    # def glob(self, path):
     #    return [self._strip_protocol(path)]
 
     def size(self, path):

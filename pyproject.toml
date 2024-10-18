@@ -14,6 +14,8 @@ dependencies = [
     "sqlparse>=0.5.0",
     "psutil>=6.0.0",
     "pyyaml>=6.0.2",
+    "datafusion>=42.0.0",
+    "loguru>=0.7.2",
 ]
 description = "poor man´s data lake"
 homepage = "https://github.com/legout/pydala2"
@@ -52,6 +54,9 @@ dev-dependencies = [
     "snappy>=3.1.1",
     "python-snappy>=0.7.3",
     "deltalake>=0.20.2",
+    "datafusion>=42.0.0",
+    "ibis>=3.3.0",
+    "ibis-framework[duckdb,polars]>=9.5.0",
 ]
 managed = true
 

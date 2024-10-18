@@ -10,34 +10,40 @@
 #   universal: false
 
 -e file:.
-aiobotocore==2.15.1
+aiobotocore==2.15.2
     # via s3fs
 aiohappyeyeballs==2.4.3
     # via aiohttp
-aiohttp==3.10.9
+aiohttp==3.10.10
     # via aiobotocore
     # via s3fs
 aioitertools==0.12.0
     # via aiobotocore
 aiosignal==1.3.1
     # via aiohttp
+appnope==0.1.4
+    # via ipykernel
 asttokens==2.4.1
     # via stack-data
+atpublic==5.0
+    # via ibis-framework
 attrs==24.2.0
     # via aiohttp
 blosc==1.11.2
-botocore==1.35.23
+botocore==1.35.36
     # via aiobotocore
 brotli==1.1.0
 comm==0.2.2
     # via ipykernel
 compress-pickle==2.1.0
-cramjam==2.8.4
+cramjam==2.9.0
     # via fastparquet
     # via python-snappy
 cypari==2.5.5
     # via snappy
-debugpy==1.8.6
+datafusion==42.0.0
+    # via pydala2
+debugpy==1.8.7
     # via ipykernel
 decorator==5.1.1
     # via ipython
@@ -45,7 +51,8 @@ decorator==5.1.1
     # via spherogram
 deltalake==0.20.2
 dill==0.3.9
-duckdb==1.1.1
+duckdb==1.1.2
+    # via ibis-framework
     # via pydala2
 executing==2.1.0
     # via stack-data
@@ -58,6 +65,8 @@ fsspec==2024.9.0
     # via s3fs
 fxrays==1.3.5
     # via snappy
+ibis==3.3.0
+ibis-framework==9.5.0
 idna==3.10
     # via yarl
 ipykernel==6.29.5
@@ -79,13 +88,18 @@ jupyter-core==5.7.2
 knot-floer-homology==1.2
     # via spherogram
 loguru==0.7.2
+    # via pydala2
 low-index==1.2
     # via snappy
 lxml==5.3.0
 lz4==4.3.3
+markdown-it-py==3.0.0
+    # via rich
 matplotlib-inline==0.1.7
     # via ipykernel
     # via ipython
+mdurl==0.1.2
+    # via markdown-it-py
 msgpack==1.1.0
 msgspec==0.18.6
     # via pydala2
@@ -96,22 +110,27 @@ munch==4.0.0
     # via pydala2
 nest-asyncio==1.6.0
     # via ipykernel
-networkx==3.3
+networkx==3.4.1
     # via spherogram
 numpy==2.1.2
     # via fastparquet
+    # via ibis-framework
     # via pandas
     # via pyarrow
 orjson==3.10.7
 packaging==24.1
     # via fastparquet
+    # via ibis-framework
     # via ipykernel
     # via snappy
 pandas==2.2.3
     # via fastparquet
+    # via ibis-framework
     # via pydala2
 parso==0.8.4
     # via jedi
+parsy==2.1
+    # via ibis-framework
 pendulum==3.0.0
     # via pydala2
 pexpect==4.9.0
@@ -121,11 +140,12 @@ platformdirs==4.3.6
 plink==2.4.2
     # via snappy
 polars==1.9.0
+    # via ibis-framework
 prompt-toolkit==3.0.48
     # via ipython
 propcache==0.2.0
     # via yarl
-psutil==6.0.0
+psutil==6.1.0
     # via ipykernel
     # via pydala2
 ptyprocess==0.7.0
@@ -133,26 +153,35 @@ ptyprocess==0.7.0
 pure-eval==0.2.3
     # via stack-data
 pyarrow==17.0.0
+    # via datafusion
     # via deltalake
+    # via ibis-framework
     # via pydala2
+pyarrow-hotfix==0.6
+    # via ibis-framework
 pygments==2.18.0
     # via ipython
+    # via rich
 pypng==0.20220715.0
     # via snappy
 python-dateutil==2.9.0.post0
     # via botocore
+    # via ibis-framework
     # via jupyter-client
     # via pandas
     # via pendulum
     # via time-machine
 python-snappy==0.7.3
 pytz==2024.2
+    # via ibis-framework
     # via pandas
 pyyaml==6.0.2
     # via pydala2
 pyzmq==26.2.0
     # via ipykernel
     # via jupyter-client
+rich==13.9.2
+    # via ibis-framework
 s3fs==2024.9.0
     # via pydala2
 six==1.16.0
@@ -164,7 +193,8 @@ snappy-manifolds==1.2
     # via spherogram
 spherogram==2.2.1
     # via snappy
-sqlglot==25.24.5
+sqlglot==25.20.2
+    # via ibis-framework
     # via pydala2
 sqlparse==0.5.1
     # via pydala2
@@ -172,6 +202,8 @@ stack-data==0.6.3
     # via ipython
 time-machine==2.16.0
     # via pendulum
+toolz==0.12.1
+    # via ibis-framework
 tornado==6.4.1
     # via ipykernel
     # via jupyter-client
@@ -184,6 +216,9 @@ traitlets==5.14.3
     # via jupyter-client
     # via jupyter-core
     # via matplotlib-inline
+typing-extensions==4.12.2
+    # via datafusion
+    # via ibis-framework
 tzdata==2024.2
     # via pandas
     # via pendulum
@@ -193,6 +228,6 @@ wcwidth==0.2.13
     # via prompt-toolkit
 wrapt==1.16.0
     # via aiobotocore
-yarl==1.14.0
+yarl==1.15.4
     # via aiohttp
 zstandard==0.23.0

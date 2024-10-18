@@ -1331,7 +1331,7 @@ class Optimize(ParquetDataset):
     ):
         timestamp_column = timestamp_column or self._timestamp_column
 
-        min_max_ts = self.sql(
+        min_max_ts = self.t.sql(
             f"SELECT MIN({timestamp_column}.min) AS min, MAX({timestamp_column}.max) AS max FROM {self.name}_metadata"
         ).pl()
 
