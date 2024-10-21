@@ -903,7 +903,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         if self.table is not None:
             return self.table.__repr__()
         else:
-            print(f"Empty dataset at {self.path}")
+            return f"{self.path} is empty."
 
     def write_to_dataset(
         self,
