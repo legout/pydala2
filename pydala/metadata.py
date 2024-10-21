@@ -151,7 +151,6 @@ class ParquetDatasetMetadata:
         if update_metadata:
             self.update()
 
-
     def _read_metadata(self) -> pq.FileMetaData | None:
         if self.has_metadata_file:
             return pq.read_metadata(self._metadata_file, filesystem=self._filesystem)
@@ -770,14 +769,15 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
         # metadata: pq.FileMetaData | list[pq.FileMetaData],
         # partitioning: None | str | list[str] = None,
     ):
-        metadata_table = self._gen_metadata_table(
-            metadata=self.metadata, partitioning=self._partitioning
-        )
-        # self._metadata_table = pa.Table.from_pydict(metadata_table)
-        self._metadata_table = self.ddb_con.from_arrow(
-            pa.Table.from_pydict(metadata_table)
-        )
-        self._metadata_table.create_view("metadata_table")
+        if self.has_metadata:
+            metadata_table = self._gen_metadata_table(
+                metadata=self.metadata, partitioning=self._partitioning
+            )
+            # self._metadata_table = pa.Table.from_pydict(metadata_table)
+            self._metadata_table = self.ddb_con.from_arrow(
+                pa.Table.from_pydict(metadata_table)
+            )
+            self._metadata_table.create_view("metadata_table")
 
     @property
     def metadata_table(self):
