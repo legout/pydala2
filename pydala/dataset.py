@@ -46,6 +46,7 @@ class BaseDataset:
         self._filesystem = FileSystem(
             bucket=bucket, fs=filesystem, cached=cached, **fs_kwargs
         )
+        self.table = None
         self._makedirs()
 
         if name is None:
@@ -899,7 +900,10 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         )
 
     def __repr__(self):
-        return self.table.__repr__()
+        if self.table is not None:
+            return self.table.__repr__()
+        else:
+            print(f"Empty dataset at {self.path}")
 
     def write_to_dataset(
         self,
