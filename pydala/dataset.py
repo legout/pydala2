@@ -1,6 +1,7 @@
 import datetime as dt
 import os
 import re
+import typing as t
 
 import duckdb as _duckdb
 import pandas as pd
@@ -1204,7 +1205,7 @@ class Optimize(ParquetDataset):
 
     def _compact_partition(
         self,
-        partition: str | list[str],
+        partition: dict[str : t.Any],
         max_rows_per_file: int | None = 2_500_000,
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
         compression: str = "zstd",
@@ -1212,38 +1213,37 @@ class Optimize(ParquetDataset):
         unique: bool = True,
         **kwargs,
     ):
-        if isinstance(partition, str):
-            partition = [partition]
+        # if isinstance(partition, str):
+        #    partition = [partition]
 
         filter_ = " AND ".join([f"{n}='{v}'" for n, v in partition.items()])
 
         scan = self.scan(filter_)
-        if len(self.scan_files) == 1:
-            num_rows = (
-                self.metadata_table.filter(
-                    f"file_path='{self.scan_files[0].replace(self._path,'').lstrip('/')}'"
-                )
-                .aggregate("sum(num_rows)")
-                .fetchone()[0]
-            )
-        else:
-            num_rows = 0
+        # if len(self.scan_files) == 1:
+        #     num_rows = (
+        #         self.metadata_table.filter(
+        #             f"file_path='{self.scan_files[0].replace(self._path,'').lstrip('/')}'"
+        #         )
+        #         .aggregate("sum(num_rows)")
+        #         .fetchone()[0]
+        #     )
+        # else:
+        #     num_rows = 0
 
-        if (len(self.scan_files) > 1) or (num_rows > max_rows_per_file):
-            batches = scan.to_duckdb(
-                sort_by=sort_by, distinct=unique
-            ).fetch_arrow_reader(batch_size=max_rows_per_file)
-            for batch in batches:
-                self.write_to_dataset(
-                    pa.table(batch),
-                    mode="append",
-                    max_rows_per_file=max_rows_per_file,
-                    row_group_size=row_group_size,
-                    compression=compression,
-                    update_metadata=False,
-                    unique=unique,
-                    **kwargs,
-                )
+        batches = scan.to_batch_reader(
+            sort_by=sort_by, unique=unique, batch_size=max_rows_per_file
+        )
+        for batch in batches:
+            self.write_to_dataset(
+                pa.table(batch),
+                mode="append",
+                max_rows_per_file=max_rows_per_file,
+                row_group_size=row_group_size,
+                compression=compression,
+                update_metadata=False,
+                # unique=unique,
+                **kwargs,
+            )
 
             self.delete_files(self.scan_files)
 
@@ -1258,7 +1258,20 @@ class Optimize(ParquetDataset):
         unique: bool = True,
         **kwargs,
     ) -> None:
-        for partition in tqdm.tqdm(self.partitions.to_pylist()):
+        partitions_to_compact = (
+            self.metadata_table.pl()
+            .group_by(list(self.partition_names) + ["file_path"])
+            .agg(
+                _pl.n_unique("file_path").alias("num_partition_files"),
+                _pl.sum("num_rows"),
+            )
+            .sort("year", "month")
+            .filter(_pl.col("num_partition_files") > 1)
+            .filter(_pl.col("num_rows") < max_rows_per_file)
+            .select(self.partition_names)
+            .to_dicts()
+        )
+        for partition in tqdm.tqdm(partitions_to_compact):
             self._compact_partition(
                 partition=partition,
                 max_rows_per_file=max_rows_per_file,
@@ -1272,6 +1285,9 @@ class Optimize(ParquetDataset):
         self.clear_cache()
         self.load(update_metadata=True)
         self.update_metadata_table()
+
+    def compact_small_files(self):
+        pass
 
     def _compact_by_timeperiod(
         self,
