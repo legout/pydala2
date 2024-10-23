@@ -1230,9 +1230,7 @@ class Optimize(ParquetDataset):
         # else:
         #     num_rows = 0
 
-        batches = scan.to_batch_reader(
-            sort_by=sort_by, unique=unique, batch_size=max_rows_per_file
-        )
+        batches = scan.to_batch_reader(sort_by=sort_by, batch_size=max_rows_per_file)
         for batch in batches:
             self.write_to_dataset(
                 pa.table(batch),
@@ -1241,7 +1239,7 @@ class Optimize(ParquetDataset):
                 row_group_size=row_group_size,
                 compression=compression,
                 update_metadata=False,
-                # unique=unique,
+                unique=unique,
                 **kwargs,
             )
 
