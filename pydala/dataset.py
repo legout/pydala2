@@ -1260,7 +1260,7 @@ class Optimize(ParquetDataset):
     ) -> None:
         partitions_to_compact = (
             self.metadata_table.pl()
-            .group_by(list(self.partition_names) + ["file_path"])
+            .group_by(list(self.partition_names))
             .agg(
                 _pl.n_unique("file_path").alias("num_partition_files"),
                 _pl.sum("num_rows"),
