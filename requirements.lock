@@ -49,7 +49,6 @@ munch==4.0.0
     # via pydala2
 numpy==2.1.2
     # via pandas
-    # via pyarrow
 pandas==2.2.3
     # via pydala2
 pendulum==3.0.0
@@ -58,7 +57,7 @@ propcache==0.2.0
     # via yarl
 psutil==6.1.0
     # via pydala2
-pyarrow==17.0.0
+pyarrow==18.0.0
     # via pydala2
 python-dateutil==2.9.0.post0
     # via botocore
@@ -79,7 +78,7 @@ sqlparse==0.5.1
     # via pydala2
 time-machine==2.16.0
     # via pendulum
-tqdm==4.66.5
+tqdm==4.66.6
     # via pydala2
 tzdata==2024.2
     # via pandas
@@ -88,5 +87,5 @@ urllib3==2.2.3
     # via botocore
 wrapt==1.16.0
     # via aiobotocore
-yarl==1.16.0
+yarl==1.17.0
     # via aiohttp
