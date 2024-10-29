@@ -25,14 +25,12 @@ attrs==24.2.0
     # via aiohttp
 botocore==1.35.36
     # via aiobotocore
-datafusion==42.0.0
-    # via pydala2
 duckdb==1.1.2
     # via pydala2
-frozenlist==1.4.1
+frozenlist==1.5.0
     # via aiohttp
     # via aiosignal
-fsspec==2024.9.0
+fsspec==2024.10.0
     # via s3fs
 idna==3.10
     # via yarl
@@ -61,7 +59,6 @@ propcache==0.2.0
 psutil==6.1.0
     # via pydala2
 pyarrow==17.0.0
-    # via datafusion
     # via pydala2
 python-dateutil==2.9.0.post0
     # via botocore
@@ -72,11 +69,11 @@ pytz==2024.2
     # via pandas
 pyyaml==6.0.2
     # via pydala2
-s3fs==2024.9.0
+s3fs==2024.10.0
     # via pydala2
 six==1.16.0
     # via python-dateutil
-sqlglot==25.25.1
+sqlglot==25.28.0
     # via pydala2
 sqlparse==0.5.1
     # via pydala2
@@ -84,8 +81,6 @@ time-machine==2.16.0
     # via pendulum
 tqdm==4.66.5
     # via pydala2
-typing-extensions==4.12.2
-    # via datafusion
 tzdata==2024.2
     # via pandas
     # via pendulum
@@ -93,5 +88,5 @@ urllib3==2.2.3
     # via botocore
 wrapt==1.16.0
     # via aiobotocore
-yarl==1.15.4
+yarl==1.16.0
     # via aiohttp
