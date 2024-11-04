@@ -1,6 +1,7 @@
 import datetime as dt
 import inspect
 import os
+import asyncio
 from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
@@ -13,6 +14,7 @@ import psutil
 import pyarrow as pa
 import pyarrow.dataset as pds
 import pyarrow.parquet as pq
+import pyarrow.fs as pfs
 import s3fs
 from fsspec import AbstractFileSystem, filesystem
 from fsspec.implementations.cache_mapper import AbstractCacheMapper
@@ -24,6 +26,17 @@ from loguru import logger
 
 from .helpers.misc import read_table, run_parallel
 from .schema import shrink_large_string
+
+
+def get_credentials_from_fssspec(fs: AbstractFileSystem) -> dict[str, str]:
+    if "s3" in fs.protocol:
+        credendials = fs.s3._get_credentials()
+        return {
+            "access_key": credendials.access_key,
+            "secret_key": credendials.secret_key,
+            "session_token": credendials.token,
+            "endpoint_override": fs.s3._endpoint.host,
+        }
 
 
 def get_total_directory_size(directory: str):
@@ -733,6 +746,12 @@ def sync_folder(
         self.cp(new_src, dst)
 
 
+def list_files_recursive(self, path:str, format:str=""):
+    bucket, prefix = path.split("/", maxsplit=1)
+    return [f["Key"] for f in asyncio.run(self.s3.list_objects_v2(Bucket=bucket, Prefix=prefix))["Contents"] if f["Key"].endswith(format)]
+
+
+
 AbstractFileSystem.read_parquet = read_parquet
 AbstractFileSystem.read_parquet_dataset = read_parquet_dataset
 AbstractFileSystem.write_parquet = write_parquet
@@ -763,6 +782,7 @@ AbstractFileSystem.ls2 = ls
 # AbstractFileSystem.parallel_mv = parallel_mv
 # AbstractFileSystem.parallel_rm = parallel_rm
 AbstractFileSystem.sync_folder = sync_folder
+AbstractFileSystem.list_files_recursive = list_files_recursive
 
 
 def FileSystem(
@@ -828,7 +848,102 @@ def FileSystem(
             same_names=same_names,
             **kwargs,
         )
+
     return fs
+
+
+def PyArrowFileSystem(
+    bucket: str | None = None,
+    fs: AbstractFileSystem | None = None,
+    access_key: str | None = None,
+    secret_key: str | None = None,
+    session_token: str | None = None,
+    endpoint_override: str | None = None,
+    protocol: str | None = None,
+) -> pfs.FileSystem:
+    credentials = None
+    if fs is not None:
+        protocol = fs.protocol[0] if isinstance(fs.protocol, tuple) else fs.protocol
+
+        if protocol == "dir":
+            bucket = fs.path
+            fs = fs.fs
+            protocol = fs.protocol[0] if isinstance(fs.protocol, tuple) else fs.protocol
+
+        if protocol == "s3":
+            credentials = get_credentials_from_fssspec(fs)
+
+    if credentials is None:
+        credentials = {
+            "access_key": access_key,
+            "secret_key": secret_key,
+            "session_token": session_token,
+            "endpoint_override": endpoint_override,
+        }
+    if protocol == "s3":
+        fs = pfs.S3FileSystem(
+            **credentials,
+        )
+    elif protocol in ("file", "local", None):
+        fs = pfs.LocalFileSystem()
+
+    else:
+        fs = pfs.LocalFileSystem()
+
+    if bucket is not None:
+        if protocol in ["file", "local", "None"]:
+            bucket = os.path.abspath(bucket)
+
+        fs = pfs.SubTreeFileSystem(base_fs=fs, base_path=bucket)
+
+    return fs
+
+
+# class FileSystem:
+#     def __init__(
+#         self,
+#         bucket: str | None = None,
+#         fs: AbstractFileSystem | None = None,
+#         profile: str | None = None,
+#         key: str | None = None,
+#         endpoint_url: str | None = None,
+#         secret: str | None = None,
+#         token: str | None = None,
+#         protocol: str | None = None,
+#         cached: bool = False,
+#         cache_storage="~/.tmp",
+#         check_files: bool = False,
+#         cache_check: int = 120,
+#         expire_time: int = 24 * 60 * 60,
+#         same_names: bool = False,
+#         **kwargs,
+#     ):
+#         self._fsspec_fs = FsSpecFileSystem(
+#             bucket=bucket,
+#             fs=fs,
+#             profile=profile,
+#             key=key,
+#             endpoint_url=endpoint_url,
+#             secret=secret,
+#             token=token,
+#             protocol=protocol,
+#             cached=cached,
+#             cache_storage=cache_storage,
+#             check_files=check_files,
+#             cache_check=cache_check,
+#             expire_time=expire_time,
+#             same_names=same_names,
+#             **kwargs,
+#         )
+#         self._pfs_fs = PyArrowFileSystem(
+#             bucket=bucket,
+#             fs=fs,
+#             access_key=key,
+#             secret_key=secret,
+#             session_token=token,
+#             endpoint_override=endpoint_url,
+#             protocol=protocol,
+#         )
 
 
 def clear_cache(fs: AbstractFileSystem | None):

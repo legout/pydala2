@@ -107,6 +107,40 @@ def remove_from_metadata(
 
     return metadata
 
+def get_file_paths(metadata: pq.FileMetaData,) -> list[str]:
+    return [metadata.row_group(i).column(0).file_path for i in range(metadata.num_row_groups)]
+
+class FileMetadata:
+    def __init__(
+        self,
+        path:str,
+        filesystem: AbstractFileSystem | pfs.FileSystem | None = None,
+        bucket: str | None = None,
+        cached: bool = False,
+        **caching_options,
+        **kwargs,
+    ):
+        self._path = path
+        self._bucket = bucket
+        self._cached = cached
+        self._base_filesystem = filesystem
+        self._filesystem = FileSystem(
+            bucket=bucket, fs=filesystem, cached=cached, **caching_options
+        )
+
+        self._caching_options = caching_options
+
+        self.load_files()
+
+    def load_files(self):
+        self._files = self._filesystem.list_files_recursive(self._path)
+
+
+
+
+    @property
+    def fs(self):
+        return self._filesystem
 
 class ParquetDatasetMetadata:
     def __init__(
@@ -140,7 +174,7 @@ class ParquetDatasetMetadata:
         )
 
         self._makedirs()
-        self.load_files()
+        #self.load_files()
 
         self._caching_options = caching_options
 
@@ -170,7 +204,10 @@ class ParquetDatasetMetadata:
             self._filesystem.touch(os.path.join(self._path, "tmp.delete"))
             self._filesystem.rm(os.path.join(self._path, "tmp.delete"))
 
-    def load_files(self) -> None:
+    def load_files(self)->None:
+        self._files = get_file_paths(self._metadata)
+
+    def _ls_files(self) -> None:
         """
         Reloads the list of files in the dataset directory. This method should be called
         after adding or removing files from the directory to ensure that the dataset object
@@ -180,7 +217,7 @@ class ParquetDatasetMetadata:
             None
         """
         self.clear_cache()
-        self._files = [
+        return [
             fn.replace(self._path, "").lstrip("/")
             for fn in sorted(
                 self._filesystem.glob(os.path.join(self._path, "**/*.parquet"))
@@ -200,7 +237,7 @@ class ParquetDatasetMetadata:
             None
         """
         if files is None:
-            files = self._files
+            files = self._ls_files()
 
         file_metadata = collect_parquet_metadata(
             files=files,
@@ -211,8 +248,8 @@ class ParquetDatasetMetadata:
 
         # if file_metadata:
         for f in file_metadata:
-            file_metadata[f.replace(self._path, "")].set_file_path(
-                f.split(self._path)[-1].lstrip("/")
+            file_metadata[f].set_file_path(
+                f
             )
 
         if self.has_file_metadata:
@@ -250,14 +287,14 @@ class ParquetDatasetMetadata:
         """
 
         # Add new files to file_metadata
-        self.load_files()
+        all_files = self._ls_files()
 
         new_files = []
         rm_files = []
 
         if self.has_file_metadata:
-            new_files += sorted(set(self.files) - set(self._file_metadata.keys()))
-            rm_files += sorted(set(self._file_metadata.keys()) - set(self.files))
+            new_files += sorted(set(all_files) - set(self._file_metadata.keys()))
+            rm_files += sorted(set(self._file_metadata.keys()) - set(all_files))
 
         else:
             new_files += sorted(set(new_files + self._files))

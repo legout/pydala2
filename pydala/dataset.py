@@ -66,7 +66,7 @@ class BaseDataset:
         )
         self._timestamp_column = timestamp_column
 
-        self.load_files()
+        #self.load_files()
 
         if self.has_files:
             if partitioning == "ignore":
@@ -732,7 +732,7 @@ class BaseDataset:
             self.delete_files(del_files)
 
         self.clear_cache()
-        self.load_files()
+        #self.load_files()
 
 
 class ParquetDataset(PydalaDatasetMetadata, BaseDataset):

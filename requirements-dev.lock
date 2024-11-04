@@ -10,33 +10,59 @@
 #   universal: false
 
 -e file:.
+adlfs==2024.7.0
 aiobotocore==2.15.2
     # via s3fs
 aiohappyeyeballs==2.4.3
     # via aiohttp
 aiohttp==3.10.10
+    # via adlfs
     # via aiobotocore
     # via s3fs
 aioitertools==0.12.0
     # via aiobotocore
 aiosignal==1.3.1
     # via aiohttp
+appnope==0.1.4
+    # via ipykernel
 asttokens==2.4.1
     # via stack-data
 atpublic==5.0
     # via ibis-framework
 attrs==24.2.0
     # via aiohttp
+azure-core==1.31.0
+    # via adlfs
+    # via azure-identity
+    # via azure-storage-blob
+azure-datalake-store==0.0.53
+    # via adlfs
+azure-identity==1.19.0
+    # via adlfs
+azure-storage-blob==12.23.1
+    # via adlfs
 blosc==1.11.2
 botocore==1.35.36
     # via aiobotocore
 brotli==1.1.0
+certifi==2024.8.30
+    # via requests
+cffi==1.17.1
+    # via azure-datalake-store
+    # via cryptography
+charset-normalizer==3.4.0
+    # via requests
 comm==0.2.2
     # via ipykernel
 compress-pickle==2.1.0
 cramjam==2.9.0
     # via fastparquet
     # via python-snappy
+cryptography==43.0.3
+    # via azure-identity
+    # via azure-storage-blob
+    # via msal
+    # via pyjwt
 cypari==2.5.5
     # via snappy
 datafusion==42.0.0
@@ -58,6 +84,7 @@ frozenlist==1.5.0
     # via aiohttp
     # via aiosignal
 fsspec==2024.10.0
+    # via adlfs
     # via fastparquet
     # via s3fs
 fxrays==1.3.5
@@ -65,11 +92,14 @@ fxrays==1.3.5
 ibis==3.3.0
 ibis-framework==9.5.0
 idna==3.10
+    # via requests
     # via yarl
 ipykernel==6.29.5
 ipython==8.29.0
     # via ipykernel
     # via snappy
+isodate==0.7.2
+    # via azure-storage-blob
 isort==5.13.2
 jedi==0.19.1
     # via ipython
@@ -97,6 +127,12 @@ matplotlib-inline==0.1.7
     # via ipython
 mdurl==0.1.2
     # via markdown-it-py
+msal==1.31.0
+    # via azure-datalake-store
+    # via azure-identity
+    # via msal-extensions
+msal-extensions==1.2.0
+    # via azure-identity
 msgpack==1.1.0
 msgspec==0.18.6
     # via pydala2
@@ -114,7 +150,6 @@ numpy==2.1.2
     # via ibis-framework
     # via pandas
     # via pyarrow
-obstore==0.2.0
 orjson==3.10.10
 packaging==24.1
     # via fastparquet
@@ -139,6 +174,8 @@ plink==2.4.2
     # via snappy
 polars==1.12.0
     # via ibis-framework
+portalocker==2.10.1
+    # via msal-extensions
 prompt-toolkit==3.0.48
     # via ipython
 propcache==0.2.0
@@ -157,9 +194,13 @@ pyarrow==17.0.0
     # via pydala2
 pyarrow-hotfix==0.6
     # via ibis-framework
+pycparser==2.22
+    # via cffi
 pygments==2.18.0
     # via ipython
     # via rich
+pyjwt==2.9.0
+    # via msal
 pypng==0.20220715.0
     # via snappy
 python-dateutil==2.9.0.post0
@@ -178,12 +219,18 @@ pyyaml==6.0.2
 pyzmq==26.2.0
     # via ipykernel
     # via jupyter-client
+requests==2.32.3
+    # via azure-core
+    # via azure-datalake-store
+    # via msal
 rich==13.9.3
     # via ibis-framework
+ruff==0.7.1
 s3fs==2024.10.0
     # via pydala2
 six==1.16.0
     # via asttokens
+    # via azure-core
     # via python-dateutil
 snappy==3.1.1
 snappy-manifolds==1.2
@@ -205,7 +252,7 @@ toolz==0.12.1
 tornado==6.4.1
     # via ipykernel
     # via jupyter-client
-tqdm==4.66.5
+tqdm==4.66.6
     # via pydala2
 traitlets==5.14.3
     # via comm
@@ -215,6 +262,9 @@ traitlets==5.14.3
     # via jupyter-core
     # via matplotlib-inline
 typing-extensions==4.12.2
+    # via azure-core
+    # via azure-identity
+    # via azure-storage-blob
     # via datafusion
     # via ibis-framework
 tzdata==2024.2
@@ -222,10 +272,11 @@ tzdata==2024.2
     # via pendulum
 urllib3==2.2.3
     # via botocore
+    # via requests
 wcwidth==0.2.13
     # via prompt-toolkit
 wrapt==1.16.0
     # via aiobotocore
-yarl==1.16.0
+yarl==1.17.0
     # via aiohttp
 zstandard==0.23.0

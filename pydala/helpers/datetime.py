@@ -86,8 +86,8 @@ def timestamp_from_string(
         datetime.datetime: The datetime object.
     """
     # Extract the timezone from the string if not provided
-    #tz = extract_timezone(timestamp) if tz is None else tz
-    #timestamp = timestamp.replace(tz, "").strip() if tz else timestamp
+    # tz = extract_timezone(timestamp) if tz is None else tz
+    # timestamp = timestamp.replace(tz, "").strip() if tz else timestamp
 
     pdl_timestamp = pdl.parse(timestamp, exact=exact, strict=strict)
 

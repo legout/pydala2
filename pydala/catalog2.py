@@ -41,8 +41,7 @@ class Table:
     write_args: dict = field(default_factory=dict)
 
     def _load_parquet(self):
-
-
+        pass
 
 
 @dataclass
