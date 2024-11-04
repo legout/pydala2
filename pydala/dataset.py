@@ -99,7 +99,9 @@ class BaseDataset:
         self._files = [
             fn.replace(self._path, "").lstrip("/")
             for fn in sorted(
-                self._filesystem.glob(os.path.join(self._path, f"**/*.{self._format}"))
+                self._filesystem.glob(
+                    os.path.join(self._path, f"**/*.{self._format}")
+                )
             )
         ]
 
@@ -153,11 +155,15 @@ class BaseDataset:
                 format=self._format,
                 partitioning=self._partitioning,
             )
-            self.table = PydalaTable(result=self._arrow_dataset, ddb_con=self.ddb_con)
+            self.table = PydalaTable(
+                result=self._arrow_dataset, ddb_con=self.ddb_con
+            )
             # self.ddb_con.register("arrow__dataset", self._arrow_parquet_dataset)
 
             if self._timestamp_column is None:
-                self._timestamp_columns = get_timestamp_column(self.table.pl.head(10))
+                self._timestamp_columns = get_timestamp_column(
+                    self.table.pl.head(10)
+                )
                 if len(self._timestamp_columns) > 0:
                     self._timestamp_column = self._timestamp_columns[0]
 
@@ -339,7 +345,9 @@ class BaseDataset:
             if not hasattr(self, "_partition_names") and hasattr(
                 self._arrow_dataset, "partitioning"
             ):
-                self._partition_names = self._arrow_dataset.partitioning.schema.names
+                self._partition_names = (
+                    self._arrow_dataset.partitioning.schema.names
+                )
 
             return self._partition_names
 
@@ -464,7 +472,12 @@ class BaseDataset:
             the method will automatically use DuckDB for filtering.
 
         """
-        if any([s in filter_expr for s in ["%", "like", "similar to", "*", "(", ")"]]):
+        if any(
+            [
+                s in filter_expr
+                for s in ["%", "like", "similar to", "*", "(", ")"]
+            ]
+        ):
             use = "duckdb"
 
         if use == "auto":
@@ -492,7 +505,9 @@ class BaseDataset:
         Returns:
             list[str]: A list of table names.
         """
-        return self.ddb_con.sql("SHOW TABLES").arrow().column("name").to_pylist()
+        return (
+            self.ddb_con.sql("SHOW TABLES").arrow().column("name").to_pylist()
+        )
 
     def interrupt_duckdb(self):
         """
@@ -554,7 +569,9 @@ class BaseDataset:
             #         _pl.first(col).alias("max"), _pl.last(col).alias("min")
             #     )
             # else:
-            max_min = df.select(_pl.max(col).alias("max"), _pl.min(col).alias("min"))
+            max_min = df.select(
+                _pl.max(col).alias("max"), _pl.min(col).alias("min")
+            )
 
             if collect:
                 max_min = max_min.collect()
@@ -838,10 +855,14 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
                 filesystem=self._filesystem,
             )
 
-            self.table = PydalaTable(result=self._arrow_dataset, ddb_con=self.ddb_con)
+            self.table = PydalaTable(
+                result=self._arrow_dataset, ddb_con=self.ddb_con
+            )
 
             if self._timestamp_column is None:
-                self._timestamp_columns = get_timestamp_column(self.table.pl.head(10))
+                self._timestamp_columns = get_timestamp_column(
+                    self.table.pl.head(10)
+                )
                 if len(self._timestamp_columns) > 0:
                     self._timestamp_column = self._timestamp_columns[0]
             if self._timestamp_column is not None:
@@ -1166,13 +1187,17 @@ class JsonDataset(BaseDataset):
             .opt_dtype(strict=False)
             .to_arrow()
         )
-        self.table = PydalaTable(result=self._arrow_dataset, ddb_con=self.ddb_con)
+        self.table = PydalaTable(
+            result=self._arrow_dataset, ddb_con=self.ddb_con
+        )
 
         self.ddb_con.register(f"{self.name}", self._arrow_dataset)
         # self.ddb_con.register("arrow__dataset", self._arrow_parquet_dataset)
 
         if self._timestamp_column is None:
-            self._timestamp_columns = get_timestamp_column(self.table.pl.head(10))
+            self._timestamp_columns = get_timestamp_column(
+                self.table.pl.head(10)
+            )
             if len(self._timestamp_columns) > 1:
                 self._timestamp_column = self._timestamp_columns[0]
 
@@ -1230,7 +1255,9 @@ class Optimize(ParquetDataset):
         # else:
         #     num_rows = 0
 
-        batches = scan.to_batch_reader(sort_by=sort_by, batch_size=max_rows_per_file)
+        batches = scan.to_batch_reader(
+            sort_by=sort_by, batch_size=max_rows_per_file
+        )
         for batch in batches:
             self.write_to_dataset(
                 pa.table(batch),
@@ -1258,12 +1285,11 @@ class Optimize(ParquetDataset):
     ) -> None:
         partitions_to_compact = (
             self.metadata_table.pl()
-            .group_by(list(self.partition_names))
+            .group_by(list(self.partition_names), maintain_order=True)
             .agg(
                 _pl.n_unique("file_path").alias("num_partition_files"),
                 _pl.sum("num_rows"),
             )
-            .sort("year", "month")
             .filter(_pl.col("num_partition_files") > 1)
             .filter(_pl.col("num_rows") < max_rows_per_file)
             .select(self.partition_names)
@@ -1377,7 +1403,9 @@ class Optimize(ParquetDataset):
         end_dates = dates[1:]
 
         files_to_delete = []
-        for start_date, end_date in tqdm.tqdm(list(zip(start_dates, end_dates))):
+        for start_date, end_date in tqdm.tqdm(
+            list(zip(start_dates, end_dates))
+        ):
             files_to_delete_ = self._compact_by_timeperiod(
                 start_date=start_date,
                 end_date=end_date,
@@ -1487,13 +1515,16 @@ class Optimize(ParquetDataset):
             [
                 field
                 for field in scan.arrow_dataset.schema
-                if field.name not in scan.arrow_dataset.partitioning.schema.names
+                if field.name
+                not in scan.arrow_dataset.partitioning.schema.names
             ]
         )
 
         if schema != optimized_schema:
             table = replace_schema(
-                scan.pl.opt_dtype(strict=strict, exclude=exclude, include=include)
+                scan.pl.opt_dtype(
+                    strict=strict, exclude=exclude, include=include
+                )
                 .collect(streaming=True)
                 .to_arrow(),
                 schema=optimized_schema,
