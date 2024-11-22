@@ -1,7 +1,6 @@
 import datetime as dt
 import inspect
 import os
-import asyncio
 from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
@@ -13,13 +12,12 @@ import polars as pl
 import psutil
 import pyarrow as pa
 import pyarrow.dataset as pds
-import pyarrow.parquet as pq
 import pyarrow.fs as pfs
+import pyarrow.parquet as pq
 import s3fs
 from fsspec import AbstractFileSystem, filesystem
 from fsspec.implementations.cache_mapper import AbstractCacheMapper
 from fsspec.implementations.cached import SimpleCacheFileSystem
-
 # from fsspec.implementations import cached as cachedfs
 from fsspec.implementations.dirfs import DirFileSystem
 from loguru import logger
@@ -746,10 +744,58 @@ def sync_folder(
         self.cp(new_src, dst)
 
 
-def list_files_recursive(self, path:str, format:str=""):
-    bucket, prefix = path.split("/", maxsplit=1)
-    return [f["Key"] for f in asyncio.run(self.s3.list_objects_v2(Bucket=bucket, Prefix=prefix))["Contents"] if f["Key"].endswith(format)]
+# NOTE: This is not working properly due to some event loop issues
 
+# def list_files_recursive(self, path: str, format: str = ""):
+#     bucket, prefix = path.split("/", maxsplit=1)
+#     return [
+#         f["Key"]
+#         for f in asyncio.run(self.s3.list_objects_v2(Bucket=bucket, Prefix=prefix))[
+#             "Contents"
+#         ]
+#         if f["Key"].endswith(format)
+#     ]
+
+
+# async def _list_files_recursive(
+#     self, path: str, format: str = "", max_items: int = 10000
+# ):
+#     bucket, prefix = path.split("/", maxsplit=1)
+#     continuation_token = None
+#     files = []
+
+#     while True:
+#         if continuation_token:
+#             response = await self.s3.list_objects_v2(
+#                 Bucket=bucket,
+#                 Prefix=prefix,
+#                 ContinuationToken=continuation_token,
+#                 MaxKeys=max_items,
+#             )
+#         else:
+#             response = await self.s3.list_objects_v2(
+#                 Bucket=bucket, Prefix=prefix, MaxKeys=max_items
+#             )
+
+#         if "Contents" in response:
+#             files.extend(
+#                 [f["Key"] for f in response["Contents"] if f["Key"].endswith(format)]
+#             )
+
+#         if response.get("IsTruncated"):  # Check if there are more objects to retrieve
+#             continuation_token = response.get("NextContinuationToken")
+#         else:
+#             break
+
+#     return files
+
+
+# def list_files_recursive(self, path: str, format: str = "", max_items: int = 10000):
+#     loop = asyncio.get_event_loop()
+#     if loop.is_closed():
+#         loop = asyncio.new_event_loop()
+#         asyncio.set_event_loop(loop)
+#     return loop.run_until_complete(_list_files_recursive(self, path, format, max_items))
 
 
 AbstractFileSystem.read_parquet = read_parquet
@@ -782,7 +828,7 @@ AbstractFileSystem.ls2 = ls
 # AbstractFileSystem.parallel_mv = parallel_mv
 # AbstractFileSystem.parallel_rm = parallel_rm
 AbstractFileSystem.sync_folder = sync_folder
-AbstractFileSystem.list_files_recursive = list_files_recursive
+# AbstractFileSystem.list_files_recursive = list_files_recursive
 
 
 def FileSystem(

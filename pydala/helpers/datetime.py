@@ -1,11 +1,11 @@
 import datetime as dt
 import re
+from functools import lru_cache
 
 import pendulum as pdl
 import polars as pl
 import polars.selectors as cs
 import pyarrow as pa
-from functools import lru_cache
 
 
 def get_timestamp_column(df: pl.DataFrame | pl.LazyFrame | pa.Table) -> str | list[str]:

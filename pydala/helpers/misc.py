@@ -2,7 +2,6 @@ import os
 import re
 from typing import Any
 
-import pendulum as pdl
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq

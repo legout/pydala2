@@ -1,3 +1,4 @@
+import concurrent.futures
 import copy
 import os
 import pickle
@@ -11,7 +12,6 @@ import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 
 from .filesystem import FileSystem, clear_cache
-
 # from .helpers.metadata import collect_parquet_metadata  # , remove_from_metadata
 from .helpers.misc import get_partitions_from_path, run_parallel
 from .schema import repair_schema, unify_schemas
@@ -107,40 +107,48 @@ def remove_from_metadata(
 
     return metadata
 
-def get_file_paths(metadata: pq.FileMetaData,) -> list[str]:
-    return [metadata.row_group(i).column(0).file_path for i in range(metadata.num_row_groups)]
 
-class FileMetadata:
-    def __init__(
-        self,
-        path:str,
-        filesystem: AbstractFileSystem | pfs.FileSystem | None = None,
-        bucket: str | None = None,
-        cached: bool = False,
-        **caching_options,
-        **kwargs,
-    ):
-        self._path = path
-        self._bucket = bucket
-        self._cached = cached
-        self._base_filesystem = filesystem
-        self._filesystem = FileSystem(
-            bucket=bucket, fs=filesystem, cached=cached, **caching_options
-        )
-
-        self._caching_options = caching_options
-
-        self.load_files()
-
-    def load_files(self):
-        self._files = self._filesystem.list_files_recursive(self._path)
+def get_file_paths(
+    metadata: pq.FileMetaData,
+) -> list[str]:
+    return [
+        metadata.row_group(i).column(0).file_path
+        for i in range(metadata.num_row_groups)
+    ]
 
 
+# class FileMetadata:
+#     def __init__(
+#         self,
+#         path:str,
+#         filesystem: AbstractFileSystem | pfs.FileSystem | None = None,
+#         bucket: str | None = None,
+#         cached: bool = False,
+#         **caching_options,
+#         **kwargs,
+#     ):
+#         self._path = path
+#         self._bucket = bucket
+#         self._cached = cached
+#         self._base_filesystem = filesystem
+#         self._filesystem = FileSystem(
+#             bucket=bucket, fs=filesystem, cached=cached, **caching_options
+#         )
+#
+#         self._caching_options = caching_options
+#
+#         self.load_files()
+#
+#     def load_files(self):
+#         self._files = self._filesystem.list_files_recursive(self._path)
+#
+#
+#
+#
+#     @property
+#     def fs(self):
+#         return self._filesystem
 
-
-    @property
-    def fs(self):
-        return self._filesystem
 
 class ParquetDatasetMetadata:
     def __init__(
@@ -174,14 +182,14 @@ class ParquetDatasetMetadata:
         )
 
         self._makedirs()
-        #self.load_files()
+        # self.load_files()
 
         self._caching_options = caching_options
 
         self._metadata_file = os.path.join(path, "_metadata")
         self._file_metadata_file = os.path.join(path, "_file_metadata")
         self._metadata = self._read_metadata()
-        self._file_metadata = self._read_file_metadata()
+        self._file_metadata = None  # self._read_file_metadata()
         if update_metadata:
             self.update()
 
@@ -204,8 +212,19 @@ class ParquetDatasetMetadata:
             self._filesystem.touch(os.path.join(self._path, "tmp.delete"))
             self._filesystem.rm(os.path.join(self._path, "tmp.delete"))
 
-    def load_files(self)->None:
-        self._files = get_file_paths(self._metadata)
+    def load_files(self) -> None:
+        if self.has_metadata:
+            self._files = get_file_paths(self._metadata)
+        else:
+            self.clear_cache()
+            self._files = [
+                fn.replace(self._path, "").lstrip("/")
+                for fn in sorted(
+                    self._filesystem.glob(
+                        os.path.join(self._path, f"**/*.{self._format}")
+                    )
+                )
+            ]
 
     def _ls_files(self) -> None:
         """
@@ -248,9 +267,7 @@ class ParquetDatasetMetadata:
 
         # if file_metadata:
         for f in file_metadata:
-            file_metadata[f].set_file_path(
-                f
-            )
+            file_metadata[f].set_file_path(f)
 
         if self.has_file_metadata:
             self._file_metadata.update(file_metadata)
@@ -297,7 +314,7 @@ class ParquetDatasetMetadata:
             rm_files += sorted(set(self._file_metadata.keys()) - set(all_files))
 
         else:
-            new_files += sorted(set(new_files + self._files))
+            new_files += sorted(set(all_files + self.files))
 
         if files is not None:
             new_files = sorted(set(files + new_files))
@@ -349,7 +366,7 @@ class ParquetDatasetMetadata:
         if not self.has_file_metadata:
             self.update_file_metadata()
 
-        new_files = sorted((set(self._files) - set(self.files_in_metadata)))
+        new_files = sorted((set(self.files) - set(self.files_in_metadata)))
 
         if len(new_files):
             schemas = [
@@ -460,7 +477,8 @@ class ParquetDatasetMetadata:
         Returns:
             None
         """
-
+        if not self.has_file_metadata:
+            self._read_file_metadata()
         self._metadata_temp = copy.copy(self._metadata)
         # update metadata
         if self.has_file_metadata:
@@ -654,7 +672,7 @@ class ParquetDatasetMetadata:
         """
         Returns True if the dataset has files, False otherwise.
         """
-        return len(self._files) > 0
+        return len(self.files) > 0
 
     @property
     def files_in_metadata(self) -> list:
@@ -747,6 +765,8 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
     def _gen_metadata_table(
         metadata: pq.FileMetaData | list[pq.FileMetaData],
         partitioning: None | str | list[str] = None,
+        backend: str = "threading",
+        verbose: bool = True,
     ):
         """
         Generates a polars DataFrame with statistics for each row group in the dataset.
@@ -756,59 +776,59 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
             metadata = [metadata]
 
         metadata_table = defaultdict(list)
-        for metadata_ in metadata:
-            for rg_num in range(metadata_.num_row_groups):
-                row_group = metadata_.row_group(rg_num)
-                file_path = row_group.column(0).file_path
-                metadata_table["file_path"].append(file_path)
-                metadata_table["num_columns"].append(row_group.num_columns)
-                metadata_table["num_rows"].append(row_group.num_rows)
-                metadata_table["total_byte_size"].append(row_group.total_byte_size)
-                metadata_table["compression"].append(row_group.column(0).compression)
 
-                if "=" in file_path:
-                    partitioning = partitioning or "hive"
+        def process_row_group(metadata_, rg_num):
+            row_group = metadata_.row_group(rg_num)
+            file_path = row_group.column(0).file_path
+            result = {
+                "file_path": file_path,
+                "num_columns": row_group.num_columns,
+                "num_rows": row_group.num_rows,
+                "total_byte_size": row_group.total_byte_size,
+                "compression": row_group.column(0).compression,
+            }
 
-                if partitioning is not None:
-                    partitions = dict(
-                        get_partitions_from_path(file_path, partitioning=partitioning)
+            if "=" in file_path:
+                partitioning_ = partitioning or "hive"
+            else:
+                partitioning_ = partitioning
+
+            if partitioning_ is not None:
+                partitions = dict(
+                    get_partitions_from_path(file_path, partitioning=partitioning_)
+                )
+                result.update(partitions)
+
+            return result
+
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = []
+            for metadata_ in metadata:
+                for rg_num in range(metadata_.num_row_groups):
+                    futures.append(
+                        executor.submit(process_row_group, metadata_, rg_num)
                     )
-                    for part in partitions:
-                        metadata_table[part].append(partitions[part])
 
-                for col_num in range(row_group.num_columns):
-                    rgc = row_group.column(col_num)
-                    rgc = rgc.to_dict()
-                    col_name = rgc.pop("path_in_schema")
-                    rgc.pop("file_path")
-                    rgc.pop("compression")
-                    if "statistics" in rgc:
-                        if rgc["statistics"] is not None:
-                            rgc.update(rgc.pop("statistics"))
-                        else:
-                            rgc.pop("statistics")
-                            rgc.update(
-                                {
-                                    "has_min_max": False,
-                                    "min": None,
-                                    "max": None,
-                                    "null_count": None,
-                                    "distinct_count": None,
-                                    "num_values": None,
-                                    "physical_type": "UNKNOWN",
-                                }
-                            )
-                    metadata_table[col_name].append(rgc)
+            for future in concurrent.futures.as_completed(futures):
+                result = future.result()
+                for key, value in result.items():
+                    metadata_table[key].append(value)
+
         return metadata_table
 
     def update_metadata_table(
         self,
         # metadata: pq.FileMetaData | list[pq.FileMetaData],
         # partitioning: None | str | list[str] = None,
+        backend: str = "threading",
+        verbose: bool = True,
     ):
         if self.has_metadata:
             metadata_table = self._gen_metadata_table(
-                metadata=self.metadata, partitioning=self._partitioning
+                metadata=self.metadata,
+                partitioning=self._partitioning,
+                backend=backend,
+                verbose=verbose,
             )
             # self._metadata_table = pa.Table.from_pydict(metadata_table)
             self._metadata_table = self.ddb_con.from_arrow(
