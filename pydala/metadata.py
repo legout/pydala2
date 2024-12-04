@@ -12,6 +12,7 @@ import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 
 from .filesystem import FileSystem, clear_cache
+
 # from .helpers.metadata import collect_parquet_metadata  # , remove_from_metadata
 from .helpers.misc import get_partitions_from_path, run_parallel
 from .schema import repair_schema, unify_schemas
@@ -798,6 +799,30 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
                     get_partitions_from_path(file_path, partitioning=partitioning_)
                 )
                 result.update(partitions)
+
+            for col_num in range(row_group.num_columns):
+                rgc = row_group.column(col_num)
+                rgc = rgc.to_dict()
+                col_name = rgc.pop("path_in_schema")
+                rgc.pop("file_path")
+                rgc.pop("compression")
+                if "statistics" in rgc:
+                    if rgc["statistics"] is not None:
+                        rgc.update(rgc.pop("statistics"))
+                    else:
+                        rgc.pop("statistics")
+                        rgc.update(
+                            {
+                                "has_min_max": False,
+                                "min": None,
+                                "max": None,
+                                "null_count": None,
+                                "distinct_count": None,
+                                "num_values": None,
+                                "physical_type": "UNKNOWN",
+                            }
+                        )
+                metadata_table[col_name].append(rgc)
 
             return result
 
