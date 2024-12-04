@@ -18,6 +18,7 @@ import s3fs
 from fsspec import AbstractFileSystem, filesystem
 from fsspec.implementations.cache_mapper import AbstractCacheMapper
 from fsspec.implementations.cached import SimpleCacheFileSystem
+
 # from fsspec.implementations import cached as cachedfs
 from fsspec.implementations.dirfs import DirFileSystem
 from loguru import logger
@@ -118,9 +119,9 @@ def get_friendly_disk_usage(storage: str) -> str:
 
 class MonitoredSimpleCacheFileSystem(SimpleCacheFileSystem):
     def __init__(self, **kwargs):
-        kwargs["cache_storage"] = os.path.join(
-            kwargs.get("cache_storage"), kwargs.get("fs").protocol[0]
-        )
+        # kwargs["cache_storage"] = os.path.join(
+        #    kwargs.get("cache_storage"), kwargs.get("fs").protocol[0]
+        # )
         self._verbose = kwargs.get("verbose", False)
         super().__init__(**kwargs)
         self._mapper = FileNameCacheMapper(kwargs.get("cache_storage"))
