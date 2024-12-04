@@ -81,8 +81,12 @@ class BaseDataset:
         # NOTE: Set partitioning manually, if not set, try to infer it
         if partitioning is None:
             # try to infer partitioning
-            if any(["=" in obj for obj in self.fs.ls(self._path)]):
-                partitioning = "hive"
+            try:
+                if any(["=" in obj for obj in self.fs.ls(self._path)]):
+                    partitioning = "hive"
+            except FileNotFoundError as e:
+                _ = e
+                partitioning = None
         else:
             if partitioning == "ignore":
                 partitioning = None
