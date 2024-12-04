@@ -1,6 +1,7 @@
 import datetime as dt
 import os
 import re
+import tempfile
 import typing as t
 
 import duckdb as _duckdb
