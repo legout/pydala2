@@ -42,8 +42,19 @@ class BaseDataset:
         self._cached = cached
         self._format = format
         self._base_filesystem = filesystem
+        if cached:
+            cache_storage = fs_kwargs.pop(
+                "cache_storage", tempfile.mkdtemp(prefix="pydala2_")
+            )
+            cache_storage = os.path.join(cache_storage, path)
+        else:
+            cache_storage = None
         self._filesystem = FileSystem(
-            bucket=bucket, fs=filesystem, cached=cached, **fs_kwargs
+            bucket=bucket,
+            fs=filesystem,
+            cached=cached,
+            cache_storage=cache_storage,
+            **fs_kwargs,
         )
         self.table = None
         self._makedirs()

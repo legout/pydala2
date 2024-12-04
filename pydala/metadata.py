@@ -4,7 +4,7 @@ import os
 import pickle
 import re
 from collections import defaultdict
-
+import tempfile
 import duckdb
 import pyarrow as pa
 import pyarrow.fs as pfs
@@ -125,7 +125,7 @@ def get_file_paths(
 #         filesystem: AbstractFileSystem | pfs.FileSystem | None = None,
 #         bucket: str | None = None,
 #         cached: bool = False,
-#         **caching_options,
+#         **fs_kwargs,
 #         **kwargs,
 #     ):
 #         self._path = path
@@ -133,10 +133,10 @@ def get_file_paths(
 #         self._cached = cached
 #         self._base_filesystem = filesystem
 #         self._filesystem = FileSystem(
-#             bucket=bucket, fs=filesystem, cached=cached, **caching_options
+#             bucket=bucket, fs=filesystem, cached=cached, **fs_kwargs
 #         )
 #
-#         self._caching_options = caching_options
+#         self._fs_kwargs = fs_kwargs
 #
 #         self.load_files()
 #
@@ -159,7 +159,7 @@ class ParquetDatasetMetadata:
         bucket: str | None = None,
         cached: bool = False,
         update_metadata: bool = False,
-        **caching_options,
+        **fs_kwargs,
     ) -> None:
         """
         A class representing metadata for a Parquet dataset.
@@ -178,14 +178,25 @@ class ParquetDatasetMetadata:
         self._bucket = bucket
         self._cached = cached
         self._base_filesystem = filesystem
+        if cached:
+            cache_storage = fs_kwargs.pop(
+                "cache_storage", tempfile.mkdtemp(prefix="pydala2_")
+            )
+            cache_storage = os.path.join(cache_storage, path)
+        else:
+            cache_storage = None
         self._filesystem = FileSystem(
-            bucket=bucket, fs=filesystem, cached=cached, **caching_options
+            bucket=bucket,
+            fs=filesystem,
+            cached=cached,
+            cache_storage=cache_storage,
+            **fs_kwargs,
         )
 
         self._makedirs()
         # self.load_files()
 
-        self._caching_options = caching_options
+        self._fs_kwargs = fs_kwargs
 
         self._metadata_file = os.path.join(path, "_metadata")
         self._file_metadata_file = os.path.join(path, "_file_metadata")
@@ -718,7 +729,7 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
         # metadata: pq.FileMetaData,
         partitioning: None | str | list[str] = None,
         ddb_con: duckdb.DuckDBPyConnection | None = None,
-        **caching_options,
+        **fs_kwargs,
     ) -> None:
         """
         A class representing metadata for a Parquet dataset.
@@ -741,7 +752,7 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
             filesystem=filesystem,
             bucket=bucket,
             cached=cached,
-            **caching_options,
+            **fs_kwargs,
         )
         self.reset_scan()
         self._partitioning = partitioning
