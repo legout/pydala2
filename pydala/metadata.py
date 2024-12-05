@@ -375,7 +375,7 @@ class ParquetDatasetMetadata:
         tz: str | None = None,
         ts_unit: str | None = None,
         use_large_string: bool = False,
-        sort: bool | list[str] = False,
+        # sort: bool | list[str] = False,
         alter_schema: bool = True,
         **kwargs,
     ):
@@ -439,6 +439,7 @@ class ParquetDatasetMetadata:
                 version=format_version,
                 ts_unit=ts_unit,
                 tz=tz,
+                use_large_string=use_large_string,
                 alter_schema=alter_schema,
                 **kwargs,
             )
@@ -446,7 +447,7 @@ class ParquetDatasetMetadata:
             # update file metadata
             self.update_file_metadata(files=sorted(files_to_repair), **kwargs)
 
-    def _update_metadata_file(self, **kwargs):
+    def _update_metadata(self, **kwargs):
         """
         Update metadata based on the given keyword arguments.
 
@@ -462,7 +463,9 @@ class ParquetDatasetMetadata:
         if not self.has_file_metadata:
             return
 
-        new_files = sorted((set(self.files) - set(self.files_in_file_metadata)))
+        new_files = sorted(
+            (set(self.files_in_file_metadata) - set(self.files_in_metadata))
+        )
         if len(new_files):
             if not self.has_metadata:
                 self._metadata = copy.copy(self.file_metadata[new_files[0]])
@@ -521,7 +524,7 @@ class ParquetDatasetMetadata:
         )
 
         # update metadata file
-        self._update_metadata_file(**kwargs)
+        self._update_metadata(**kwargs)
 
     def replace_schema(self, schema: pa.Schema, **kwargs) -> None:
         """
@@ -649,7 +652,7 @@ class ParquetDatasetMetadata:
             dict: The metadata associated with the dataset.
         """
         if not self.has_metadata:
-            self.update()
+            self._update_metadata()
         return self._metadata
 
     @property
