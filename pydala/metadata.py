@@ -298,7 +298,7 @@ class ParquetDatasetMetadata:
             rm_files += sorted(set(self.files_in_file_metadata) - set(all_files))
 
         else:
-            new_files += sorted(set(all_files + self.files))
+            new_files += sorted(set(all_files + self.files or []))
 
         if files is not None:
             new_files = sorted(set(files + new_files))
