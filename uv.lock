@@ -170,23 +170,6 @@ wheels = [
 ]
 
 [[package]]
-name = "datafusion"
-version = "42.0.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pyarrow" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/5e/46/cf91530c06a11a699e177aa02716531f31a009087827e6d71f47d0d8b86e/datafusion-42.0.0.tar.gz", hash = "sha256:c88955a9ac59504d9d302be03158e692b9f99c3bf53dca0e84252d81f8c5ca91", size = 135459 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/7a/2d/86a0e94e2efd7e87a83a3510d05ce71655bc02bf40aadb0286e08dea66c6/datafusion-42.0.0-cp38-abi3-macosx_10_12_x86_64.whl", hash = "sha256:e9506356ad5d5f7b0f2d636cea24c5fc72518305aacf81207ecb4d59d0ea6866", size = 19496219 },
-    { url = "https://files.pythonhosted.org/packages/70/f4/b1270af3a0d0ec23f5cd593ec4ee7878b313dd0eb5b2ab4ec2eedcfa153a/datafusion-42.0.0-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:63a07e3779d3bdca0ecafd2eedf6948feff3ecd496a1fcf93baac122a48c6f4f", size = 17817291 },
-    { url = "https://files.pythonhosted.org/packages/3a/53/7dd8a09dd759aa8ca1ebd0eef9dd36e741e046c1b9315c2d6257f0119dde/datafusion-42.0.0-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:b4f04adbef61e70a3f56c6fcf6b615f75bbc42610947092870acff03171a456b", size = 21748992 },
-    { url = "https://files.pythonhosted.org/packages/5a/60/73945d35d612f09bf802269f1aaa57d6a3c6472a36b14ac4d8ac65529b5e/datafusion-42.0.0-cp38-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:1fb4a7f34225948d7a5db2ee3b3a578dd6b95c2bae39fd940dfd2de90a34088d", size = 20612406 },
-    { url = "https://files.pythonhosted.org/packages/d6/cc/f30443b500326a97def2ee17e972883ebf9048a89cd705ed6e4bec201c1a/datafusion-42.0.0-cp38-abi3-win_amd64.whl", hash = "sha256:71d9af5a9a6852f8121e4811a913cfec596f4c36240149edea57d27af7318749", size = 21140655 },
-]
-
-[[package]]
 name = "duckdb"
 version = "1.1.2"
 source = { registry = "https://pypi.org/simple" }
@@ -744,10 +727,9 @@ wheels = [
 
 [[package]]
 name = "pydala2"
-version = "0.8.7.1"
+version = "0.9.1.8"
 source = { editable = "." }
 dependencies = [
-    { name = "datafusion" },
     { name = "duckdb" },
     { name = "joblib" },
     { name = "loguru" },
@@ -774,7 +756,6 @@ standard = [
 
 [package.metadata]
 requires-dist = [
-    { name = "datafusion", specifier = ">=42.0.0" },
     { name = "duckdb", specifier = ">=0.10.0" },
     { name = "joblib", specifier = ">=1.3.2" },
     { name = "loguru", specifier = ">=0.7.2" },
