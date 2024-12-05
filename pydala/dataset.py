@@ -29,6 +29,7 @@ class BaseDataset:
         self,
         path: str,
         name: str | None = None,
+        schema: pa.Schema | None = None,
         filesystem: AbstractFileSystem | None = None,
         bucket: str | None = None,
         partitioning: str | list[str] | None = None,
@@ -39,6 +40,7 @@ class BaseDataset:
         **fs_kwargs,
     ):
         self._path = path
+        self._schema = schema
         self._bucket = bucket
         self._cached = cached
         self._format = format
@@ -173,6 +175,7 @@ class BaseDataset:
         if self.has_files:
             self._arrow_dataset = pds.dataset(
                 self._path,
+                schema=self._schema,
                 filesystem=self._filesystem,
                 format=self._format,
                 partitioning=self._partitioning,
@@ -858,6 +861,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
 
             self._arrow_dataset = pds.parquet_dataset(
                 self._metadata_file,
+                schema=self._schema,
                 partitioning=self._partitioning,
                 filesystem=self._filesystem,
             )
