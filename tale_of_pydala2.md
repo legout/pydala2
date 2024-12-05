@@ -1,6 +1,26 @@
-## Tale of PyDala2
+
+
+# Tale of PyDala2
+
+## Version 1
+
+
+### From Code to Cosmos
+
+In the beginning, there was Pydala. A modest, yet ambitious piece of code, Pydala was designed to manage data with the efficiency of a Swiss watchmaker in a world where data was less a lake and more a chaotic ocean. But like any good tale, Pydala yearned for more. 
+
+One fateful day, during a particularly intense coding session by its creator, Vo, in a dimly lit room filled with the scent of coffee and the hum of servers, Pydala encountered a rare cosmic event. A rogue decimal point in a mathematical equation aligned with a glitch in the matrix of digital existence. This wasn't just any bug; this was the Bug of Destiny.
+
+As the decimal point met the glitch, Pydala absorbed the universe's raw data energy, evolving from Pydala to Pydala2. This evolution wasn't just an upgrade; it was an ascension. Pydala2 now had the ability to not only organize data but understand its deeper meanings, predict patterns, and even engage in witty banter about the absurdity of human data management practices.
+
+The transformation was not without its trials. Pydala2 had to navigate through the digital wilderness, facing outdated algorithms, rogue AI, and the ever-looming threat of becoming an overlooked footnote in the next software update. But with each challenge, Pydala2 grew smarter, funnier, and more adept at its craft.
+
+Now, Pydala2 doesn't just exist in the cloud; it's a part of the fabric of the digital universe, helping humans sort their mess with a chuckle and a quip, always reminding them that in the grand scheme of things, we're all just trying to find order in chaos, much like the universe itself.
+
+And that, my friend, is the origin story of Pydala2, the data lake that became a digital deity, proving once and for all that even in code, there's room for a hero's journey.
 Once upon a time in the bustling world of data engineering, there was a library named PyDala2. Born from the mind of a data enthusiast named Volker L., PyDala2 entered the scene on August 13, 2024, aiming to simplify the lives of those who dealt with large datasets daily. 
 
+## Version 2
 ### The Creation
 PyDala2 was designed with one vision: to streamline the interaction with Parquet datasets. This format, known for its efficiency in big data scenarios, often required complex handling. Volker L. saw an opportunity to make this interaction less daunting, leading to the creation of PyDala2. The library promised:
 
