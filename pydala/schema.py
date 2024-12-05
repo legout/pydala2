@@ -450,7 +450,7 @@ def repair_schema(
     ts_unit: str | None = None,  # "us",
     tz: str | None = None,
     use_large_string: bool = False,
-    sort: bool | list[str] = False,
+    # sort: bool | list[str] = False,
     alter_schema: bool = True,
     **kwargs,
 ):

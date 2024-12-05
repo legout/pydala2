@@ -401,9 +401,9 @@ class ParquetDatasetMetadata:
         """
         # get unified schema
         if schema is None:
-            schema, _ = self._get_unified_schema(
-                ts_unit=ts_unit, tz=tz, use_large_string=use_large_string, sort=sort
-            )
+            schema, _ = self._get_unified_schema()
+            #     ts_unit=ts_unit, tz=tz, use_large_string=use_large_string, sort=sort
+            # )
 
         files_to_repair = [
             f
