@@ -224,7 +224,7 @@ class BaseDataset:
             pyarrow.Schema: The schema of the dataset.
         """
         if self.is_loaded:
-            if not hasattr(self, "_schema"):
+            if not hasattr(self, "_schema") or self._schema is None:
                 self._schema = self._arrow_dataset.schema
             return self._schema
 
@@ -806,11 +806,11 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         # self.metadata_table.create_view(f"{self.name}_metadata")
         # self.ddb_con.unregister("metadata_table")
 
-        try:
-            self.load()
-        except Exception as e:
-            _ = e
-            pass
+        # try:
+        #     self.load()
+        # except Exception as e:
+        #     _ = e
+        #     pass
 
     def load(
         self,
@@ -857,11 +857,13 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
                     format_version=format_version,
                     **kwargs,
                 )
+                if not hasattr(self, "_schema"):
+                    self._schema = self.metadata.schema.to_arrow_schema()
                 self.update_metadata_table()
 
             self._arrow_dataset = pds.parquet_dataset(
                 self._metadata_file,
-                schema=self._schema,
+                # schema=self._schema,
                 partitioning=self._partitioning,
                 filesystem=self._filesystem,
             )
