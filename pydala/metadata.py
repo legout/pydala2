@@ -13,9 +13,10 @@ import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 
 from .filesystem import FileSystem, clear_cache
+
 # from .helpers.metadata import collect_parquet_metadata  # , remove_from_metadata
 from .helpers.misc import get_partitions_from_path, run_parallel
-from .schema import repair_schema, unify_schemas
+from .schema import repair_schema  # unify_schemas
 
 
 def collect_parquet_metadata(
@@ -112,43 +113,14 @@ def remove_from_metadata(
 def get_file_paths(
     metadata: pq.FileMetaData,
 ) -> list[str]:
-    return [
-        metadata.row_group(i).column(0).file_path
-        for i in range(metadata.num_row_groups)
-    ]
-
-
-# class FileMetadata:
-#     def __init__(
-#         self,
-#         path:str,
-#         filesystem: AbstractFileSystem | pfs.FileSystem | None = None,
-#         bucket: str | None = None,
-#         cached: bool = False,
-#         **fs_kwargs,
-#         **kwargs,
-#     ):
-#         self._path = path
-#         self._bucket = bucket
-#         self._cached = cached
-#         self._base_filesystem = filesystem
-#         self._filesystem = FileSystem(
-#             bucket=bucket, fs=filesystem, cached=cached, **fs_kwargs
-#         )
-#
-#         self._fs_kwargs = fs_kwargs
-#
-#         self.load_files()
-#
-#     def load_files(self):
-#         self._files = self._filesystem.list_files_recursive(self._path)
-#
-#
-#
-#
-#     @property
-#     def fs(self):
-#         return self._filesystem
+    return sorted(
+        set(
+            [
+                metadata.row_group(i).column(0).file_path.lstrip("../")
+                for i in range(metadata.num_row_groups)
+            ]
+        )
+    )
 
 
 class ParquetDatasetMetadata:
@@ -316,14 +288,14 @@ class ParquetDatasetMetadata:
         """
 
         # Add new files to file_metadata
-        all_files = self._ls_files()
+        all_files = self._ls_files() or files
 
         new_files = []
         rm_files = []
 
         if self.has_file_metadata:
-            new_files += sorted(set(all_files) - set(self._file_metadata.keys()))
-            rm_files += sorted(set(self._file_metadata.keys()) - set(all_files))
+            new_files += sorted(set(all_files) - set(self.files_in_file_metadata))
+            rm_files += sorted(set(self.files_in_file_metadata) - set(all_files))
 
         else:
             new_files += sorted(set(all_files + self.files))
@@ -364,10 +336,10 @@ class ParquetDatasetMetadata:
 
     def _get_unified_schema(
         self,
-        ts_unit: str | None = None,
-        tz: str | None = None,
-        use_large_string: bool = False,
-        sort: bool | list[str] = False,
+        # ts_unit: str | None = None,
+        # tz: str | None = None,
+        # use_large_string: bool = False,
+        # sort: bool | list[str] = False,
     ) -> tuple[pa.Schema, bool]:
         """
         Returns the unified schema for the dataset.
@@ -375,31 +347,26 @@ class ParquetDatasetMetadata:
             pyarrow.Schema: The unified schema for the dataset.
 
         """
-        if not self.has_file_metadata:
-            self.update_file_metadata()
-
-        new_files = sorted((set(self.files) - set(self.files_in_metadata)))
+        # if not self.has_file_metadata:
+        #    self.update_file_metadata()
+        if self.has_file_metadata:
+            new_files = sorted((set(self.files) - set(self.files_in_file_metadata)))
 
         if len(new_files):
             schemas = [
-                self._file_metadata[f].schema.to_arrow_schema() for f in new_files
+                self.file_metadata[f].schema.to_arrow_schema() for f in new_files
             ]
 
             if self.has_metadata:
                 schemas.insert(0, self.metadata.schema.to_arrow_schema())
 
-            schema, schemas_equal = unify_schemas(
-                schemas,
-                ts_unit=ts_unit,
-                tz=tz,
-                use_large_string=use_large_string,
-                sort=sort,
-            )
+            unified_schema = pa.unify_schemas(schemas, promote_options="permissive")
+            schemas_equal = all([unified_schema == schema for schema in schemas])
         else:
-            schema = self.metadata.schema.to_arrow_schema()
+            unified_schema = self.metadata.schema.to_arrow_schema()
             schemas_equal = True
 
-        return schema, schemas_equal
+        return unified_schema, schemas_equal
 
     def _repair_file_schemas(
         self,
@@ -440,32 +407,32 @@ class ParquetDatasetMetadata:
 
         files_to_repair = [
             f
-            for f in self._file_metadata
-            if self._file_metadata[f].schema.to_arrow_schema() != schema
+            for f in self.file_metadata
+            if self.file_metadata[f].schema.to_arrow_schema() != schema
         ]
 
         if format_version is None and self.has_metadata:
-            format_version = self._metadata.format_version
+            format_version = self.metadata.format_version
 
         # find files to repair
         # files with different schema or format version
         if format_version is not None:
             files_to_repair += [
                 f
-                for f in self._file_metadata
-                if self._file_metadata[f].format_version != format_version
+                for f in self.file_metadata
+                if self.file_metadata[f].format_version != format_version
             ]
         # files with different schema
 
         files_to_repair = sorted(set(files_to_repair))
-        file_schemas = {
-            f: self._file_metadata[f].schema.to_arrow_schema() for f in files_to_repair
+        file_schemas_to_repair = {
+            f: self.file_metadata[f].schema.to_arrow_schema() for f in files_to_repair
         }
         # repair schema of files
         if len(files_to_repair):
             repair_schema(
                 files=files_to_repair,
-                file_schemas=file_schemas,
+                file_schemas=file_schemas_to_repair,
                 schema=schema,
                 base_path=self._path,
                 filesystem=self._filesystem,
@@ -490,21 +457,22 @@ class ParquetDatasetMetadata:
             None
         """
         if not self.has_file_metadata:
-            self._read_file_metadata()
-        self._metadata_temp = copy.copy(self._metadata)
-        # update metadata
-        if self.has_file_metadata:
-            del self._metadata
-            # if not self.has_metadata:
-            self._metadata = copy.copy(
-                self._file_metadata[list(self._file_metadata.keys())[0]]
-            )
-            for f in list(self._file_metadata.keys())[1:]:
-                self._metadata.append_row_groups(self._file_metadata[f])
+            self.update_file_metadata(**kwargs)
 
-        if self._metadata_temp != self._metadata:
+        if not self.has_file_metadata:
+            return
+
+        new_files = sorted((set(self.files) - set(self.files_in_file_metadata)))
+        if len(new_files):
+            if not self.has_metadata:
+                self._metadata = copy.copy(self.file_metadata[new_files[0]])
+                for f in new_files[1:]:
+                    self._metadata.append_row_groups(self.file_metadata[f])
+            else:
+                for f in new_files:
+                    self._metadata.append_row_groups(self.file_metadata[f])
+
             self._write_metadata_file()
-        del self._metadata_temp
 
     def update(
         self,
@@ -540,7 +508,7 @@ class ParquetDatasetMetadata:
         # update file metadata
         self.update_file_metadata(**kwargs)
 
-        if len(self.files) == 0:
+        if len(self.files_in_file_metadata) == 0:
             return
 
         self._repair_file_schemas(
@@ -610,32 +578,21 @@ class ParquetDatasetMetadata:
         clear_cache(self._base_filesystem)
 
     @property
-    def has_metadata(self):
+    def has_file_metadata_file(self):
         """
-        Returns True if the dataset has metadata, False otherwise.
+        Returns True if the dataset has file metadata, False otherwise.
         """
-        return self._metadata is not None
+        return self._filesystem.exists(self._file_metadata_file)
 
     @property
     def has_file_metadata(self):
         """
         Returns True if the dataset has file metadata, False otherwise.
         """
+        if self._file_metadata is None:
+            if self.has_file_metadata_file:
+                self._file_metadata = self._read_file_metadata()
         return self._file_metadata is not None
-
-    @property
-    def metadata(self):
-        """
-        Returns the metadata associated with the dataset.
-
-        If the metadata has not been loaded yet, it will be loaded before being returned.
-
-        Returns:
-            dict: The metadata associated with the dataset.
-        """
-        if not self.has_metadata:
-            self.update()
-        return self._metadata
 
     @property
     def file_metadata(self):
@@ -652,6 +609,63 @@ class ParquetDatasetMetadata:
         return self._file_metadata
 
     @property
+    def files_in_file_metadata(self) -> list:
+        """
+        Returns a list of file paths in the file metadata of the dataset.
+
+        Returns:
+            A list of file paths in the file metadata of the dataset.
+        """
+        if self.has_file_metadata:
+            return sorted(set(self._file_metadata.keys()))
+        else:
+            return []
+
+    @property
+    def has_metadata_file(self):
+        """
+        Returns True if the dataset has a metadata file, False otherwise.
+        """
+        return self._filesystem.exists(self._metadata_file)
+
+    @property
+    def has_metadata(self):
+        """
+        Returns True if the dataset has metadata, False otherwise.
+        """
+        if self._metadata is None:
+            if self.has_metadata_file:
+                self._metadata = self._read_metadata()
+        return self._metadata is not None
+
+    @property
+    def metadata(self):
+        """
+        Returns the metadata associated with the dataset.
+
+        If the metadata has not been loaded yet, it will be loaded before being returned.
+
+        Returns:
+            dict: The metadata associated with the dataset.
+        """
+        if not self.has_metadata:
+            self.update()
+        return self._metadata
+
+    @property
+    def files_in_metadata(self) -> list:
+        """
+        Returns a list of file paths referenced in the metadata of the dataset.
+
+        Returns:
+            A list of file paths referenced in the metadata of the dataset.
+        """
+        if self.has_metadata:
+            return get_file_paths(self.metadata)
+        else:
+            return []
+
+    @property
     def file_schema(self):
         """
         Returns the Arrow schema of the dataset file.
@@ -666,45 +680,11 @@ class ParquetDatasetMetadata:
         return self._file_schema
 
     @property
-    def has_metadata_file(self):
-        """
-        Returns True if the dataset has a metadata file, False otherwise.
-        """
-        return self._filesystem.exists(self._metadata_file)
-
-    @property
-    def has_file_metadata_file(self):
-        """
-        Returns True if the dataset has file metadata, False otherwise.
-        """
-        return self._filesystem.exists(self._file_metadata_file)
-
-    @property
     def has_files(self):
         """
         Returns True if the dataset has files, False otherwise.
         """
         return len(self.files) > 0
-
-    @property
-    def files_in_metadata(self) -> list:
-        """
-        Returns a list of file paths referenced in the metadata of the dataset.
-
-        Returns:
-            A list of file paths referenced in the metadata of the dataset.
-        """
-        if self.has_metadata:
-            return sorted(
-                set(
-                    [
-                        self._metadata.row_group(i).column(0).file_path.lstrip("../")
-                        for i in range(self._metadata.num_row_groups)
-                    ]
-                )
-            )
-        else:
-            return []
 
     @property
     def files(self) -> list:

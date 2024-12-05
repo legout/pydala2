@@ -18,6 +18,7 @@ import s3fs
 from fsspec import AbstractFileSystem, filesystem
 from fsspec.implementations.cache_mapper import AbstractCacheMapper
 from fsspec.implementations.cached import SimpleCacheFileSystem
+
 # from fsspec.implementations import cached as cachedfs
 from fsspec.implementations.dirfs import DirFileSystem
 from loguru import logger
@@ -144,6 +145,12 @@ class MonitoredSimpleCacheFileSystem(SimpleCacheFileSystem):
             return self.fs.size(path)
         else:
             return os.path.getsize(cached_file)
+
+    # def make_dirs(self, path, exist_ok=True):
+    #     if self.fs.exists(path) and :
+    #         return
+
+    #     return self.fs.makedirs(path, exist_ok=exist_ok)
 
     def __getattribute__(self, item):
         if item in {
