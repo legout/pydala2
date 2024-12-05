@@ -165,8 +165,6 @@ mdurl==0.1.2
     # via markdown-it-py
 mistune==3.0.2
     # via nbconvert
-msgspec==0.18.6
-    # via pydala2
 multidict==6.1.0
     # via aiohttp
     # via yarl

@@ -6,7 +6,7 @@ from functools import wraps
 from pathlib import Path
 
 import duckdb as ddb
-import msgspec
+import orjson
 import pandas as pd
 import polars as pl
 import psutil
@@ -295,7 +295,8 @@ def read_json(
     flatten: bool = True,
 ) -> dict | pl.DataFrame:
     with self.open(path) as f:
-        data = msgspec.json.decode(f.read())
+        # data = msgspec.json.decode(f.read())
+        data = orjson.loads(f.read())
 
     if as_dataframe:
         data = pl.from_dicts(data)
@@ -474,7 +475,8 @@ def write_json(
         data = data.arrow().to_pydict()
 
     with self.open(path, "w") as f:
-        f.write(msgspec.json.encode(data))
+        # f.write(msgspec.json.encode(data))
+        f.write(orjson.dumps(data))
 
 
 def write_csv(
