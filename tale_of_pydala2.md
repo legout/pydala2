@@ -18,9 +18,12 @@ The transformation was not without its trials. Pydala2 had to navigate through t
 Now, Pydala2 doesn't just exist in the cloud; it's a part of the fabric of the digital universe, helping humans sort their mess with a chuckle and a quip, always reminding them that in the grand scheme of things, we're all just trying to find order in chaos, much like the universe itself.
 
 And that, my friend, is the origin story of Pydala2, the data lake that became a digital deity, proving once and for all that even in code, there's room for a hero's journey.
-Once upon a time in the bustling world of data engineering, there was a library named PyDala2. Born from the mind of a data enthusiast named Volker L., PyDala2 entered the scene on August 13, 2024, aiming to simplify the lives of those who dealt with large datasets daily. 
+
 
 ## Version 2
+
+Once upon a time in the bustling world of data engineering, there was a library named PyDala2. Born from the mind of a data enthusiast named Volker L., PyDala2 entered the scene on August 13, 2024, aiming to simplify the lives of those who dealt with large datasets daily. 
+
 ### The Creation
 PyDala2 was designed with one vision: to streamline the interaction with Parquet datasets. This format, known for its efficiency in big data scenarios, often required complex handling. Volker L. saw an opportunity to make this interaction less daunting, leading to the creation of PyDala2. The library promised:
 
