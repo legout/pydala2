@@ -13,11 +13,11 @@
 Pydala is a high-performance Python library for managing Parquet datasets with powerful metadata capabilities. Built on Apache Arrow, it provides an efficient, user-friendly interface for handling large-scale data operations.
 
 ## ✨ Key Features
-📦 Smart Dataset Management: Efficient Parquet handling with metadata optimization
-🔄 Robust Caching: Built-in support for faster data access
-🔌 Seamless Integration: Works with Polars, PyArrow, and DuckDB
-🔍 Advanced Querying: SQL-like filtering with predicate pushdown
-🛠️ Schema Management: Automatic validation and tracking
+ - 📦 Smart Dataset Management: Efficient Parquet handling with metadata optimization
+ - 🔄 Robust Caching: Built-in support for faster data access
+ - 🔌 Seamless Integration: Works with Polars, PyArrow, and DuckDB
+ - 🔍 Advanced Querying: SQL-like filtering with predicate pushdown
+ - 🛠️ Schema Management: Automatic validation and tracking
 
 ## 🚀 Quick Start
 ### Installation
