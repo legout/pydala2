@@ -205,7 +205,7 @@ class ParquetDatasetMetadata:
                 fn.replace(self._path, "").lstrip("/")
                 for fn in sorted(
                     self._filesystem.glob(
-                        os.path.join(self._path, f"**/*.{self._format}")
+                        os.path.join(self._path, "**/*.parquet")  # {self._format}")
                     )
                 )
             ]
