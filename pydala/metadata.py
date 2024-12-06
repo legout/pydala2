@@ -472,8 +472,15 @@ class ParquetDatasetMetadata:
         new_files = sorted(
             (set(self.files_in_file_metadata) - set(self.files_in_metadata))
         )
-        if len(new_files):
-            if not self.has_metadata or len(rm_files):
+        if len(rm_files):
+            self._metadata = copy.copy(
+                self.file_metadata[self.files_in_file_metadata[0]]
+            )
+            for f in self.files_in_file_metadata[1:]:
+                self._metadata.append_row_groups(self._file_metadata[f])
+
+        elif len(new_files):
+            if not self.has_metadata:
                 self._metadata = copy.copy(self.file_metadata[new_files[0]])
                 for f in new_files[1:]:
                     self._metadata.append_row_groups(self.file_metadata[f])
@@ -482,6 +489,7 @@ class ParquetDatasetMetadata:
                     self._metadata.append_row_groups(self.file_metadata[f])
 
             self._write_metadata_file()
+            self.load_files()
 
     def update(
         self,
