@@ -393,8 +393,6 @@ class ParquetDatasetMetadata:
             ts_unit (str | None, optional): The timestamp unit to use for repairing the files. Defaults to None.
             use_large_string (bool, optional): Whether to use large string type for repairing the files.
                 Defaults to False.
-            sort (bool | list[str], optional): Whether to sort the files before repairing. If a list of strings is
-                provided, it specifies the order in which the files should be repaired. Defaults to False.
             alter_schema (bool, optional): Whether to alter the schema of the files. Defaults to True.
             **kwargs: Additional keyword arguments to pass to the repair_schema function.
 
@@ -499,7 +497,7 @@ class ParquetDatasetMetadata:
         tz: str | None = None,
         use_large_string: bool = False,
         format_version: str | None = None,
-        sort: bool | list[str] = False,
+        # sort: bool | list[str] = False,
         **kwargs,
     ) -> None:
         """
@@ -512,7 +510,6 @@ class ParquetDatasetMetadata:
             tz (str | None): The time zone of the data source.
             use_large_string (bool): Flag to indicate whether to use large string type.
             format_version (str | None): The version of the data format.
-            sort (bool | list[str]): Flag to indicate if sorting is required, or the list of columns to sort by.
             **kwargs: Additional keyword arguments.
 
         Returns:
@@ -534,7 +531,7 @@ class ParquetDatasetMetadata:
             tz=tz,
             ts_unit=ts_unit,
             use_large_string=use_large_string,
-            sort=sort,
+            # sort=sort,
         )
 
         # update metadata file

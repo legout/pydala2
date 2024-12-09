@@ -467,11 +467,7 @@ def repair_schema(
         ts_unit (str|None): timestamp unit.
         tz (str|None): timezone for timestamp fields. Defaults to "UTC".
         use_large_string (bool): Convert pyarrow.large_string() to pyarrow.string().
-            Defaults to False.
-        sort (bool | list[str]): Use this, to define the field(column) order. If it is
-            True, the fields are sorted alphanumerically, if it is False, the field
-            order of firt schema is used. Otherwise, the order if the given field names is
-            applied.
+        **kwargs: Additional keyword arguments for pyarrow.parquet.write_table.
     """
     if files is None:
         if file_schemas is not None:
