@@ -286,22 +286,18 @@ class ParquetDatasetMetadata:
         Returns:
             None
         """
-
-        # Add new files to file_metadata
-        all_files = self._ls_files() or files
-
         new_files = []
         rm_files = []
+        # Add new files to file_metadata
+        if not files:
+            files = self._ls_files()
 
-        if self.has_file_metadata:
-            new_files += sorted(set(all_files) - set(self.files_in_file_metadata))
-            rm_files += sorted(set(self.files_in_file_metadata) - set(all_files))
+            if self.has_file_metadata:
+                new_files += sorted(set(files) - set(self.files_in_file_metadata))
+                rm_files += sorted(set(self.files_in_file_metadata) - set(files))
 
         else:
-            new_files = all_files
-
-        if files is not None:
-            new_files = sorted(set(files + new_files))
+            new_files += files
 
         if new_files:
             self._collect_file_metadata(files=new_files, **kwargs)

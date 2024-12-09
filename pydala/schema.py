@@ -254,7 +254,7 @@ def replace_schema(
 
     return table.select(schema.names).cast(schema)
 
-    return table.select(schema.names)
+    # return table.select(schema.names)
 
 
 # def _unify_schemas(
@@ -473,7 +473,12 @@ def repair_schema(
         if file_schemas is not None:
             files = list(file_schemas.keys())
         else:
-            raise ValueError("Either files or file_schemas must be provided.")
+            if base_path is not None:
+                files = filesystem.glob(base_path + "/**/*.parquet")
+            else:
+                raise ValueError(
+                    "Either files or file_schemas or base_path must be provided."
+                )
 
     if file_schemas is None:
         file_schemas = collect_file_schemas(
@@ -499,48 +504,49 @@ def repair_schema(
     if not use_large_string:
         schema = shrink_large_string(schema)
 
-    schemas_equal = all([schema == schemas_ for schemas_ in file_schemas])
+    schemas_equal = all([schema == schemas_ for schemas_ in file_schemas.values()])
 
     if not schemas_equal:
         files = [f for f in files if file_schemas[f] != schema]
 
     def _repair_schema(f, schema, filesystem):
-        if file_schemas is not None:
-            file_schema = file_schemas.get(
-                f.replace(base_path or "", ""), None
-            ) or pq.read_schema(f, filesystem=filesystem)
-        else:
-            file_schema = None
+        # if file_schemas is not None:
+        #    file_schema = file_schemas.get(
+        #        f.replace(base_path or "", ""), None
+        #    ) or pq.read_schema(f, filesystem=filesystem)
+        # else:
+        #    file_schema = None
 
-        if file_schema is None:
-            file_schema = pq.read_schema(f, filesystem=filesystem)
+        # if file_schema is None:
+        #    file_schema = pq.read_schema(f, filesystem=filesystem)
 
-        if file_schema != schema:
-            table = replace_schema(
-                read_table(f, filesystem=filesystem, partitioning=None),
-                schema=schema,
-                ts_unit=ts_unit,
-                tz=tz,
-                alter_schema=alter_schema,
-            )
-            pq.write_table(
-                table,
-                f,
-                filesystem=filesystem,
-                coerce_timestamps=ts_unit,
-                allow_truncated_timestamps=True,
-                **kwargs,
-            )
+        # if file_schema != schema:
+        table = replace_schema(
+            read_table(f, filesystem=filesystem, partitioning=None),
+            schema=schema,
+            ts_unit=ts_unit,
+            tz=tz,
+            alter_schema=alter_schema,
+        )
+        pq.write_table(
+            table,
+            f,
+            filesystem=filesystem,
+            coerce_timestamps=ts_unit,
+            allow_truncated_timestamps=True,
+            **kwargs,
+        )
 
-    _ = run_parallel(
-        _repair_schema,
-        files,
-        schema=schema,
-        filesystem=filesystem,
-        backend=backend,
-        n_jobs=n_jobs,
-        verbose=verbose,
-    )
+    if len(files):
+        _ = run_parallel(
+            _repair_schema,
+            files,
+            schema=schema,
+            filesystem=filesystem,
+            backend=backend,
+            n_jobs=n_jobs,
+            verbose=verbose,
+        )
 
 
 def collect_file_schemas(
