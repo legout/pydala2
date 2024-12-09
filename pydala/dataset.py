@@ -49,7 +49,7 @@ class BaseDataset:
             cache_storage = fs_kwargs.pop(
                 "cache_storage", tempfile.mkdtemp(prefix="pydala2_")
             )
-            cache_storage = os.path.join(cache_storage, path)
+            # cache_storage = os.path.join(cache_storage, path)
         else:
             cache_storage = None
         self._filesystem = FileSystem(
