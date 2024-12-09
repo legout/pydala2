@@ -820,7 +820,6 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         ts_unit: str = "us",
         tz: str | None = None,
         use_large_string: bool = False,
-        sort_schema: bool = False,
         format_version: str = "2.6",
         **kwargs,
     ):
@@ -834,7 +833,6 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             ts_unit (str, optional): The unit of the timestamp. Defaults to "us".
             tz (str | None, optional): The timezone. Defaults to None.
             use_large_string (bool, optional): Whether to use large string. Defaults to False.
-            sort_schema (bool, optional): Whether to sort the schema. Defaults to False.
             format_version (str, optional): The version of the data format. Defaults to "2.6".
             **kwargs: Additional keyword arguments.
 
@@ -853,7 +851,6 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
                     ts_unit=ts_unit,
                     tz=tz,
                     use_large_string=use_large_string,
-                    sort=sort_schema,
                     format_version=format_version,
                     **kwargs,
                 )
