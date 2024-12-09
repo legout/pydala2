@@ -875,7 +875,11 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
                 if len(self._timestamp_columns) > 0:
                     self._timestamp_column = self._timestamp_columns[0]
             if self._timestamp_column is not None:
-                tz = self.schema.field(self._timestamp_column).type.tz
+                ts_type = self.schema.field(self._timestamp_colum).type
+                if hasattr(ts_type, "tz"):
+                    tz = ts_type.tz
+                else:
+                    tz = None
                 self._tz = tz
                 if tz is not None:
                     self.ddb_con.execute(f"SET TimeZone='{tz}'")
