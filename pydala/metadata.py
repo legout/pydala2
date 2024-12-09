@@ -444,10 +444,19 @@ class ParquetDatasetMetadata:
                 **kwargs,
             )
             self.clear_cache()
+
             # update file metadata
             self.update_file_metadata(files=sorted(files_to_repair), **kwargs)
 
-    def _update_metadata(self, **kwargs):
+            # update metadata
+            if any([f in self.files_in_metadata for f in files_to_repair]):
+                self._update_metadata(
+                    reload=True,
+                )
+            else:
+                self._update_metadata(reload=False)
+
+    def _update_metadata(self, reload: bool = True, **kwargs):
         """
         Update metadata based on the given keyword arguments.
 
@@ -470,24 +479,20 @@ class ParquetDatasetMetadata:
         new_files = sorted(
             (set(self.files_in_file_metadata) - set(self.files_in_metadata))
         )
-        if len(rm_files):
+
+        if len(rm_files) or (len(new_files) and not self.has_metadata) or reload:
             self._metadata = copy.copy(
                 self.file_metadata[self.files_in_file_metadata[0]]
             )
             for f in self.files_in_file_metadata[1:]:
                 self._metadata.append_row_groups(self._file_metadata[f])
 
-        elif len(new_files):
-            if not self.has_metadata:
-                self._metadata = copy.copy(self.file_metadata[new_files[0]])
-                for f in new_files[1:]:
-                    self._metadata.append_row_groups(self.file_metadata[f])
-            else:
-                for f in new_files:
-                    self._metadata.append_row_groups(self.file_metadata[f])
+        else:
+            for f in new_files:
+                self._metadata.append_row_groups(self.file_metadata[f])
 
-            self._write_metadata_file()
-            self.load_files()
+        self._write_metadata_file()
+        self.load_files()
 
     def update(
         self,
@@ -535,7 +540,7 @@ class ParquetDatasetMetadata:
         )
 
         # update metadata file
-        self._update_metadata(**kwargs)
+        # self._update_metadata(**kwargs)
 
     def replace_schema(self, schema: pa.Schema, **kwargs) -> None:
         """

@@ -84,7 +84,7 @@ class BaseDataset:
         if partitioning is None:
             # try to infer partitioning
             try:
-                if any(["=" in obj for obj in self.fs.ls(self._path)]):
+                if any(["=" in obj for obj in self.fs.lss(self._path)]):
                     partitioning = "hive"
             except FileNotFoundError as e:
                 _ = e
@@ -839,51 +839,56 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         Returns:
             None
         """
+        if not self.has_file_metadata_file:
+            if len(self.fs.lss(self.path)) == 0:
+                return
+            else:
+                update_metadata = True
         if kwargs.pop("update", None):
             update_metadata = True
         if kwargs.pop("reload", None):
             reload_metadata = True
-        if self.has_files:
-            if update_metadata or reload_metadata or not self.has_metadata_file:
-                self.update(
-                    reload=reload_metadata,
-                    schema=schema,
-                    ts_unit=ts_unit,
-                    tz=tz,
-                    use_large_string=use_large_string,
-                    format_version=format_version,
-                    **kwargs,
-                )
-                if not hasattr(self, "_schema"):
-                    self._schema = self.metadata.schema.to_arrow_schema()
-                self.update_metadata_table()
 
-            self._arrow_dataset = pds.parquet_dataset(
-                self._metadata_file,
-                # schema=self._schema,
-                partitioning=self._partitioning,
-                filesystem=self._filesystem,
+        if update_metadata or reload_metadata:
+            self.update(
+                reload=reload_metadata,
+                schema=schema,
+                ts_unit=ts_unit,
+                tz=tz,
+                use_large_string=use_large_string,
+                format_version=format_version,
+                **kwargs,
             )
+            if not hasattr(self, "_schema"):
+                self._schema = self.metadata.schema.to_arrow_schema()
+            self.update_metadata_table()
 
-            self.table = PydalaTable(result=self._arrow_dataset, ddb_con=self.ddb_con)
+        self._arrow_dataset = pds.parquet_dataset(
+            self._metadata_file,
+            # schema=self._schema,
+            partitioning=self._partitioning,
+            filesystem=self._filesystem,
+        )
 
-            if self._timestamp_column is None:
-                self._timestamp_columns = get_timestamp_column(self.table.pl.head(10))
-                if len(self._timestamp_columns) > 0:
-                    self._timestamp_column = self._timestamp_columns[0]
-            if self._timestamp_column is not None:
-                ts_type = self.schema.field(self._timestamp_column).type
-                if hasattr(ts_type, "tz"):
-                    tz = ts_type.tz
-                else:
-                    tz = None
-                self._tz = tz
-                if tz is not None:
-                    self.ddb_con.execute(f"SET TimeZone='{tz}'")
+        self.table = PydalaTable(result=self._arrow_dataset, ddb_con=self.ddb_con)
+
+        if self._timestamp_column is None:
+            self._timestamp_columns = get_timestamp_column(self.table.pl.head(10))
+            if len(self._timestamp_columns) > 0:
+                self._timestamp_column = self._timestamp_columns[0]
+        if self._timestamp_column is not None:
+            ts_type = self.schema.field(self._timestamp_column).type
+            if hasattr(ts_type, "tz"):
+                tz = ts_type.tz
             else:
-                self._tz = None
+                tz = None
+            self._tz = tz
+            if tz is not None:
+                self.ddb_con.execute(f"SET TimeZone='{tz}'")
+        else:
+            self._tz = None
 
-            self.ddb_con.register(f"{self.name}", self._arrow_dataset)
+        self.ddb_con.register(f"{self.name}", self._arrow_dataset)
 
     # def gen_metadata_table(self):
     #     """
