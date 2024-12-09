@@ -488,9 +488,9 @@ def repair_schema(
             backend=backend,
             verbose=verbose,
         )
-
     if base_path is not None:
         files = [os.path.join(base_path, f) for f in files]
+        file_schemas = {os.path.join(base_path, f): s for f, s in file_schemas.items()}
 
     if schema is None:
         schema, schemas_equal = pa.unify_schemas(

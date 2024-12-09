@@ -436,7 +436,7 @@ class ParquetDatasetMetadata:
                 files=files_to_repair,
                 file_schemas=file_schemas_to_repair,
                 schema=schema,
-                # base_path=self._path,
+                base_path=self._path,
                 filesystem=self._filesystem,
                 version=format_version,
                 ts_unit=ts_unit,
