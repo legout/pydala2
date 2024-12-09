@@ -875,7 +875,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
                 if len(self._timestamp_columns) > 0:
                     self._timestamp_column = self._timestamp_columns[0]
             if self._timestamp_column is not None:
-                ts_type = self.schema.field(self._timestamp_colum).type
+                ts_type = self.schema.field(self._timestamp_column).type
                 if hasattr(ts_type, "tz"):
                     tz = ts_type.tz
                 else:
