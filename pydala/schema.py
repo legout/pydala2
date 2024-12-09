@@ -482,6 +482,7 @@ def repair_schema(
     if file_schemas is None:
         file_schemas = collect_file_schemas(
             files=files,
+            base_path=base_path,
             filesystem=filesystem,
             n_jobs=n_jobs,
             backend=backend,
@@ -548,6 +549,7 @@ def repair_schema(
 
 def collect_file_schemas(
     files: list[str] | str,
+    base_path: str | None = None,
     filesystem: AbstractFileSystem | pfs.FileSystem | None = None,
     n_jobs: int = -1,
     backend: str = "threading",
@@ -565,6 +567,8 @@ def collect_file_schemas(
     Returns:
         dict[str, pa.Schema]: Pyarrow schemas of the given files.
     """
+    if base_path is not None:
+        files = [os.path.join(base_path, f) for f in files]
 
     def get_schema(f, filesystem):
         return {f: pq.read_schema(f, filesystem=filesystem)}
