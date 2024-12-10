@@ -286,18 +286,17 @@ class ParquetDatasetMetadata:
         Returns:
             None
         """
-        new_files = []
+        new_files = files or []
         rm_files = []
-        # Add new files to file_metadata
+
         if not files:
             files = self._ls_files()
 
             if self.has_file_metadata:
                 new_files += sorted(set(files) - set(self.files_in_file_metadata))
                 rm_files += sorted(set(self.files_in_file_metadata) - set(files))
-
-        else:
-            new_files += files
+            else:
+                new_files += files
 
         if new_files:
             self._collect_file_metadata(files=new_files, **kwargs)
@@ -343,8 +342,7 @@ class ParquetDatasetMetadata:
             pyarrow.Schema: The unified schema for the dataset.
 
         """
-        # if not self.has_file_metadata:
-        #    self.update_file_metadata()
+
         if self.has_file_metadata:
             new_files = sorted(
                 (set(self.files_in_file_metadata) - set(self.files_in_metadata))
@@ -398,8 +396,6 @@ class ParquetDatasetMetadata:
         # get unified schema
         if schema is None:
             schema, _ = self._get_unified_schema()
-            #     ts_unit=ts_unit, tz=tz, use_large_string=use_large_string, sort=sort
-            # )
 
         files_to_repair = [
             f
@@ -410,8 +406,6 @@ class ParquetDatasetMetadata:
         if format_version is None and self.has_metadata:
             format_version = self.metadata.format_version
 
-        # find files to repair
-        # files with different schema or format version
         if format_version is not None:
             files_to_repair += [
                 f
