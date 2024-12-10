@@ -443,10 +443,10 @@ class ParquetDatasetMetadata:
                 self._update_metadata(
                     reload=True,
                 )
-            else:
-                self._update_metadata(reload=False)
+        else:
+            self._update_metadata(reload=False)
 
-    def _update_metadata(self, reload: bool = True, **kwargs):
+    def _update_metadata(self, reload: bool = False, **kwargs):
         """
         Update metadata based on the given keyword arguments.
 
