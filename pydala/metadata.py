@@ -364,9 +364,7 @@ class ParquetDatasetMetadata:
                 logger.info(
                     f"Get unified schema for number of new files: {len(new_files)}"
                 )
-            schemas = [
-                self.file_metadata[f].schema.to_arrow_schema() for f in new_files
-            ]
+            schemas = [self.file_schemas[f] for f in new_files]
 
             if self.has_metadata:
                 schemas.insert(0, self.metadata.schema.to_arrow_schema())
@@ -416,9 +414,7 @@ class ParquetDatasetMetadata:
             schema, _ = self._get_unified_schema(verbose=verbose)
 
         files_to_repair = [
-            f
-            for f in self.file_metadata
-            if self.file_metadata[f].schema.to_arrow_schema() != schema
+            f for f in self.file_metadata if self.file_schemas[f] != schema
         ]
 
         if format_version is None and self.has_metadata:
@@ -433,9 +429,7 @@ class ParquetDatasetMetadata:
         # files with different schema
 
         files_to_repair = sorted(set(files_to_repair))
-        file_schemas_to_repair = {
-            f: self.file_metadata[f].schema.to_arrow_schema() for f in files_to_repair
-        }
+        file_schemas_to_repair = {f: self.file_schemas[f] for f in files_to_repair}
         # repair schema of files
         if len(files_to_repair):
             if verbose:
@@ -651,6 +645,13 @@ class ParquetDatasetMetadata:
         if not self.has_file_metadata:
             self.update_file_metadata()
         return self._file_metadata
+
+    @property
+    def file_schemas(self):
+        return {
+            f: convert_large_types_to_normal(self.file_schemas[f])
+            for f in self.file_metadata
+        }
 
     @property
     def files_in_file_metadata(self) -> list:
