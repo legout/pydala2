@@ -24,7 +24,7 @@ from fsspec.implementations.dirfs import DirFileSystem
 from loguru import logger
 
 from .helpers.misc import read_table, run_parallel
-from .schema import shrink_large_string
+from .schema import convert_large_types_to_normal
 
 
 def get_credentials_from_fssspec(fs: AbstractFileSystem) -> dict[str, str]:
@@ -452,7 +452,7 @@ def write_parquet(
 ) -> None:
     if isinstance(data, pl.DataFrame):
         data = data.to_arrow()
-        data = data.cast(shrink_large_string(data.schema))
+        data = data.cast(convert_large_types_to_normal(data.schema))
     elif isinstance(data, pd.DataFrame):
         data = pa.Table.from_pandas(data, preserve_index=False)
     elif isinstance(data, ddb.DuckDBPyRelation):
@@ -468,7 +468,7 @@ def write_json(
 ) -> None:
     if isinstance(data, pl.DataFrame):
         data = data.to_arrow()
-        data = data.cast(shrink_large_string(data.schema)).to_pydict()
+        data = data.cast(convert_large_types_to_normal(data.schema)).to_pydict()
     elif isinstance(data, pd.DataFrame):
         data = pa.Table.from_pandas(data, preserve_index=False).to_pydict()
     elif isinstance(data, ddb.DuckDBPyRelation):
@@ -523,7 +523,7 @@ def write_to_pyarrow_dataset(
 
     if isinstance(data[0], pl.DataFrame):
         data = [dd.to_arrow() for dd in data]
-        data = [dd.cast(shrink_large_string(dd.schema)) for dd in data]
+        data = [dd.cast(convert_large_types_to_normal(dd.schema)) for dd in data]
 
     elif isinstance(data[0], pd.DataFrame):
         data = [pa.Table.from_pandas(dd, preserve_index=False) for dd in data]

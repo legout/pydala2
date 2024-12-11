@@ -16,7 +16,7 @@ from .filesystem import FileSystem, clear_cache
 
 # from .helpers.metadata import collect_parquet_metadata  # , remove_from_metadata
 from .helpers.misc import get_partitions_from_path, run_parallel
-from .schema import repair_schema  # unify_schemas
+from .schema import repair_schema, convert_large_types_to_normal  # unify_schemas
 
 
 def collect_parquet_metadata(
@@ -308,7 +308,12 @@ class ParquetDatasetMetadata:
                 new_files += files
 
         if new_files:
+            if verbose:
+                logger.info(f"Collecting metadata for {len(new_files)} new files.")
             self._collect_file_metadata(files=new_files, verbose=verbose, **kwargs)
+        else:
+            if verbose:
+                logger.info("No new files to collect metadata for.")
 
         if rm_files:
             self._rm_file_metadata(files=rm_files)
@@ -341,10 +346,6 @@ class ParquetDatasetMetadata:
     def _get_unified_schema(
         self,
         verbose: bool = False,
-        # ts_unit: str | None = None,
-        # tz: str | None = None,
-        # use_large_string: bool = False,
-        # sort: bool | list[str] = False,
     ) -> tuple[pa.Schema, bool]:
         """
         Returns the unified schema for the dataset.
@@ -370,10 +371,14 @@ class ParquetDatasetMetadata:
             if self.has_metadata:
                 schemas.insert(0, self.metadata.schema.to_arrow_schema())
 
-            unified_schema = pa.unify_schemas(schemas, promote_options="permissive")
+            unified_schema = convert_large_types_to_normal(
+                pa.unify_schemas(schemas, promote_options="permissive")
+            )
             schemas_equal = all([unified_schema == schema for schema in schemas])
         else:
-            unified_schema = self.metadata.schema.to_arrow_schema()
+            unified_schema = convert_large_types_to_normal(
+                self.metadata.schema.to_arrow_schema()
+            )
             schemas_equal = True
         if verbose:
             logger.info(f"Schema is equal: {schemas_equal}")
@@ -386,8 +391,6 @@ class ParquetDatasetMetadata:
         format_version: str | None = None,
         tz: str | None = None,
         ts_unit: str | None = None,
-        use_large_string: bool = False,
-        # sort: bool | list[str] = False,
         alter_schema: bool = True,
         verbose: bool = False,
         **kwargs,
@@ -402,8 +405,6 @@ class ParquetDatasetMetadata:
                 the format version from the metadata will be used. Defaults to None.
             tz (str | None, optional): The timezone to use for repairing the files. Defaults to None.
             ts_unit (str | None, optional): The timestamp unit to use for repairing the files. Defaults to None.
-            use_large_string (bool, optional): Whether to use large string type for repairing the files.
-                Defaults to False.
             alter_schema (bool, optional): Whether to alter the schema of the files. Defaults to True.
             **kwargs: Additional keyword arguments to pass to the repair_schema function.
 
@@ -451,7 +452,6 @@ class ParquetDatasetMetadata:
                 version=format_version,
                 ts_unit=ts_unit,
                 tz=tz,
-                use_large_string=use_large_string,
                 alter_schema=alter_schema,
                 **kwargs,
             )
@@ -495,8 +495,8 @@ class ParquetDatasetMetadata:
             (set(self.files_in_file_metadata) - set(self.files_in_metadata))
         )
         if verbose:
-            logger.info("Number of files to remove: ", len(rm_files))
-            logger.info("Number of files to add: ", len(new_files))
+            logger.info(f"Number of files to remove: {len(rm_files)}")
+            logger.info(f"Number of files to add: {len(new_files)}")
         if len(rm_files) or (len(new_files) and not self.has_metadata) or reload:
             if verbose:
                 logger.info("Updateing metadata: Rewrite metadata from file metadata")
@@ -507,12 +507,15 @@ class ParquetDatasetMetadata:
             for f in self.files_in_file_metadata[1:]:
                 self._metadata.append_row_groups(self._file_metadata[f])
 
-        else:
+        elif len(new_files):
             if verbose:
                 logger.info("Updateing metadata: Append new file metadata")
 
             for f in new_files:
                 self._metadata.append_row_groups(self.file_metadata[f])
+        else:
+            if verbose:
+                logger.info("Updateing metadata: No changes")
 
         self._write_metadata_file()
         self.load_files()
@@ -523,7 +526,6 @@ class ParquetDatasetMetadata:
         schema: pa.Schema | None = None,
         ts_unit: str | None = None,
         tz: str | None = None,
-        use_large_string: bool = False,
         format_version: str | None = None,
         # sort: bool | list[str] = False,
         verbose: bool = False,
@@ -537,7 +539,6 @@ class ParquetDatasetMetadata:
             schema (pa.Schema | None): The schema of the data source.
             ts_unit (str | None): The unit of the timestamp.
             tz (str | None): The time zone of the data source.
-            use_large_string (bool): Flag to indicate whether to use large string type.
             format_version (str | None): The version of the data format.
             **kwargs: Additional keyword arguments.
 
@@ -559,7 +560,6 @@ class ParquetDatasetMetadata:
             format_version=format_version,
             tz=tz,
             ts_unit=ts_unit,
-            use_large_string=use_large_string,
             verbose=verbose,
             # sort=sort,
         )

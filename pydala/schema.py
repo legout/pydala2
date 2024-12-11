@@ -29,21 +29,57 @@ def sort_schema(schema: pa.Schema, names: list[str] | None = None) -> pa.Schema:
     )
 
 
-def shrink_large_string(schema: pa.Schema) -> pa.Schema:
-    """Convert all large_string types to string in a pyarrow.schema.
+# def shrink_large_string(schema: pa.Schema) -> pa.Schema:
+#     """Convert all large_string types to string in a pyarrow.schema.
 
-    Args:
-        schema (pa.Schema): pyarrow schema
+#     Args:
+#         schema (pa.Schema): pyarrow schema
 
-    Returns:
-        pa.Schema: converted pyarrow.schema
-    """
-    return pa.schema(
-        [
-            (n, pa.utf8()) if t == pa.large_string() else (n, t)
-            for n, t in list(zip(schema.names, schema.types))
-        ]
-    )
+#     Returns:
+#         pa.Schema: converted pyarrow.schema
+#     """
+#     return pa.schema(
+#         [
+#             (n, pa.utf8()) if t == pa.large_string() else (n, t)
+#             for n, t in list(zip(schema.names, schema.types))
+#         ]
+#     )
+
+
+def convert_large_types_to_normal(schema: pa.Schema) -> pa.Schema:
+    # Define mapping of large types to standard types
+    type_mapping = {
+        pa.large_string(): pa.string(),
+        pa.large_binary(): pa.binary(),
+        pa.large_list(pa.null()): pa.list_(pa.null()),
+    }
+
+    # Convert fields
+    new_fields = []
+    for field in schema:
+        field_type = field.type
+        # Check if type exists in mapping
+        if field_type in type_mapping:
+            new_field = pa.field(
+                name=field.name,
+                type=type_mapping[field_type],
+                nullable=field.nullable,
+                metadata=field.metadata,
+            )
+            new_fields.append(new_field)
+        # Handle large lists with nested types
+        elif isinstance(field_type, pa.LargeListType):
+            new_field = pa.field(
+                name=field.name,
+                type=pa.list_(field_type.value_type),
+                nullable=field.nullable,
+                metadata=field.metadata,
+            )
+            new_fields.append(new_field)
+        else:
+            new_fields.append(field)
+
+    return pa.schema(new_fields)
 
 
 def convert_timestamp(
@@ -449,7 +485,7 @@ def repair_schema(
     verbose: bool = True,
     ts_unit: str | None = None,  # "us",
     tz: str | None = None,
-    use_large_string: bool = False,
+    # use_large_types: bool = False,
     # sort: bool | list[str] = False,
     alter_schema: bool = True,
     **kwargs,
@@ -466,7 +502,6 @@ def repair_schema(
         verbose (bool, optional): Wheter to show the task progress using tqdm or not. Defaults to True.
         ts_unit (str|None): timestamp unit.
         tz (str|None): timezone for timestamp fields. Defaults to "UTC".
-        use_large_string (bool): Convert pyarrow.large_string() to pyarrow.string().
         **kwargs: Additional keyword arguments for pyarrow.parquet.write_table.
     """
     if files is None:
@@ -501,8 +536,8 @@ def repair_schema(
     if ts_unit is not None or tz is not None:
         schema = convert_timestamp(schema, unit=ts_unit, tz=tz)
 
-    if not use_large_string:
-        schema = shrink_large_string(schema)
+    # if not use_large_types:
+    schema = convert_large_types_to_normal(schema)
 
     schemas_equal = all([schema == schemas_ for schemas_ in file_schemas.values()])
 

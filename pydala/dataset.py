@@ -20,7 +20,7 @@ from .helpers.polars import pl as _pl
 from .io import Writer
 from .metadata import ParquetDatasetMetadata, PydalaDatasetMetadata
 from .schema import replace_schema  # from .optimize import Optimize
-from .schema import shrink_large_string
+from .schema import convert_large_types_to_normal
 from .table import PydalaTable
 
 
@@ -630,7 +630,7 @@ class BaseDataset:
         ts_unit: str = "us",
         tz: str | None = None,
         remove_tz: bool = False,
-        use_large_string: bool = False,
+        # use_large_string: bool = False,
         delta_subset: str | list[str] | None = None,
         alter_schema: bool = False,
         timestamp_column: str | None = None,
@@ -662,7 +662,6 @@ class BaseDataset:
         - ts_unit: The unit of the timestamp column. Defaults to "us".
         - tz: The timezone to be used for the timestamp column. Defaults to None.
         - remove_tz: Whether to remove the timezone information from the timestamp column. Defaults to False.
-        - use_large_string: Whether to use large string type for string columns. Defaults to False.
         - delta_subset: The subset of columns to consider for delta updates. Can be a string, a list of strings, or
             None. Defaults to None.
         - alter_schema: Whether to alter the schema of the dataset. Defaults to False.
@@ -711,7 +710,7 @@ class BaseDataset:
                 )
 
             writer.cast_schema(
-                use_large_string=use_large_string,
+                # use_large_string=use_large_string,
                 ts_unit=ts_unit,
                 tz=tz,
                 remove_tz=remove_tz,
@@ -819,7 +818,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         schema: pa.Schema | None = None,
         ts_unit: str = "us",
         tz: str | None = None,
-        use_large_string: bool = False,
+        # use_large_types: bool = False,
         format_version: str = "2.6",
         verbose: bool = False,
         **kwargs,
@@ -833,7 +832,6 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             schema (pa.Schema | None, optional): The schema of the data. Defaults to None.
             ts_unit (str, optional): The unit of the timestamp. Defaults to "us".
             tz (str | None, optional): The timezone. Defaults to None.
-            use_large_string (bool, optional): Whether to use large string. Defaults to False.
             format_version (str, optional): The version of the data format. Defaults to "2.6".
             **kwargs: Additional keyword arguments.
 
@@ -856,7 +854,6 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
                 schema=schema,
                 ts_unit=ts_unit,
                 tz=tz,
-                use_large_string=use_large_string,
                 format_version=format_version,
                 verbose=verbose,
                 **kwargs,
@@ -974,7 +971,6 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         ts_unit: str = "us",
         tz: str | None = None,
         remove_tz: bool = False,
-        use_large_string: bool = False,
         delta_subset: str | list[str] | None = None,
         update_metadata: bool = False,
         alter_schema: bool = False,
@@ -1007,7 +1003,6 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         - ts_unit: The unit of the timestamp column. Defaults to "us".
         - tz: The timezone to be used for the timestamp column. Defaults to None.
         - remove_tz: Whether to remove the timezone information from the timestamp column. Defaults to False.
-        - use_large_string: Whether to use large string type for string columns. Defaults to False.
         - delta_subset: The subset of columns to consider for delta updates. Can be a string, a list of strings, or
             None. Defaults to None.
         - update_metadata: Whether to update the metadata table after writing. Defaults to False.
@@ -1099,7 +1094,6 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             ts_unit=ts_unit,
             tz=tz,
             remove_tz=remove_tz,
-            use_large_string=use_large_string,
             delta_subset=delta_subset,
             alter_schema=alter_schema,
             timestamp_column=timestamp_column,
@@ -1560,7 +1554,6 @@ class Optimize(ParquetDataset):
         include: str | list[str] | None = None,
         ts_unit: str | None = None,  # "us",
         tz: str | None = None,
-        use_large_string: bool = False,
         infer_schema_size: int = 10_000,
         **kwargs,
     ):
@@ -1572,8 +1565,8 @@ class Optimize(ParquetDataset):
             .to_arrow()
             .schema
         )
-        if not use_large_string:
-            optimized_schema = shrink_large_string(optimized_schema)
+
+        optimized_schema = convert_large_types_to_normal(optimized_schema)
 
         for file_path in tqdm.tqdm(self.files):
             self._optimize_dtypes(
@@ -1584,7 +1577,7 @@ class Optimize(ParquetDataset):
                 include=include,
                 ts_unit=ts_unit,
                 tz=tz,
-                use_large_string=use_large_string,
+                # use_large_string=use_large_string,
                 **kwargs,
             )
 

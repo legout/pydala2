@@ -17,7 +17,7 @@ from fsspec import filesystem as fsspec_filesystem
 from .filesystem import clear_cache
 from .helpers.datetime import get_timestamp_column
 from .helpers.polars import pl
-from .schema import convert_timestamp, replace_schema, shrink_large_string
+from .schema import convert_timestamp, replace_schema, convert_large_types_to_normal
 from .table import PydalaTable
 
 
@@ -270,7 +270,7 @@ class Writer:
         self._set_schema()
         self._use_large_string = use_large_string
         if not use_large_string:
-            self.schema = shrink_large_string(self.schema)
+            self.schema = convert_large_types_to_normal(self.schema)
 
         if tz is not None or ts_unit is not None or remove_tz:
             self.schema = convert_timestamp(
