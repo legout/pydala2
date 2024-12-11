@@ -11,7 +11,7 @@ import pyarrow as pa
 import pyarrow.fs as pfs
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
-
+from loguru import logger
 from .filesystem import FileSystem, clear_cache
 
 # from .helpers.metadata import collect_parquet_metadata  # , remove_from_metadata
@@ -227,7 +227,9 @@ class ParquetDatasetMetadata:
             )
         ]
 
-    def _collect_file_metadata(self, files: list[str] | None = None, **kwargs) -> None:
+    def _collect_file_metadata(
+        self, files: list[str] | None = None, verbose: bool = False, **kwargs
+    ) -> None:
         """
         Collects metadata for the specified files and updates the `file_metadata` attribute of the dataset object.
 
@@ -242,10 +244,14 @@ class ParquetDatasetMetadata:
         if files is None:
             files = self._ls_files()
 
+        if verbose:
+            logger.info(f"Collecting metadata for {len(files)} files.")
+
         file_metadata = collect_parquet_metadata(
             files=files,
             base_path=self._path,
             filesystem=self._filesystem,
+            verbose=verbose,
             **kwargs,
         )
 
@@ -272,7 +278,9 @@ class ParquetDatasetMetadata:
         with self._filesystem.open(self._file_metadata_file, "wb") as f:
             pickle.dump(self._file_metadata, f)
 
-    def update_file_metadata(self, files: list[str] | None = None, **kwargs) -> None:
+    def update_file_metadata(
+        self, files: list[str] | None = None, verbose: bool = False, **kwargs
+    ) -> None:
         """
         Updates the metadata for files in the dataset.
 
@@ -288,7 +296,8 @@ class ParquetDatasetMetadata:
         """
         new_files = files or []
         rm_files = []
-
+        if verbose:
+            logger.info("Updating file metadata.")
         if not files:
             files = self._ls_files()
 
@@ -299,7 +308,7 @@ class ParquetDatasetMetadata:
                 new_files += files
 
         if new_files:
-            self._collect_file_metadata(files=new_files, **kwargs)
+            self._collect_file_metadata(files=new_files, verbose=verbose, **kwargs)
 
         if rm_files:
             self._rm_file_metadata(files=rm_files)
@@ -331,6 +340,7 @@ class ParquetDatasetMetadata:
 
     def _get_unified_schema(
         self,
+        verbose: bool = False,
         # ts_unit: str | None = None,
         # tz: str | None = None,
         # use_large_string: bool = False,
@@ -349,6 +359,10 @@ class ParquetDatasetMetadata:
             )
 
         if len(new_files):
+            if verbose:
+                logger.info(
+                    f"Get unified schema for number of new files: {len(new_files)}"
+                )
             schemas = [
                 self.file_metadata[f].schema.to_arrow_schema() for f in new_files
             ]
@@ -361,6 +375,8 @@ class ParquetDatasetMetadata:
         else:
             unified_schema = self.metadata.schema.to_arrow_schema()
             schemas_equal = True
+        if verbose:
+            logger.info(f"Schema is equal: {schemas_equal}")
 
         return unified_schema, schemas_equal
 
@@ -373,6 +389,7 @@ class ParquetDatasetMetadata:
         use_large_string: bool = False,
         # sort: bool | list[str] = False,
         alter_schema: bool = True,
+        verbose: bool = False,
         **kwargs,
     ):
         """
@@ -395,7 +412,7 @@ class ParquetDatasetMetadata:
         """
         # get unified schema
         if schema is None:
-            schema, _ = self._get_unified_schema()
+            schema, _ = self._get_unified_schema(verbose=verbose)
 
         files_to_repair = [
             f
@@ -420,6 +437,11 @@ class ParquetDatasetMetadata:
         }
         # repair schema of files
         if len(files_to_repair):
+            if verbose:
+                logger.info(
+                    f"Repairing schema for number of files: {len(files_to_repair)}"
+                )
+
             repair_schema(
                 files=files_to_repair,
                 file_schemas=file_schemas_to_repair,
@@ -436,17 +458,20 @@ class ParquetDatasetMetadata:
             self.clear_cache()
 
             # update file metadata
-            self.update_file_metadata(files=sorted(files_to_repair), **kwargs)
+            self.update_file_metadata(
+                files=sorted(files_to_repair), verbose=verbose, **kwargs
+            )
 
             # update metadata
             if any([f in self.files_in_metadata for f in files_to_repair]):
                 self._update_metadata(
                     reload=True,
+                    verbose=verbose,
                 )
         else:
-            self._update_metadata(reload=False)
+            self._update_metadata(reload=False, verbose=verbose)
 
-    def _update_metadata(self, reload: bool = False, **kwargs):
+    def _update_metadata(self, reload: bool = False, verbose: bool = False, **kwargs):
         """
         Update metadata based on the given keyword arguments.
 
@@ -469,8 +494,13 @@ class ParquetDatasetMetadata:
         new_files = sorted(
             (set(self.files_in_file_metadata) - set(self.files_in_metadata))
         )
-
+        if verbose:
+            logger.info("Number of files to remove: ", len(rm_files))
+            logger.info("Number of files to add: ", len(new_files))
         if len(rm_files) or (len(new_files) and not self.has_metadata) or reload:
+            if verbose:
+                logger.info("Updateing metadata: Rewrite metadata from file metadata")
+
             self._metadata = copy.copy(
                 self.file_metadata[self.files_in_file_metadata[0]]
             )
@@ -478,6 +508,9 @@ class ParquetDatasetMetadata:
                 self._metadata.append_row_groups(self._file_metadata[f])
 
         else:
+            if verbose:
+                logger.info("Updateing metadata: Append new file metadata")
+
             for f in new_files:
                 self._metadata.append_row_groups(self.file_metadata[f])
 
@@ -493,6 +526,7 @@ class ParquetDatasetMetadata:
         use_large_string: bool = False,
         format_version: str | None = None,
         # sort: bool | list[str] = False,
+        verbose: bool = False,
         **kwargs,
     ) -> None:
         """
@@ -515,7 +549,7 @@ class ParquetDatasetMetadata:
             self.reset()
 
         # update file metadata
-        self.update_file_metadata(**kwargs)
+        self.update_file_metadata(verbose=verbose, **kwargs)
 
         if len(self.files_in_file_metadata) == 0:
             return
@@ -526,6 +560,7 @@ class ParquetDatasetMetadata:
             tz=tz,
             ts_unit=ts_unit,
             use_large_string=use_large_string,
+            verbose=verbose,
             # sort=sort,
         )
 
@@ -766,8 +801,6 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
     def _gen_metadata_table(
         metadata: pq.FileMetaData | list[pq.FileMetaData],
         partitioning: None | str | list[str] = None,
-        backend: str = "threading",
-        verbose: bool = True,
     ):
         """
         Generates a polars DataFrame with statistics for each row group in the dataset.
@@ -843,8 +876,6 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
 
     def update_metadata_table(
         self,
-        # metadata: pq.FileMetaData | list[pq.FileMetaData],
-        # partitioning: None | str | list[str] = None,
         backend: str = "threading",
         verbose: bool = True,
     ):
@@ -852,8 +883,6 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
             metadata_table = self._gen_metadata_table(
                 metadata=self.metadata,
                 partitioning=self._partitioning,
-                backend=backend,
-                verbose=verbose,
             )
             # self._metadata_table = pa.Table.from_pydict(metadata_table)
             self._metadata_table = self.ddb_con.from_arrow(

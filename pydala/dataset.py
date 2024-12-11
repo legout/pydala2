@@ -821,6 +821,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         tz: str | None = None,
         use_large_string: bool = False,
         format_version: str = "2.6",
+        verbose: bool = False,
         **kwargs,
     ):
         """
@@ -857,6 +858,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
                 tz=tz,
                 use_large_string=use_large_string,
                 format_version=format_version,
+                verbose=verbose,
                 **kwargs,
             )
             if not hasattr(self, "_schema"):
