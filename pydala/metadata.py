@@ -522,6 +522,7 @@ class ParquetDatasetMetadata:
         tz: str | None = None,
         format_version: str | None = None,
         # sort: bool | list[str] = False,
+        alter_schema: bool = True,
         verbose: bool = False,
         **kwargs,
     ) -> None:
@@ -533,6 +534,7 @@ class ParquetDatasetMetadata:
             schema (pa.Schema | None): The schema of the data source.
             ts_unit (str | None): The unit of the timestamp.
             tz (str | None): The time zone of the data source.
+            alter_schema (bool): Flag to indicate if the schema should be altered.
             format_version (str | None): The version of the data format.
             **kwargs: Additional keyword arguments.
 
@@ -554,6 +556,7 @@ class ParquetDatasetMetadata:
             format_version=format_version,
             tz=tz,
             ts_unit=ts_unit,
+            alter_schema=alter_schema,
             verbose=verbose,
             # sort=sort,
         )
@@ -649,8 +652,10 @@ class ParquetDatasetMetadata:
     @property
     def file_schemas(self):
         return {
-            f: convert_large_types_to_normal(self.file_schemas[f])
-            for f in self.file_metadata
+            f: convert_large_types_to_normal(
+                self._file_metadata[f].schema.to_arrow_schema()
+            )
+            for f in self._file_metadata
         }
 
     @property

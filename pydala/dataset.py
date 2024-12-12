@@ -630,10 +630,11 @@ class BaseDataset:
         ts_unit: str = "us",
         tz: str | None = None,
         remove_tz: bool = False,
-        # use_large_string: bool = False,
         delta_subset: str | list[str] | None = None,
         alter_schema: bool = False,
         timestamp_column: str | None = None,
+        update_metadata: bool = False,
+        verbose: bool = False,
         **kwargs,
     ):
         """
@@ -666,6 +667,8 @@ class BaseDataset:
             None. Defaults to None.
         - alter_schema: Whether to alter the schema of the dataset. Defaults to False.
         - timestamp_column: The name of the timestamp column. Defaults to None.
+        - update_metadata: Whether to update the metadata table after writing. Defaults to False.
+        - verbose: Whether to print verbose output. Defaults to False.
         - **kwargs: Additional keyword arguments to be passed to the writer.
 
         Returns:
@@ -687,7 +690,7 @@ class BaseDataset:
             and not isinstance(data, pa.RecordBatchReader)
         ):
             data = [data]
-
+        metadata = []
         for data_ in data:
             writer = Writer(
                 data=data_,
@@ -726,22 +729,27 @@ class BaseDataset:
                 if other_df is not None:
                     writer.delta(other=other_df, subset=delta_subset)
 
-            writer.write_to_dataset(
+            metadata_ = writer.write_to_dataset(
                 row_group_size=row_group_size,
                 compression=compression,
                 partitioning_columns=partition_by,
                 partitioning_flavor="hive",
                 max_rows_per_file=max_rows_per_file,
                 basename=basename,
+                verbose=verbose,
                 **kwargs,
             )
+            if metadata_ is not None:
+                metadata.extend(metadata_)
 
         if mode == "overwrite":
             del_files = [os.path.join(self._path, fn) for fn in self.files]
             self.delete_files(del_files)
 
         self.clear_cache()
-        # self.load_files()
+
+        if update_metadata:
+            return metadata
 
 
 class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
@@ -798,18 +806,11 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             **fs_kwargs,
         )
 
-        # if self.has_metadata:
-        # self.pydala_dataset_metadata = PydalaDatasetMetadata(
-        #    metadata=self.metadata, partitioning=partitioning, ddb_con=ddb_con
-        # )
-        # self.metadata_table.create_view(f"{self.name}_metadata")
-        # self.ddb_con.unregister("metadata_table")
-
-        # try:
-        #     self.load()
-        # except Exception as e:
-        #     _ = e
-        #     pass
+        try:
+            self.load()
+        except Exception as e:
+            _ = e
+            pass
 
     def load(
         self,
@@ -975,6 +976,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         update_metadata: bool = False,
         alter_schema: bool = False,
         timestamp_column: str | None = None,
+        verbose: bool = False,
         **kwargs,
     ):
         """
@@ -1008,79 +1010,14 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         - update_metadata: Whether to update the metadata table after writing. Defaults to False.
         - alter_schema: Whether to alter the schema of the dataset. Defaults to False.
         - timestamp_column: The name of the timestamp column. Defaults to None.
+        - verbose: Whether to print verbose output. Defaults to False.
         - **kwargs: Additional keyword arguments to be passed to the writer.
 
         Returns:
         None
         """
-        # if not partitioning_columns and self.partition_names:
-        #     partitioning_columns = self.partition_names
 
-        # if timestamp_column is not None:
-        #     self._timestamp_column = timestamp_column
-
-        # if (
-        #     not isinstance(data, list)
-        #     and not isinstance(data, tuple)
-        #     and not isinstance(data, pa.RecordBatchReader)
-        # ):
-        #     data = [data]
-
-        # for data_ in data:
-        #     writer = Writer(
-        #         data=data_,
-        #         path=self._path,
-        #         filesystem=self._filesystem,
-        #         schema=self.schema if not alter_schema else None,
-        #     )
-        #     if writer.shape[0] == 0:
-        #         continue
-
-        #     writer.sort_data(by=sort_by)
-
-        #     if unique:
-        #         writer.unique(columns=unique)
-
-        #     if partitioning_columns:
-        #         writer.add_datepart_columns(
-        #             columns=partitioning_columns,
-        #             timestamp_column=self._timestamp_column,
-        #         )
-
-        #     writer.cast_schema(
-        #         use_large_string=use_large_string,
-        #         ts_unit=ts_unit,
-        #         tz=tz,
-        #         remove_tz=remove_tz,
-        #         alter_schema=alter_schema,
-        #     )
-
-        #     if mode == "delta" and self.is_loaded:
-        #         writer._to_polars()
-        #         other_df = self._get_delta_other_df(
-        #             writer.data,
-        #             filter_columns=delta_subset,
-        #         )
-        #         if other_df is not None:
-        #             writer.delta(other=other_df, subset=delta_subset)
-
-        #     writer.write_to_dataset(
-        #         row_group_size=row_group_size,
-        #         compression=compression,
-        #         partitioning_columns=partitioning_columns,
-        #         partitioning_flavor="hive",
-        #         max_rows_per_file=max_rows_per_file,
-        #         basename=basename,
-        #         **kwargs,
-        #     )
-
-        # if mode == "overwrite":
-        #     del_files = [os.path.join(self._path, fn) for fn in self.files]
-        #     self.delete_files(del_files)
-
-        # self.clear_cache()
-        # self.load_files()
-        BaseDataset.write_to_dataset(
+        metadata = BaseDataset.write_to_dataset(
             self,
             data=data,
             mode=mode,
@@ -1097,16 +1034,29 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             delta_subset=delta_subset,
             alter_schema=alter_schema,
             timestamp_column=timestamp_column,
+            update_metadata=update_metadata,
+            verbose=verbose,
             **kwargs,
         )
 
         if update_metadata:
-            try:
-                self.load(update_metadata=True, verbose=False)
-            except Exception as e:
-                _ = e
-                self.load(reload_metadata=True, verbose=False)
-            self.update_metadata_table()
+            for md in metadata:
+                f = list(md.keys())[0].replace(self._path, "").lstrip("/")
+                metadata_ = list(md.values())[0]
+                metadata_.set_file_path(f)
+                if self._file_metadata is None:
+                    self._file_metadata = {f: metadata_}
+                else:
+                    self._file_metadata[f] = metadata_
+            self._update_metadata(verbose=verbose)
+            # self._repair_file_schemas(alter_schema=alter_schema, verbose=verbose)
+            # self._update_metadata()
+            # try:
+            #     self.load(update_metadata=True, verbose=False)
+            # except Exception as e:
+            #     _ = e
+            #     self.load(reload_metadata=True, verbose=False)
+            # self.update_metadata_table()
 
 
 class PyarrowDataset(BaseDataset):

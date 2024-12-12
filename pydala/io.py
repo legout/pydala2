@@ -8,6 +8,7 @@ import pandas as pd
 import polars.selectors as cs
 import pyarrow as pa
 import pyarrow.dataset as pds
+from loguru import logger
 
 # import pyarrow.dataset as pds
 import pyarrow.parquet as pq
@@ -321,6 +322,7 @@ class Writer:
         max_rows_per_file: int | None = None,
         create_dir: bool = False,
         basename: str | None = None,
+        verbose: bool = False,
         **kwargs,
     ):
         """
@@ -335,6 +337,7 @@ class Writer:
             max_rows_per_file (int | None, optional): The maximum number of rows per file. Defaults to None.
             create_dir (bool, optional): Whether to create directories for the dataset. Defaults to False.
             basename (str | None, optional): The base name for the output files. Defaults to None.
+            verbose (bool, optional): Whether to print verbose output. Defaults to False.
             **kwargs: Additional keyword arguments.
 
         Returns:
@@ -361,6 +364,16 @@ class Writer:
             if "local" in self._filesystem.protocol:
                 create_dir = True
 
+        metadata = []
+
+        def file_visitor(written_file):
+            if verbose:
+                logger.info(f"path={written_file.path}")
+                logger.info(f"size={written_file.size} bytes")
+                logger.info(f"metadata={written_file.metadata}")
+            # written_file.metadata.set_file_path(written_file.path)
+            metadata.append({written_file.path: written_file.metadata})
+
         retries = 0
         while retries < 2:
             try:
@@ -378,6 +391,7 @@ class Writer:
                     existing_data_behavior="overwrite_or_ignore",
                     create_dir=create_dir,
                     format="parquet",
+                    file_visitor=file_visitor,
                     **kwargs,
                 )
                 break
@@ -388,6 +402,7 @@ class Writer:
                 self.clear_cache()
                 time.sleep(0.1)
                 create_dir = False
+        return metadata
 
     def clear_cache(self) -> None:
         """
