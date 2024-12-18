@@ -23,7 +23,7 @@ name = "pydala2"
 readme = "README.md"
 #repository = "https://github.com/legout/pydala2"
 requires-python = ">= 3.10"
-version = "0.9.3.19"
+version = "0.9.4"
 
 [project.optional-dependencies]
 legacy = ["polars-lts-cpu>=0.20.4"]

@@ -12,12 +12,13 @@ import pyarrow.fs as pfs
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 from loguru import logger
+
 from .filesystem import FileSystem, clear_cache
-
-
 # from .helpers.metadata import collect_parquet_metadata  # , remove_from_metadata
-from .helpers.misc import get_partitions_from_path, run_parallel, unify_schemas_pl
-from .schema import repair_schema, convert_large_types_to_normal  # unify_schemas
+from .helpers.misc import (get_partitions_from_path, run_parallel,
+                           unify_schemas_pl)
+from .schema import (convert_large_types_to_normal,  # unify_schemas
+                     repair_schema)
 
 
 def collect_parquet_metadata(

@@ -18,7 +18,6 @@ import s3fs
 from fsspec import AbstractFileSystem, filesystem
 from fsspec.implementations.cache_mapper import AbstractCacheMapper
 from fsspec.implementations.cached import SimpleCacheFileSystem
-
 # from fsspec.implementations import cached as cachedfs
 from fsspec.implementations.dirfs import DirFileSystem
 from loguru import logger

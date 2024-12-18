@@ -8,17 +8,17 @@ import pandas as pd
 import polars.selectors as cs
 import pyarrow as pa
 import pyarrow.dataset as pds
-from loguru import logger
-
 # import pyarrow.dataset as pds
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 from fsspec import filesystem as fsspec_filesystem
+from loguru import logger
 
 from .filesystem import clear_cache
 from .helpers.datetime import get_timestamp_column
 from .helpers.polars import pl
-from .schema import convert_timestamp, replace_schema, convert_large_types_to_normal
+from .schema import (convert_large_types_to_normal, convert_timestamp,
+                     replace_schema)
 from .table import PydalaTable
 
 

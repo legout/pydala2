@@ -10,9 +10,9 @@ from fsspec import AbstractFileSystem
 from fsspec import filesystem as fsspec_filesystem
 from joblib import Parallel, delayed
 
+from ..schema import convert_large_types_to_normal
 from .datetime import timestamp_from_string
 from .polars import pl
-from ..schema import convert_large_types_to_normal
 
 # Compile regex patterns once for efficiency
 SPLIT_PATTERN = re.compile(
