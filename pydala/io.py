@@ -267,7 +267,6 @@ class Writer:
             alter_schema (bool, optional): Whether to alter the schema. Defaults to False.
         """
 
-        self._to_arrow()
         self._set_schema()
         self._use_large_string = use_large_string
         if not use_large_string:

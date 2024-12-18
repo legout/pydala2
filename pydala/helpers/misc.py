@@ -12,6 +12,7 @@ from joblib import Parallel, delayed
 
 from .datetime import timestamp_from_string
 from .polars import pl
+from ..schema import convert_large_types_to_normal
 
 # Compile regex patterns once for efficiency
 SPLIT_PATTERN = re.compile(
@@ -584,3 +585,28 @@ def get_nested_keys(d, parent_key=""):
         if isinstance(v, dict):
             keys.extend(get_nested_keys(v, new_key))
     return keys
+
+
+def unify_schemas_pl(
+    schemas: list[pa.Schema], convert_large_types: bool = True
+) -> pl.Schema:
+    """
+    Unifies a list of Pyarrow schemas into a single schema.
+
+    Args:
+        schemas (list[pl.Schema]): List of Polars schemas.
+
+    Returns:
+        pa.Schema: Unified schema.
+    """
+    schema = (
+        pl.concat(
+            [pa.Table.from_pydict([], schema=schema) for schema in schemas],
+            how="vertical_relaxed",
+        )
+        .to_arrow()
+        .schema
+    )
+    if convert_large_types:
+        schema = convert_large_types_to_normal(schema)
+    return schema

@@ -14,8 +14,9 @@ from fsspec import AbstractFileSystem
 from loguru import logger
 from .filesystem import FileSystem, clear_cache
 
+
 # from .helpers.metadata import collect_parquet_metadata  # , remove_from_metadata
-from .helpers.misc import get_partitions_from_path, run_parallel
+from .helpers.misc import get_partitions_from_path, run_parallel, unify_schemas_pl
 from .schema import repair_schema, convert_large_types_to_normal  # unify_schemas
 
 
@@ -368,10 +369,13 @@ class ParquetDatasetMetadata:
 
             if self.has_metadata:
                 schemas.insert(0, self.metadata.schema.to_arrow_schema())
+            try:
+                unified_schema = convert_large_types_to_normal(
+                    pa.unify_schemas(schemas, promote_options="permissive")
+                )
+            except pa.lib.ArrowTypeError:
+                unified_schema = unify_schemas_pl(schemas, convert_large_types=True)
 
-            unified_schema = convert_large_types_to_normal(
-                pa.unify_schemas(schemas, promote_options="permissive")
-            )
             schemas_equal = all([unified_schema == schema for schema in schemas])
         else:
             unified_schema = convert_large_types_to_normal(
