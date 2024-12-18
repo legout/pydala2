@@ -603,7 +603,7 @@ def unify_schemas_pl(schemas: list[pa.Schema]) -> pl.Schema:
                 pl.from_arrow(pa.Table.from_pylist([], schema=schema))
                 for schema in schemas
             ],
-            how="vertical_relaxed",
+            how="diagonal_relaxed",
         )
         .to_arrow()
         .schema
