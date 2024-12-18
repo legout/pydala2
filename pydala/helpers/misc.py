@@ -599,7 +599,10 @@ def unify_schemas_pl(schemas: list[pa.Schema]) -> pl.Schema:
     """
     schema = (
         pl.concat(
-            [pa.Table.from_pylist([], schema=schema) for schema in schemas],
+            [
+                pl.from_arrow(pa.Table.from_pylist([], schema=schema))
+                for schema in schemas
+            ],
             how="vertical_relaxed",
         )
         .to_arrow()
