@@ -10,7 +10,7 @@ from fsspec import AbstractFileSystem
 from fsspec import filesystem as fsspec_filesystem
 from joblib import Parallel, delayed
 
-from ..schema import convert_large_types_to_normal
+# from ..schema import convert_large_types_to_normal
 from .datetime import timestamp_from_string
 from .polars import pl
 
@@ -587,9 +587,7 @@ def get_nested_keys(d, parent_key=""):
     return keys
 
 
-def unify_schemas_pl(
-    schemas: list[pa.Schema], convert_large_types: bool = True
-) -> pl.Schema:
+def unify_schemas_pl(schemas: list[pa.Schema]) -> pl.Schema:
     """
     Unifies a list of Pyarrow schemas into a single schema.
 
@@ -607,6 +605,6 @@ def unify_schemas_pl(
         .to_arrow()
         .schema
     )
-    if convert_large_types:
-        schema = convert_large_types_to_normal(schema)
+    # if convert_large_types:
+    #    schema = convert_large_types_to_normal(schema)
     return schema
