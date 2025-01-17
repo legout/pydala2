@@ -973,7 +973,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         tz: str | None = None,
         remove_tz: bool = False,
         delta_subset: str | list[str] | None = None,
-        update_metadata: bool = False,
+        update_metadata: bool = True,
         alter_schema: bool = False,
         timestamp_column: str | None = None,
         verbose: bool = False,
