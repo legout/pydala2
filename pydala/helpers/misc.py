@@ -602,7 +602,7 @@ def unify_schemas_pl(schemas: list[pa.Schema]) -> pl.Schema:
         pl.concat(
             [
                 # pl.from_arrow(pa.Table.from_pylist([], schema=schema))
-                schema.empty_table()
+                pl.from_arrow(schema.empty_table())
                 for schema in schemas
             ],
             how="diagonal_relaxed",
