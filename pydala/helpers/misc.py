@@ -16,7 +16,8 @@ from .polars import pl
 
 # Compile regex patterns once for efficiency
 SPLIT_PATTERN = re.compile(
-    r"<=|<|>=|>|=|!=|\s+[n,N][o,O][t,T]\s+[i,I][n,N]\s+|\s+[i,I][n,N]\s+|\s+[i,I][s,S]\s+[n,N][o,O][t,T]\s+[n,N][u,U][l,L]{2}\s+|\s+[i,I][s,S]\s+[n,N][u,U][l,L]{2}\s+"
+    r"<=|<|>=|>|=|!=|\s+[n,N][o,O][t,T]\s+[i,I][n,N]\s+|\s+[i,I][n,N]\s+|\s+[i,I][s,S]\s+[n,N][o,O][t,T]\s+"
+    r"[n,N][u,U][l,L]{2}\s+|\s+[i,I][s,S]\s+[n,N][u,U][l,L]{2}\s+"
 )
 LOGICAL_OPERATORS_PATTERN = re.compile(
     r"\s+[a,A][n,N][d,D] [n,N][o,O][t,T]\s+|\s+[a,A][n,N][d,D]\s+|\s+[o,O][r,R] [n,N][o,O][t,T]\s+|\s+[o,O][r,R]\s+"
@@ -600,7 +601,8 @@ def unify_schemas_pl(schemas: list[pa.Schema]) -> pl.Schema:
     schema = (
         pl.concat(
             [
-                pl.from_arrow(pa.Table.from_pylist([], schema=schema))
+                # pl.from_arrow(pa.Table.from_pylist([], schema=schema))
+                schema.empty_table()
                 for schema in schemas
             ],
             how="diagonal_relaxed",
@@ -608,6 +610,5 @@ def unify_schemas_pl(schemas: list[pa.Schema]) -> pl.Schema:
         .to_arrow()
         .schema
     )
-    # if convert_large_types:
-    #    schema = convert_large_types_to_normal(schema)
+
     return schema
