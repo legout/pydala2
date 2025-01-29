@@ -1,6 +1,6 @@
 import concurrent.futures
 import copy
-import os
+import posixpath
 import pickle
 import re
 import tempfile
@@ -46,7 +46,7 @@ def collect_parquet_metadata(
 
     def get_metadata(f, base_path, filesystem):
         if base_path is not None:
-            path = os.path.join(base_path, f)
+            path = posixpath.join(base_path, f)
         else:
             path = f
         return {f: pq.read_metadata(path, filesystem=filesystem)}
@@ -158,7 +158,7 @@ class ParquetDatasetMetadata:
             cache_storage = fs_kwargs.pop(
                 "cache_storage", tempfile.mkdtemp(prefix="pydala2_")
             )
-            # cache_storage = os.path.join(cache_storage, path)
+            # cache_storage = posixpath.join(cache_storage, path)
         else:
             cache_storage = None
         self._filesystem = FileSystem(
@@ -174,8 +174,8 @@ class ParquetDatasetMetadata:
 
         self._fs_kwargs = fs_kwargs
 
-        self._metadata_file = os.path.join(path, "_metadata")
-        self._file_metadata_file = os.path.join(path, "_file_metadata")
+        self._metadata_file = posixpath.join(path, "_metadata")
+        self._file_metadata_file = posixpath.join(path, "_file_metadata")
         self._metadata = self._read_metadata()
         self._file_metadata = None  # self._read_file_metadata()
         if update_metadata:
@@ -197,8 +197,8 @@ class ParquetDatasetMetadata:
             self._filesystem.mkdir(self._path)
         except Exception as e:
             _ = e
-            self._filesystem.touch(os.path.join(self._path, "tmp.delete"))
-            self._filesystem.rm(os.path.join(self._path, "tmp.delete"))
+            self._filesystem.touch(posixpath.join(self._path, "tmp.delete"))
+            self._filesystem.rm(posixpath.join(self._path, "tmp.delete"))
 
     def load_files(self) -> None:
         if self.has_metadata:
@@ -209,7 +209,7 @@ class ParquetDatasetMetadata:
                 fn.replace(self._path, "").lstrip("/")
                 for fn in sorted(
                     self._filesystem.glob(
-                        os.path.join(self._path, "**/*.parquet")  # {self._format}")
+                        posixpath.join(self._path, "**/*.parquet")  # {self._format}")
                     )
                 )
             ]
@@ -227,7 +227,7 @@ class ParquetDatasetMetadata:
         return [
             fn.replace(self._path, "").lstrip("/")
             for fn in sorted(
-                self._filesystem.glob(os.path.join(self._path, "**/*.parquet"))
+                self._filesystem.glob(posixpath.join(self._path, "**/*.parquet"))
             )
         ]
 
@@ -596,7 +596,7 @@ class ParquetDatasetMetadata:
         Returns:
             None
         """
-        with self._filesystem.open(os.path.join(self._path, "_metadata"), "wb") as f:
+        with self._filesystem.open(posixpath.join(self._path, "_metadata"), "wb") as f:
             self._metadata.write_metadata_file(f)
 
     def delete_metadata_files(self) -> None:

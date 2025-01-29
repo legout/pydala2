@@ -1,4 +1,4 @@
-import os
+import posixpath
 
 import duckdb
 import pandas as pd
@@ -11,8 +11,7 @@ from pydala.helpers.polars import pl
 
 from .dataset import CsvDataset, JsonDataset, ParquetDataset, PyarrowDataset
 from .filesystem import FileSystem
-from .helpers.misc import (delattr_rec, get_nested_keys, getattr_rec,
-                           setattr_rec)
+from .helpers.misc import delattr_rec, get_nested_keys, getattr_rec, setattr_rec
 from .helpers.sql import get_table_names
 from .table import PydalaTable
 
@@ -77,8 +76,8 @@ class Catalog:
 
             for name in self.params.filesystem:
                 if self.params.filesystem[name].protocol in ["file", "local"]:
-                    self.params.filesystem[name].bucket = os.path.join(
-                        os.path.dirname(self._catalog_path),
+                    self.params.filesystem[name].bucket = posixpath.join(
+                        posixpath.dirname(self._catalog_path),
                         self.params.filesystem[name].bucket,
                     )
                 fs = FileSystem(**self.params.filesystem[name])
@@ -91,8 +90,8 @@ class Catalog:
         else:
             self.fs = None
 
-    def _get_table_from_table_name(self, table_name: str) -> list[str]:
-        table_name_items = table_name.split(".")
+    # def _get_table_from_table_name(self, table_name: str) -> list[str]:
+    #    table_name_items = table_name.split(".")
 
     # @staticmethod
     # def _get_table_from_table_name(self, table_name: str) -> str:

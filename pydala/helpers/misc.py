@@ -1,4 +1,4 @@
-import os
+import posixpath
 import re
 from typing import Any
 
@@ -457,7 +457,7 @@ def get_partitions_from_path(
         list[tuple]: Partitions.
     """
     if "." in path:
-        path = os.path.dirname(path)
+        path = posixpath.dirname(path)
 
     parts = path.split("/")
 

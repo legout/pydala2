@@ -1,6 +1,7 @@
 import datetime as dt
 import inspect
 import os
+import posixpath
 from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
@@ -18,6 +19,7 @@ import s3fs
 from fsspec import AbstractFileSystem, filesystem
 from fsspec.implementations.cache_mapper import AbstractCacheMapper
 from fsspec.implementations.cached import SimpleCacheFileSystem
+
 # from fsspec.implementations import cached as cachedfs
 from fsspec.implementations.dirfs import DirFileSystem
 from loguru import logger
@@ -46,7 +48,9 @@ class FileNameCacheMapper(AbstractCacheMapper):
         self.directory = directory
 
     def __call__(self, path: str) -> str:
-        os.makedirs(os.path.dirname(os.path.join(self.directory, path)), exist_ok=True)
+        os.makedirs(
+            posixpath.dirname(posixpath.join(self.directory, path)), exist_ok=True
+        )
         return path
 
 
@@ -118,7 +122,7 @@ def get_friendly_disk_usage(storage: str) -> str:
 
 class MonitoredSimpleCacheFileSystem(SimpleCacheFileSystem):
     def __init__(self, **kwargs):
-        # kwargs["cache_storage"] = os.path.join(
+        # kwargs["cache_storage"] = posixpath.join(
         #    kwargs.get("cache_storage"), kwargs.get("fs").protocol[0]
         # )
         self._verbose = kwargs.get("verbose", False)
@@ -129,8 +133,8 @@ class MonitoredSimpleCacheFileSystem(SimpleCacheFileSystem):
         self._check_cache()
         cache_path = self._mapper(path)
         for storage in self.storage:
-            fn = os.path.join(storage, cache_path)
-            if os.path.exists(fn):
+            fn = posixpath.join(storage, cache_path)
+            if posixpath.exists(fn):
                 return fn
             if self._verbose:
                 logger.info(f"Downloading {self.protocol[0]}://{path}")
@@ -143,7 +147,7 @@ class MonitoredSimpleCacheFileSystem(SimpleCacheFileSystem):
         if cached_file is None:
             return self.fs.size(path)
         else:
-            return os.path.getsize(cached_file)
+            return posixpath.getsize(cached_file)
 
     # def make_dirs(self, path, exist_ok=True):
     #     if self.fs.exists(path) and :
@@ -255,13 +259,13 @@ def get_new_file_names(src: list[str], dst: list[str]) -> list[str]:
     """
     if len(dst) == 0:
         return src
-    src_file_names = [os.path.basename(f).split(".")[0] for f in src]
-    src_ext = os.path.basename(src[0]).split(".")[1]
-    dst_file_names = [os.path.basename(f).split(".")[0] for f in dst]
-    # dst_ext = os.path.basename(dst[0]).split(".")[1]
+    src_file_names = [posixpath.basename(f).split(".")[0] for f in src]
+    src_ext = posixpath.basename(src[0]).split(".")[1]
+    dst_file_names = [posixpath.basename(f).split(".")[0] for f in dst]
+    # dst_ext = posixpath.basename(dst[0]).split(".")[1]
 
     return [
-        os.path.join(os.path.dirname(src), f, src_ext)
+        posixpath.join(posixpath.dirname(src), f, src_ext)
         for f in src_file_names
         if f not in dst_file_names
     ]
@@ -332,7 +336,7 @@ def read_parquet_dataset(
         concat = False
 
     if isinstance(path, str):
-        files = self.glob(os.path.join(path, "*.parquet"))
+        files = self.glob(posixpath.join(path, "*.parquet"))
     else:
         files = path
     if isinstance(files, str):
@@ -364,7 +368,7 @@ def read_json_dataset(
         concat = False
 
     if isinstance(path, str):
-        files = self.glob(os.path.join(path, "*.json"))
+        files = self.glob(posixpath.join(path, "*.json"))
     else:
         files = path
     if isinstance(files, str):
@@ -397,7 +401,7 @@ def read_csv_dataset(
         concat = False
 
     if isinstance(path, str):
-        files = self.glob(os.path.join(path, "*.csv"))
+        files = self.glob(posixpath.join(path, "*.csv"))
     else:
         files = path
     if isinstance(files, str):
@@ -419,7 +423,7 @@ def pyarrow_dataset(
     **kwargs,
 ) -> pds.Dataset:
     return pds.dataset(
-        self.glob(os.path.join(path, f"*.{format}")),
+        self.glob(posixpath.join(path, f"*.{format}")),
         filesystem=self,
         partitioning=partitioning,
         schema=schema,
@@ -435,7 +439,7 @@ def pyarrow_parquet_dataset(
     **kwargs,
 ) -> pds.FileSystemDataset:
     return pds.dataset(
-        os.path.join(path, "_metadata"),
+        posixpath.join(path, "_metadata"),
         filesystem=self,
         partitioning=partitioning,
         schema=schema,
@@ -586,7 +590,9 @@ def _json_to_parquet(
         data = data.sort(sort_by)
 
     if ".parquet" not in dst:
-        dst = os.path.join(dst, f"{os.path.basename(src).replace('.json', '.parquet')}")
+        dst = posixpath.join(
+            dst, f"{posixpath.basename(src).replace('.json', '.parquet')}"
+        )
 
     self.write_parquet(data, dst, **kwargs)
 
@@ -612,7 +618,9 @@ def _csv_to_parquet(
         data = data.sort(sort_by)
 
     if ".parquet" not in dst:
-        dst = os.path.join(dst, f"{os.path.basename(src).replace('.csv', '.parquet')})")
+        dst = posixpath.join(
+            dst, f"{posixpath.basename(src).replace('.csv', '.parquet')})"
+        )
 
     self.write_parquet(data, dst, **kwargs)
 
@@ -630,12 +638,12 @@ def json_to_parquet(
     **kwargs,
 ):
     if sync:
-        src_files = self.glob(os.path.join(src, "*.json"))
-        dst_files = self.glob(os.path.join(dst, "*.parquet"))
+        src_files = self.glob(posixpath.join(src, "*.json"))
+        dst_files = self.glob(posixpath.join(dst, "*.parquet"))
         new_src_files = get_new_file_names(src_files, dst_files)
 
     else:
-        new_src_files = self.glob(os.path.join(src, "*.json"))
+        new_src_files = self.glob(posixpath.join(src, "*.json"))
 
     kwargs.pop("backend", None)
     if len(new_src_files) == 1:
@@ -667,12 +675,12 @@ def csv_to_parquet(
     **kwargs,
 ):
     if sync:
-        src_files = self.glob(os.path.join(src, "*.csv"))
-        dst_files = self.glob(os.path.join(dst, "*.parquet"))
+        src_files = self.glob(posixpath.join(src, "*.csv"))
+        dst_files = self.glob(posixpath.join(dst, "*.parquet"))
         new_src_files = get_new_file_names(src_files, dst_files)
 
     else:
-        new_src_files = self.glob(os.path.join(src, "*.csv"))
+        new_src_files = self.glob(posixpath.join(src, "*.csv"))
 
     kwargs.pop("backend", None)
     if len(new_src_files) == 1:
@@ -709,22 +717,22 @@ def ls(
             path = path.rstrip("*").rstrip("/")
             if self.exists(path):
                 if not recursive:
-                    path = self.glob(os.path.join(path, "*"))
+                    path = self.glob(posixpath.join(path, "*"))
                 else:
                     if maxdepth is not None:
-                        path = self.glob(os.path.join(path, *(["*"] * maxdepth)))
+                        path = self.glob(posixpath.join(path, *(["*"] * maxdepth)))
                     else:
-                        path = self.glob(os.path.join(path, "**"))
+                        path = self.glob(posixpath.join(path, "**"))
             else:
                 path = self.glob(path)
 
     if files_only:
-        files = [f for f in path if "." in os.path.basename(f)]
+        files = [f for f in path if "." in posixpath.basename(f)]
         files += [f for f in sorted(set(path) - set(files)) if self.isfile(f)]
         return files
 
     if dirs_only:
-        dirs = [f for f in path if "." not in os.path.basename(f)]
+        dirs = [f for f in path if "." not in posixpath.basename(f)]
         dirs += [f for f in sorted(set(path) - set(dirs)) if self.isdir(f)]
         return dirs
 
@@ -740,11 +748,11 @@ def sync_folder(
     if len(src) == 0:
         return
 
-    src_names = [os.path.basename(f) for f in src_]
-    dst_names = [os.path.basename(f) for f in dst_]
+    src_names = [posixpath.basename(f) for f in src_]
+    dst_names = [posixpath.basename(f) for f in dst_]
 
     new_src = [
-        os.path.join(os.path.dirname(src[0]), f)
+        posixpath.join(posixpath.dirname(src[0]), f)
         for f in sorted(set(src_names) - set(dst_names))
     ]
 
@@ -885,13 +893,13 @@ def FileSystem(
 
     if bucket is not None:
         if protocol in ["file", "local"]:
-            bucket = os.path.abspath(bucket)
+            bucket = posixpath.abspath(bucket)
 
         fs = DirFileSystem(path=bucket, fs=fs)
 
     if cached:
         if "~" in cache_storage:
-            cache_storage = os.path.expanduser(cache_storage)
+            cache_storage = posixpath.expanduser(cache_storage)
 
         return MonitoredSimpleCacheFileSystem(
             cache_storage=cache_storage,
@@ -946,7 +954,7 @@ def PyArrowFileSystem(
 
     if bucket is not None:
         if protocol in ["file", "local", "None"]:
-            bucket = os.path.abspath(bucket)
+            bucket = posixpath.abspath(bucket)
 
         fs = pfs.SubTreeFileSystem(base_fs=fs, base_path=bucket)
 

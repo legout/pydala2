@@ -1,4 +1,4 @@
-import os
+import posixpath
 
 import pyarrow.fs as pfs
 import pyarrow.parquet as pq
@@ -30,7 +30,7 @@ def collect_parquet_metadata(
 
     def get_metadata(f, base_path, filesystem):
         if base_path is not None:
-            path = os.path.join(base_path, f)
+            path = posixpath.join(base_path, f)
         else:
             path = f
         return {f: pq.read_metadata(path, filesystem=filesystem)}

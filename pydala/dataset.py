@@ -1,5 +1,5 @@
 import datetime as dt
-import os
+import posixpath
 import re
 import tempfile
 import typing as t
@@ -49,7 +49,7 @@ class BaseDataset:
             cache_storage = fs_kwargs.pop(
                 "cache_storage", tempfile.mkdtemp(prefix="pydala2_")
             )
-            # cache_storage = os.path.join(cache_storage, path)
+            # cache_storage = posixpath.join(cache_storage, path)
         else:
             cache_storage = None
         self._filesystem = FileSystem(
@@ -63,7 +63,7 @@ class BaseDataset:
         self._makedirs()
 
         if name is None:
-            self.name = os.path.basename(path)
+            self.name = posixpath.basename(path)
         else:
             self.name = name
 
@@ -125,7 +125,9 @@ class BaseDataset:
         self._files = [
             fn.replace(self._path, "").lstrip("/")
             for fn in sorted(
-                self._filesystem.glob(os.path.join(self._path, f"**/*.{self._format}"))
+                self._filesystem.glob(
+                    posixpath.join(self._path, f"**/*.{self._format}")
+                )
             )
         ]
 
@@ -136,8 +138,8 @@ class BaseDataset:
             self._filesystem.mkdirs(self._path)
         except Exception as e:
             _ = e
-            self._filesystem.touch(os.path.join(self._path, "tmp.delete"))
-            self._filesystem.rm(os.path.join(self._path, "tmp.delete"))
+            self._filesystem.touch(posixpath.join(self._path, "tmp.delete"))
+            self._filesystem.rm(posixpath.join(self._path, "tmp.delete"))
 
     @property
     def files(self) -> list:
@@ -319,7 +321,7 @@ class BaseDataset:
         """
 
         if self._path not in files[0]:
-            files = [os.path.join(self._path, fn) for fn in files]
+            files = [posixpath.join(self._path, fn) for fn in files]
         self._filesystem.rm(files, recursive=True)
         # self.load(reload=True)
 
@@ -743,7 +745,7 @@ class BaseDataset:
                 metadata.extend(metadata_)
 
         if mode == "overwrite":
-            del_files = [os.path.join(self._path, fn) for fn in self.files]
+            del_files = [posixpath.join(self._path, fn) for fn in self.files]
             self.delete_files(del_files)
 
         self.clear_cache()
@@ -928,7 +930,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
 
         return PydalaTable(
             result=pds.dataset(
-                [os.path.join(self.path, fn) for fn in self.scan_files],
+                [posixpath.join(self.path, fn) for fn in self.scan_files],
                 filesystem=self._filesystem,
                 format=self._format,
                 partitioning=self._partitioning,

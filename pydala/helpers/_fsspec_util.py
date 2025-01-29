@@ -7,6 +7,7 @@
 
 import inspect
 import os
+import posixpath
 from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
@@ -26,7 +27,9 @@ class FileNameCacheMapper(AbstractCacheMapper):
         self.directory = directory
 
     def __call__(self, path: str) -> str:
-        os.makedirs(os.path.dirname(os.path.join(self.directory, path)), exist_ok=True)
+        os.makedirs(
+            posixpath.dirname(posixpath.join(self.directory, path)), exist_ok=True
+        )
         return path
 
 
@@ -91,7 +94,7 @@ def get_friendly_disk_usage(storage: str) -> str:
 
 class MonitoredSimpleCacheFileSystem(SimpleCacheFileSystem):
     def __init__(self, **kwargs):
-        kwargs["cache_storage"] = os.path.join(
+        kwargs["cache_storage"] = posixpath.join(
             kwargs.get("cache_storage"), kwargs.get("fs").protocol[0]
         )
         super().__init__(**kwargs)
@@ -101,8 +104,8 @@ class MonitoredSimpleCacheFileSystem(SimpleCacheFileSystem):
         self._check_cache()
         cache_path = self._mapper(path)
         for storage in self.storage:
-            fn = os.path.join(storage, cache_path)
-            if os.path.exists(fn):
+            fn = posixpath.join(storage, cache_path)
+            if posixpath.exists(fn):
                 return fn
             logger.info(f"Downloading {self.protocol[0]}://{path}")
 
@@ -114,7 +117,7 @@ class MonitoredSimpleCacheFileSystem(SimpleCacheFileSystem):
         if cached_file is None:
             return self.fs.size(path)
         else:
-            return os.path.getsize(cached_file)
+            return posixpath.getsize(cached_file)
 
     def __getattribute__(self, item):
         if item in {

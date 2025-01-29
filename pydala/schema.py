@@ -1,4 +1,4 @@
-import os
+import posixpath
 
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -511,8 +511,10 @@ def repair_schema(
             verbose=verbose,
         )
     if base_path is not None:
-        files = [os.path.join(base_path, f) for f in files]
-        file_schemas = {os.path.join(base_path, f): s for f, s in file_schemas.items()}
+        files = [posixpath.join(base_path, f) for f in files]
+        file_schemas = {
+            posixpath.join(base_path, f): s for f, s in file_schemas.items()
+        }
 
     if schema is None:
         try:
@@ -583,7 +585,7 @@ def collect_file_schemas(
         dict[str, pa.Schema]: Pyarrow schemas of the given files.
     """
     if base_path is not None:
-        files = [os.path.join(base_path, f) for f in files]
+        files = [posixpath.join(base_path, f) for f in files]
 
     def get_schema(f, filesystem):
         return {f: pq.read_schema(f, filesystem=filesystem)}

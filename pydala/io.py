@@ -1,5 +1,5 @@
 import datetime as dt
-import os
+import posixpath
 import time
 import uuid
 
@@ -8,6 +8,7 @@ import pandas as pd
 import polars.selectors as cs
 import pyarrow as pa
 import pyarrow.dataset as pds
+
 # import pyarrow.dataset as pds
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
@@ -17,8 +18,7 @@ from loguru import logger
 from .filesystem import clear_cache
 from .helpers.datetime import get_timestamp_column
 from .helpers.polars import pl
-from .schema import (convert_large_types_to_normal, convert_timestamp,
-                     replace_schema)
+from .schema import convert_large_types_to_normal, convert_timestamp, replace_schema
 from .table import PydalaTable
 
 
@@ -44,9 +44,9 @@ def write_table(
     Returns:
         tuple[str, pq.FileMetaData]: A tuple containing the file path and the metadata of the written Parquet file.
     """
-    if not filesystem.exists(os.path.dirname(path)):
+    if not filesystem.exists(posixpath.dirname(path)):
         try:
-            filesystem.makedirs(os.path.dirname(path), exist_ok=True)
+            filesystem.makedirs(posixpath.dirname(path), exist_ok=True)
         except Exception:
             pass
 
