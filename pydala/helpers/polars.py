@@ -79,7 +79,7 @@ def _opt_dtype(
                 if s.str.contains(r"\.").any() | s.str.contains("NaN").any():
                     s = s.cast(pl.Float64(), strict=True)
                     if shrink_dtype:
-                        if s.min() >= -16777216 and s.max <= 16777216:
+                        if s.min() >= -16777216 and s.max() <= 16777216:
                             s = s.cast(pl.Float32(), strict=True)
                 else:
                     s = s.cast(pl.Int64(), strict=True)
@@ -126,7 +126,7 @@ def _opt_dtype(
     else:
         if shrink_dtype:
             if s.dtype == pl.Float64():
-                if s.min() >= -16777216 and s.max <= 16777216:
+                if s.min() >= -16777216 and s.max() <= 16777216:
                     s = s.cast(pl.Float32(), strict=True)
             else:
                 s = s.shrink_dtype()
