@@ -139,9 +139,10 @@ def opt_dtype(
     exclude: str | list[str] | None = None,
     strict: bool = True,
     include: str | list[str] | None = None,
+    shrink_dtype: bool = True,
 ) -> pl.DataFrame:
-    _opt_dtype_strict = partial(_opt_dtype, strict=strict)
-    _opt_dtype_not_strict = partial(_opt_dtype, strict=False)
+    _opt_dtype_strict = partial(_opt_dtype, strict=strict, shrink_dtype=shrink_dtype)
+    _opt_dtype_not_strict = partial(_opt_dtype, strict=False, shrink_dtype=shrink_dtype)
     if include is not None:
         if isinstance(include, str):
             include = [include]
