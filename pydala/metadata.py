@@ -571,7 +571,8 @@ class ParquetDatasetMetadata:
         )
 
         # update metadata file
-        # self._update_metadata(**kwargs)
+        if not self.has_metadata_file:
+            self._update_metadata(**kwargs)
 
     def replace_schema(self, schema: pa.Schema, **kwargs) -> None:
         """
