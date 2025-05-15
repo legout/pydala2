@@ -866,6 +866,8 @@ def FileSystem(
 ) -> AbstractFileSystem:
     if protocol is None:
         protocol = "file"
+        if bucket is None:
+            bucket = "."
 
     if all([fs, profile, key, endpoint_url, secret, token, protocol]):
         fs = filesystem("file", use_listings_cache=False)
