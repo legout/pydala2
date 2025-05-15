@@ -693,12 +693,13 @@ class BaseDataset:
         ):
             data = [data]
         metadata = []
+        schema = self.metadata.schema.to_arrow_schema() if self.metadata else None
         for data_ in data:
             writer = Writer(
                 data=data_,
                 path=self._path,
                 filesystem=self._filesystem,
-                schema=self.schema if not alter_schema else None,
+                schema=schema if not alter_schema else None,
             )
             if writer.shape[0] == 0:
                 continue
@@ -708,12 +709,6 @@ class BaseDataset:
             if unique:
                 writer.unique(columns=unique)
 
-            if partition_by:
-                writer.add_datepart_columns(
-                    columns=partition_by,
-                    timestamp_column=self._timestamp_column,
-                )
-
             writer.cast_schema(
                 # use_large_string=use_large_string,
                 ts_unit=ts_unit,
@@ -721,6 +716,12 @@ class BaseDataset:
                 remove_tz=remove_tz,
                 alter_schema=alter_schema,
             )
+
+            if partition_by:
+                writer.add_datepart_columns(
+                    columns=partition_by,
+                    timestamp_column=self._timestamp_column,
+                )
 
             if mode == "delta" and self.is_loaded:
                 writer._to_polars()
@@ -1043,6 +1044,10 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
 
         if update_metadata:
             for md in metadata:
+                if self.metadata is not None:
+                    if md.schema != self.metadata.schema:
+                        continue
+
                 f = list(md.keys())[0].replace(self._path, "").lstrip("/")
                 metadata_ = list(md.values())[0]
                 metadata_.set_file_path(f)

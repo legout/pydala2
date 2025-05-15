@@ -283,6 +283,8 @@ class Writer:
         self.data = replace_schema(
             self.data,
             self.schema,
+            # ts_unit=None,
+            # tz=tz
             alter_schema=alter_schema,
         )
         self.schema = self.data.schema
