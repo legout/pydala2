@@ -864,10 +864,10 @@ def FileSystem(
     same_names: bool = False,
     **kwargs,
 ) -> AbstractFileSystem:
-    if protocol is None:
+    if protocol is None and fs is None:
         protocol = "file"
-        if bucket is None:
-            bucket = "."
+        # if bucket is None:
+        #    bucket = "."
 
     if all([fs, profile, key, endpoint_url, secret, token, protocol]):
         fs = filesystem("file", use_listings_cache=False)

@@ -153,7 +153,15 @@ class Writer:
 
         """
         self._to_arrow()
+
         self.schema = self.schema or self.data.schema
+        self.schema = pa.schema(
+            [
+                (field.name, field.type)
+                for field in self.schema
+                if field.name in self.data.column_names
+            ]
+        )
 
     def sort_data(self, by: str | list[str] | list[tuple[str, str]] | None = None):
         """

@@ -693,7 +693,11 @@ class BaseDataset:
         ):
             data = [data]
         metadata = []
-        schema = self.metadata.schema.to_arrow_schema() if self.metadata else None
+        if not partition_by:
+            schema = self.metadata.schema.to_arrow_schema() if self.metadata else None
+        else:
+            schema = self.schema if self.schema else None
+
         for data_ in data:
             writer = Writer(
                 data=data_,
@@ -1044,12 +1048,12 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
 
         if update_metadata:
             for md in metadata:
+                metadata_ = list(md.values())[0]
                 if self.metadata is not None:
-                    if md.schema != self.metadata.schema:
+                    if metadata_.schema != self.metadata.schema:
                         continue
 
                 f = list(md.keys())[0].replace(self._path, "").lstrip("/")
-                metadata_ = list(md.values())[0]
                 metadata_.set_file_path(f)
                 if self._file_metadata is None:
                     self._file_metadata = {f: metadata_}
