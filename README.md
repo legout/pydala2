@@ -124,7 +124,9 @@ Choose compaction strategy based on your access patterns
 Regular metadata updates ensure optimal query performance
 
 ## 📚 Documentation
-For advanced usage and complete API documentation, visit our docs.
+There is a comprehensive [tutorial](https://code2tutorial.com/tutorial/a988dfd0-820d-471e-a802-14feedba5813/index.md) available to help you get started with PyDala2, covering all features and functionalities in detail.
+
+*Note: This is generated with [Code2Tutorial](https://code2tutorial.com/).*
 
 ## 🤝 Contributing
 Contributions welcome! See our contribution guidelines.
