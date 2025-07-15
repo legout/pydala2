@@ -1209,7 +1209,7 @@ class Optimize(ParquetDataset):
         # if isinstance(partition, str):
         #    partition = [partition]
 
-        filter_ = " AND ".join([f"{n}='{v}'" for n, v in partition.items()])
+        filter_ = " AND ".join([f"'{n}'='{v}'" for n, v in partition.items()])
 
         scan = self.scan(filter_)
         # if len(self.scan_files) == 1:
@@ -1291,7 +1291,7 @@ class Optimize(ParquetDataset):
         unique: bool = False,
         **kwargs,
     ):
-        filter_ = f"{timestamp_column} >= '{start_date}' AND {timestamp_column} < '{end_date}'"
+        filter_ = f"'{timestamp_column}'>= '{start_date}' AND {timestamp_column} < '{end_date}'"
 
         scan = self.scan(filter_)
         if len(self.scan_files) == 1:
