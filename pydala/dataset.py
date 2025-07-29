@@ -1209,7 +1209,7 @@ class Optimize(ParquetDataset):
         # if isinstance(partition, str):
         #    partition = [partition]
 
-        filter_ = " AND ".join([f"'{n}'='{v}'" for n, v in partition.items()])
+        filter_ = " AND ".join([f"{n}='{v}'" for n, v in partition.items()])
 
         scan = self.scan(filter_)
         # if len(self.scan_files) == 1:
