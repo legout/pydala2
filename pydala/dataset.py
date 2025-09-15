@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 from .filesystem import FileSystem, clear_cache
 from .helpers.datetime import get_timestamp_column
-from .helpers.misc import sql2pyarrow_filter
+from .helpers.sql import sql2pyarrow_filter
 from .helpers.security import (
     escape_sql_identifier,
     escape_sql_literal,

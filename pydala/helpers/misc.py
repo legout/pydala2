@@ -1,19 +1,20 @@
-from fsspec_utils.utils.misc import *
+from fsspec_utils.utils.misc import run_parallel
+from fsspec import AbstractFileSystem
 # import posixpath
 # import re
 # from typing import Any
 
-# import pyarrow as pa
+import pyarrow as pa
 # import pyarrow.compute as pc
 # import pyarrow.parquet as pq
-# import tqdm
+import tqdm
 # from fsspec import AbstractFileSystem
-# from fsspec import filesystem as fsspec_filesystem
-# from joblib import Parallel, delayed
+from fsspec import filesystem as fsspec_filesystem
+from joblib import Parallel, delayed
 
 # # from ..schema import convert_large_types_to_normal
 # from .datetime import timestamp_from_string
-# from .polars import pl
+from .polars import pl
 
 # # Compile regex patterns once for efficiency
 # SPLIT_PATTERN = re.compile(
@@ -372,244 +373,244 @@ from fsspec_utils.utils.misc import *
 #     return expr
 
 
-# def read_table(
-#     path: str,
-#     schema: pa.Schema | None = None,
-#     filesystem: AbstractFileSystem | None = None,
-#     partitioning: str | list[str] | None = None,
-# ) -> pa.Table:
-#     """Loads the data for the given file path into a pyarrow table.
+def read_table(
+    path: str,
+    schema: pa.Schema | None = None,
+    filesystem: AbstractFileSystem | None = None,
+    partitioning: str | list[str] | None = None,
+) -> pa.Table:
+    """Loads the data for the given file path into a pyarrow table.
 
-#     Args:
-#         path (str): File path.
-#         schema (pa.Schema | None, optional): Pyarrow schema. Defaults to None.
-#         filesystem (AbstractFileSystem | None, optional): Filesystem. Defaults to None.
-#         partitioning (str | list[str] | None, optional): Partitioning of the file. Could be 'hive' for
-#             hive style partitioning or a list of column names. Defaults to None.
+    Args:
+        path (str): File path.
+        schema (pa.Schema | None, optional): Pyarrow schema. Defaults to None.
+        filesystem (AbstractFileSystem | None, optional): Filesystem. Defaults to None.
+        partitioning (str | list[str] | None, optional): Partitioning of the file. Could be 'hive' for
+            hive style partitioning or a list of column names. Defaults to None.
 
-#     Returns:
-#         pa.Table: Pyarrow table.
-#     """
-#     # sourcery skip: avoid-builtin-shadow
-#     if filesystem is None:
-#         filesystem = fsspec_filesystem("file")
+    Returns:
+        pa.Table: Pyarrow table.
+    """
+    # sourcery skip: avoid-builtin-shadow
+    if filesystem is None:
+        filesystem = fsspec_filesystem("file")
 
-#     filesystem.invalidate_cache()
+    filesystem.invalidate_cache()
 
-#     table = pq.read_table(pa.BufferReader(filesystem.read_bytes(path)), schema=schema)
+    table = pq.read_table(pa.BufferReader(filesystem.read_bytes(path)), schema=schema)
 
-#     if partitioning is not None:
-#         partitions = get_partitions_from_path(path, partitioning=partitioning)
+    if partitioning is not None:
+        partitions = get_partitions_from_path(path, partitioning=partitioning)
 
-#         for key, values in partitions:
-#             if key in table.column_names:
-#                 table = table.drop(key)
-#             table = table.append_column(
-#                 field_=key, column=pa.array([values] * len(table))
-#             )
-#     if schema is not None:
-#         return table.cast(schema)
+        for key, values in partitions:
+            if key in table.column_names:
+                table = table.drop(key)
+            table = table.append_column(
+                field_=key, column=pa.array([values] * len(table))
+            )
+    if schema is not None:
+        return table.cast(schema)
 
-#     return table
-
-
-# def run_parallel(
-#     func: callable,
-#     func_params: list[any],
-#     *args,
-#     n_jobs: int = -1,
-#     backend: str = "threading",
-#     verbose: bool = True,
-#     **kwargs,
-# ) -> list[any]:
-#     """Runs a function for a list of parameters in parallel.
-
-#     Args:
-#         func (Callable): function to run in Parallelallel.
-#         func_params (list[any]): parameters for the function
-#         n_jobs (int, optional): Number of joblib workers. Defaults to -1.
-#         backend (str, optional): joblib backend. Valid options are
-#         `loky`,`threading`, `mutliprocessing` or `sequential`.  Defaults to "threading".
-
-#     Returns:
-#         list[any]: Function output.
-#     """
-#     if verbose:
-#         return Parallel(n_jobs=n_jobs, backend=backend)(
-#             delayed(func)(fp, *args, **kwargs) for fp in tqdm.tqdm(func_params)
-#         )
-
-#     else:
-#         return Parallel(n_jobs=n_jobs, backend=backend)(
-#             delayed(func)(fp, *args, **kwargs) for fp in func_params
-#         )
+    return table
 
 
-# def get_partitions_from_path(
-#     path: str, partitioning: str | list[str] | None = None
-# ) -> list[tuple]:
-#     """Get the dataset partitions from the file path.
+def run_parallel(
+    func: callable,
+    func_params: list[any],
+    *args,
+    n_jobs: int = -1,
+    backend: str = "threading",
+    verbose: bool = True,
+    **kwargs,
+) -> list[any]:
+    """Runs a function for a list of parameters in parallel.
 
-#     Args:
-#         path (str): File path.
-#         partitioning (str | list[str] | None, optional): Partitioning type. Defaults to None.
+    Args:
+        func (Callable): function to run in Parallelallel.
+        func_params (list[any]): parameters for the function
+        n_jobs (int, optional): Number of joblib workers. Defaults to -1.
+        backend (str, optional): joblib backend. Valid options are
+        `loky`,`threading`, `mutliprocessing` or `sequential`.  Defaults to "threading".
 
-#     Returns:
-#         list[tuple]: Partitions.
-#     """
-#     if "." in path:
-#         path = posixpath.dirname(path)
+    Returns:
+        list[any]: Function output.
+    """
+    if verbose:
+        return Parallel(n_jobs=n_jobs, backend=backend)(
+            delayed(func)(fp, *args, **kwargs) for fp in tqdm.tqdm(func_params)
+        )
 
-#     parts = path.split("/")
-
-#     if isinstance(partitioning, str):
-#         if partitioning == "hive":
-#             return [tuple(p.split("=")) for p in parts if "=" in p]
-
-#         else:
-#             return [
-#                 (partitioning, parts[0]),
-#             ]
-#     else:
-#         return list(zip(partitioning, parts[-len(partitioning) :]))
-
-
-# def humanize_size(size: int, unit="MB") -> float:
-#     "Human-readable size"
-#     if unit.lower() == "b":
-#         return round(size, 1)
-#     elif unit.lower() == "kb":
-#         return round(size / 1024, 1)
-#     elif unit.lower() == "mb":
-#         return round(size / 1024**2, 1)
-#     elif unit.lower() == "gb":
-#         return round(size / 1024**3, 1)
-#     elif unit.lower() == "tb":
-#         return round(size / 1024**4, 1)
-#     elif unit.lower() == "pb":
-#         return round(size / 1024**5, 1)
+    else:
+        return Parallel(n_jobs=n_jobs, backend=backend)(
+            delayed(func)(fp, *args, **kwargs) for fp in func_params
+        )
 
 
-# def humanized_size_to_bytes(size: str) -> float:
-#     "Human-readable size t bytes"
-#     unit = re.sub("[0-9 ]", "", size).lower()
-#     size = float(re.sub("[a-zA-Z ]", "", size))
-#     if unit == "b":
-#         return int(size)
-#     elif unit == "kb":
-#         return int(size * 1024)
-#     elif unit == "mb":
-#         return int(size * 1024**2)
-#     elif unit == "gb":
-#         return int(size * 1024**3)
-#     elif unit == "tb":
-#         return int(size * 1024**4)
-#     elif unit == "pb":
-#         return int(size * 1024**5)
+def get_partitions_from_path(
+    path: str, partitioning: str | list[str] | None = None
+) -> list[tuple]:
+    """Get the dataset partitions from the file path.
+
+    Args:
+        path (str): File path.
+        partitioning (str | list[str] | None, optional): Partitioning type. Defaults to None.
+
+    Returns:
+        list[tuple]: Partitions.
+    """
+    if "." in path:
+        path = posixpath.dirname(path)
+
+    parts = path.split("/")
+
+    if isinstance(partitioning, str):
+        if partitioning == "hive":
+            return [tuple(p.split("=")) for p in parts if "=" in p]
+
+        else:
+            return [
+                (partitioning, parts[0]),
+            ]
+    else:
+        return list(zip(partitioning, parts[-len(partitioning) :]))
 
 
-# def getattr_rec(obj, attr_str):
-#     """
-#     Recursively retrieves an attribute from an object based on a dot-separated string.
-
-#     Args:
-#         obj: The object from which to retrieve the attribute.
-#         attr_str: A dot-separated string representing the attribute to retrieve.
-
-#     Returns:
-#         The value of the attribute.
-
-#     Raises:
-#         AttributeError: If the attribute does not exist.
-#     """
-#     attrs = attr_str.split(".")
-#     for attr in attrs:
-#         obj = getattr(obj, attr)
-#     return obj
+def humanize_size(size: int, unit="MB") -> float:
+    "Human-readable size"
+    if unit.lower() == "b":
+        return round(size, 1)
+    elif unit.lower() == "kb":
+        return round(size / 1024, 1)
+    elif unit.lower() == "mb":
+        return round(size / 1024**2, 1)
+    elif unit.lower() == "gb":
+        return round(size / 1024**3, 1)
+    elif unit.lower() == "tb":
+        return round(size / 1024**4, 1)
+    elif unit.lower() == "pb":
+        return round(size / 1024**5, 1)
 
 
-# def setattr_rec(obj, attr_str, value):
-#     """
-#     Recursively sets the value of an attribute in an object.
-
-#     Args:
-#         obj (object): The object to set the attribute in.
-#         attr_str (str): The attribute string in dot notation (e.g., "attr1.attr2.attr3").
-#         value: The value to set the attribute to.
-
-#     Returns:
-#         None
-#     """
-#     attrs = attr_str.split(".")
-#     for attr in attrs[:-1]:
-#         obj = getattr(obj, attr)
-#     setattr(obj, attrs[-1], value)
-
-
-# def delattr_rec(obj, attr_str):
-#     """
-#     Recursively deletes an attribute from an object.
-
-#     Args:
-#         obj: The object from which to delete the attribute.
-#         attr_str: A string representing the attribute to be deleted.
-#                   The attribute can be nested using dot notation (e.g., 'attr1.attr2.attr3').
-
-#     Raises:
-#         AttributeError: If the attribute does not exist.
-
-#     Example:
-#         obj = SomeObject()
-#         attr_str = 'attr1.attr2.attr3'
-#         delattr_rec(obj, attr_str)
-#     """
-#     attrs = attr_str.split(".")
-#     for attr in attrs[:-1]:
-#         obj = getattr(obj, attr)
-#     delattr(obj, attrs[-1])
+def humanized_size_to_bytes(size: str) -> float:
+    "Human-readable size t bytes"
+    unit = re.sub("[0-9 ]", "", size).lower()
+    size = float(re.sub("[a-zA-Z ]", "", size))
+    if unit == "b":
+        return int(size)
+    elif unit == "kb":
+        return int(size * 1024)
+    elif unit == "mb":
+        return int(size * 1024**2)
+    elif unit == "gb":
+        return int(size * 1024**3)
+    elif unit == "tb":
+        return int(size * 1024**4)
+    elif unit == "pb":
+        return int(size * 1024**5)
 
 
-# def get_nested_keys(d, parent_key=""):
-#     """
-#     Recursively retrieves all the nested keys from a dictionary.
+def getattr_rec(obj, attr_str):
+    """
+    Recursively retrieves an attribute from an object based on a dot-separated string.
 
-#     Args:
-#         d (dict): The dictionary to retrieve the keys from.
-#         parent_key (str, optional): The parent key to prepend to the nested keys. Defaults to "".
+    Args:
+        obj: The object from which to retrieve the attribute.
+        attr_str: A dot-separated string representing the attribute to retrieve.
 
-#     Returns:
-#         list: A list of all the nested keys in the dictionary.
-#     """
-#     keys = []
-#     for k, v in d.items():
-#         new_key = f"{parent_key}.{k}" if parent_key else k
-#         keys.append(new_key)
-#         if isinstance(v, dict):
-#             keys.extend(get_nested_keys(v, new_key))
-#     return keys
+    Returns:
+        The value of the attribute.
+
+    Raises:
+        AttributeError: If the attribute does not exist.
+    """
+    attrs = attr_str.split(".")
+    for attr in attrs:
+        obj = getattr(obj, attr)
+    return obj
 
 
-# def unify_schemas_pl(schemas: list[pa.Schema]) -> pl.Schema:
-#     """
-#     Unifies a list of Pyarrow schemas into a single schema.
+def setattr_rec(obj, attr_str, value):
+    """
+    Recursively sets the value of an attribute in an object.
 
-#     Args:
-#         schemas (list[pl.Schema]): List of Polars schemas.
+    Args:
+        obj (object): The object to set the attribute in.
+        attr_str (str): The attribute string in dot notation (e.g., "attr1.attr2.attr3").
+        value: The value to set the attribute to.
 
-#     Returns:
-#         pa.Schema: Unified schema.
-#     """
-#     schema = (
-#         pl.concat(
-#             [
-#                 # pl.from_arrow(pa.Table.from_pylist([], schema=schema))
-#                 pl.from_arrow(schema.empty_table())
-#                 for schema in schemas
-#             ],
-#             how="diagonal_relaxed",
-#         )
-#         .to_arrow()
-#         .schema
-#     )
+    Returns:
+        None
+    """
+    attrs = attr_str.split(".")
+    for attr in attrs[:-1]:
+        obj = getattr(obj, attr)
+    setattr(obj, attrs[-1], value)
 
-#     return schema
+
+def delattr_rec(obj, attr_str):
+    """
+    Recursively deletes an attribute from an object.
+
+    Args:
+        obj: The object from which to delete the attribute.
+        attr_str: A string representing the attribute to be deleted.
+                  The attribute can be nested using dot notation (e.g., 'attr1.attr2.attr3').
+
+    Raises:
+        AttributeError: If the attribute does not exist.
+
+    Example:
+        obj = SomeObject()
+        attr_str = 'attr1.attr2.attr3'
+        delattr_rec(obj, attr_str)
+    """
+    attrs = attr_str.split(".")
+    for attr in attrs[:-1]:
+        obj = getattr(obj, attr)
+    delattr(obj, attrs[-1])
+
+
+def get_nested_keys(d, parent_key=""):
+    """
+    Recursively retrieves all the nested keys from a dictionary.
+
+    Args:
+        d (dict): The dictionary to retrieve the keys from.
+        parent_key (str, optional): The parent key to prepend to the nested keys. Defaults to "".
+
+    Returns:
+        list: A list of all the nested keys in the dictionary.
+    """
+    keys = []
+    for k, v in d.items():
+        new_key = f"{parent_key}.{k}" if parent_key else k
+        keys.append(new_key)
+        if isinstance(v, dict):
+            keys.extend(get_nested_keys(v, new_key))
+    return keys
+
+
+def unify_schemas_pl(schemas: list[pa.Schema]) -> pl.Schema:
+    """
+    Unifies a list of Pyarrow schemas into a single schema.
+
+    Args:
+        schemas (list[pl.Schema]): List of Polars schemas.
+
+    Returns:
+        pa.Schema: Unified schema.
+    """
+    schema = (
+        pl.concat(
+            [
+                # pl.from_arrow(pa.Table.from_pylist([], schema=schema))
+                pl.from_arrow(schema.empty_table())
+                for schema in schemas
+            ],
+            how="diagonal_relaxed",
+        )
+        .to_arrow()
+        .schema
+    )
+
+    return schema
