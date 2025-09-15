@@ -20,6 +20,7 @@ from .filesystem import FileSystem, clear_cache
 
 # from .helpers.metadata import collect_parquet_metadata  # , remove_from_metadata
 from .helpers.misc import get_partitions_from_path, run_parallel, unify_schemas_pl
+import brotli
 from .schema import (
     convert_large_types_to_normal,  # unify_schemas
     repair_schema,
@@ -247,8 +248,16 @@ class ParquetDatasetMetadata:
         if self.has_file_metadata_file:
             # First try to open as text (JSON)
             try:
-                with self._filesystem.open(self._file_metadata_file, "r") as f:
-                    data = json.load(f)
+                with self._filesystem.open(self._file_metadata_file, "rb") as f:
+                    compressed_data = f.read()
+                    try:
+                        # Try to decompress with brotli first
+                        decompressed_data = brotli.decompress(compressed_data)
+                        data = json.loads(decompressed_data.decode('utf-8'))
+                    except (brotli.error, UnicodeDecodeError):
+                        # Fall back to uncompressed JSON
+                        f.seek(0)
+                        data = json.loads(compressed_data.decode('utf-8'))
                     return deserialize_metadata(data)
             except (json.JSONDecodeError, UnicodeDecodeError):
                 # Fall back to binary pickle format for backward compatibility
@@ -350,8 +359,13 @@ class ParquetDatasetMetadata:
         Save file metadata to a specified file.
         """
         # Use JSON format instead of pickle for security
-        with self._filesystem.open(self._file_metadata_file, "w") as f:
-            json.dump(serialize_metadata(self._file_metadata), f, indent=2)
+        # Compress the serialized data using brotli
+        
+        serialized_data = json.dumps(serialize_metadata(self._file_metadata), indent=2)
+        compressed_data = brotli.compress(serialized_data.encode('utf-8'), quality=5)
+        
+        with self._filesystem.open(self._file_metadata_file, "wb") as f:
+            f.write(compressed_data)
 
     def update_file_metadata(
         self, files: list[str] | None = None, verbose: bool = False, **kwargs
