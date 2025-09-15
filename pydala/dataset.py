@@ -1,4 +1,5 @@
 import datetime as dt
+import logging
 import posixpath
 import re
 import tempfile
@@ -13,9 +14,21 @@ import pyarrow.dataset as pds
 import tqdm
 from fsspec import AbstractFileSystem
 
+# Initialize logger
+logger = logging.getLogger(__name__)
+
 from .filesystem import FileSystem, clear_cache
 from .helpers.datetime import get_timestamp_column
 from .helpers.misc import sql2pyarrow_filter
+from .helpers.security import (
+    escape_sql_identifier,
+    escape_sql_literal,
+    validate_partition_name,
+    validate_partition_value,
+    sanitize_filter_expression,
+    validate_path,
+    safe_join,
+)
 from .helpers.polars import pl as _pl
 from .io import Writer
 from .metadata import ParquetDatasetMetadata, PydalaDatasetMetadata
@@ -106,9 +119,11 @@ class BaseDataset:
 
         try:
             self.load()
+        except FileNotFoundError as e:
+            logger.debug(f"Dataset path does not exist yet: {self._path}")
         except Exception as e:
-            _ = e
-            pass
+            logger.warning(f"Failed to load dataset {self._path}: {e}")
+            # Don't raise - allow dataset to be created without files
 
     # @abstactmethod
     def load_files(self) -> None:
@@ -122,13 +137,11 @@ class BaseDataset:
             None
         """
         self.clear_cache()
+        # Safely construct glob pattern
+        glob_pattern = safe_join(self._path, f"**/*.{self._format}")
         self._files = [
             fn.replace(self._path, "").lstrip("/")
-            for fn in sorted(
-                self._filesystem.glob(
-                    posixpath.join(self._path, f"**/*.{self._format}")
-                )
-            )
+            for fn in sorted(self._filesystem.glob(glob_pattern))
         ]
 
     def _makedirs(self):
@@ -136,10 +149,15 @@ class BaseDataset:
             return
         try:
             self._filesystem.mkdirs(self._path)
-        except Exception as e:
-            _ = e
-            self._filesystem.touch(posixpath.join(self._path, "tmp.delete"))
-            self._filesystem.rm(posixpath.join(self._path, "tmp.delete"))
+        except (OSError, PermissionError) as e:
+            logger.warning(f"Failed to create directory {self._path}: {e}")
+            # Try alternative approach
+            try:
+                self._filesystem.touch(posixpath.join(self._path, "tmp.delete"))
+                self._filesystem.rm(posixpath.join(self._path, "tmp.delete"))
+            except Exception as e2:
+                logger.error(f"Alternative directory creation also failed: {e2}")
+                raise
 
     @property
     def files(self) -> list:
@@ -194,7 +212,8 @@ class BaseDataset:
                 tz = self.schema.field(self._timestamp_column).type.tz
                 self._tz = tz
                 if tz is not None:
-                    self.ddb_con.execute(f"SET TimeZone='{tz}'")
+                    # Use parameterized query to prevent SQL injection
+                    self.ddb_con.execute("SET TimeZone=?", [str(tz)])
             else:
                 self._tz = None
 
@@ -891,7 +910,8 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
                 tz = None
             self._tz = tz
             if tz is not None:
-                self.ddb_con.execute(f"SET TimeZone='{tz}'")
+                # Use parameterized query to prevent SQL injection
+                self.ddb_con.execute("SET TimeZone=?", [str(tz)])
         else:
             self._tz = None
 
@@ -1209,7 +1229,19 @@ class Optimize(ParquetDataset):
         # if isinstance(partition, str):
         #    partition = [partition]
 
-        filter_ = " AND ".join([f"{n}='{v}'" for n, v in partition.items()])
+        # Securely build filter expression to prevent SQL injection
+        filter_parts = []
+        for name, value in partition.items():
+            if not validate_partition_name(name):
+                raise ValueError(f"Invalid partition name: {name}")
+            if not validate_partition_value(value):
+                raise ValueError(f"Invalid partition value: {value}")
+            
+            escaped_name = escape_sql_identifier(name)
+            escaped_value = escape_sql_literal(value)
+            filter_parts.append(f"{escaped_name}={escaped_value}")
+        
+        filter_ = " AND ".join(filter_parts)
 
         scan = self.scan(filter_)
         # if len(self.scan_files) == 1:
@@ -1291,13 +1323,34 @@ class Optimize(ParquetDataset):
         unique: bool = False,
         **kwargs,
     ):
-        filter_ = f"'{timestamp_column}'>= '{start_date}' AND {timestamp_column} < '{end_date}'"
-
+        # Securely build timestamp filter to prevent SQL injection
+        if timestamp_column is None:
+            timestamp_column = self._timestamp_column
+            
+        if timestamp_column is None:
+            raise ValueError("No timestamp column specified or found")
+            
+        # Validate timestamp column name
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', timestamp_column):
+            raise ValueError(f"Invalid timestamp column name: {timestamp_column}")
+            
+        # Format dates safely as ISO strings and build filter with proper escaping
+        start_date_str = start_date.isoformat()
+        end_date_str = end_date.isoformat()
+        filter_ = f"{timestamp_column} >= '{start_date_str}' AND {timestamp_column} < '{end_date_str}'"
+        
+        # Sanitize the filter expression
+        filter_ = sanitize_filter_expression(filter_)
+        
         scan = self.scan(filter_)
+        
         if len(self.scan_files) == 1:
+            # Safely escape file path for metadata query
+            file_path = self.scan_files[0].replace(self._path, '').lstrip('/')
+            escaped_file_path = file_path.replace("'", "''")
             date_diff = (
                 self.metadata_table.filter(
-                    f"file_path='{self.scan_files[0].replace(self._path, '').lstrip('/')}'"
+                    f"file_path='{escaped_file_path}'"
                 )
                 .aggregate("max(AE_DATUM.max) - min(AE_DATUM.min)")
                 .fetchone()[0]
@@ -1473,7 +1526,9 @@ class Optimize(ParquetDataset):
         tz: str | None = None,
         **kwargs,
     ):
-        scan = self.scan(f"file_path='{file_path}'")
+        # Safely escape file path to prevent SQL injection
+        escaped_file_path = file_path.replace("'", "''")
+        scan = self.scan(f"file_path='{escaped_file_path}'")
         schema = scan.arrow_dataset.schema
         schema = pa.schema(
             [

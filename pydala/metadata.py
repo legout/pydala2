@@ -1,10 +1,12 @@
 import concurrent.futures
 import copy
+import json
+import pickle  # Only for backward compatibility
 import posixpath
-import pickle
 import re
 import tempfile
 from collections import defaultdict
+from typing import Any
 
 import duckdb
 import pyarrow as pa
@@ -21,6 +23,31 @@ from .schema import (
     convert_large_types_to_normal,  # unify_schemas
     repair_schema,
 )
+
+
+def serialize_metadata(metadata: dict[str, pq.FileMetaData]) -> dict[str, Any]:
+    """Safely serialize metadata to JSON-compatible format."""
+    result = {}
+    for path, meta in metadata.items():
+        # Convert FileMetaData to serializable format
+        result[path] = {
+            "serialized_metadata": meta.serialize(),
+            "num_rows": meta.num_rows,
+            "num_columns": len(meta.schema),
+            "created_by": meta.created_by,
+            "format_version": meta.format_version,
+        }
+    return result
+
+
+def deserialize_metadata(data: dict[str, Any]) -> dict[str, pq.FileMetaData]:
+    """Safely deserialize metadata from JSON-compatible format."""
+    result = {}
+    for path, meta_data in data.items():
+        # Reconstruct FileMetaData from serialized data
+        buf = pa.py_buffer(meta_data["serialized_metadata"])
+        result[path] = pq.read_metadata(buf)
+    return result
 
 
 def collect_parquet_metadata(
@@ -187,8 +214,20 @@ class ParquetDatasetMetadata:
 
     def _read_file_metadata(self) -> dict[str : pq.FileMetaData] | None:
         if self.has_file_metadata_file:
-            with self._filesystem.open(self._file_metadata_file, "rb") as f:
-                return pickle.load(f)
+            # First try to open as text (JSON)
+            try:
+                with self._filesystem.open(self._file_metadata_file, "r") as f:
+                    data = json.load(f)
+                    return deserialize_metadata(data)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                # Fall back to binary pickle format for backward compatibility
+                with self._filesystem.open(self._file_metadata_file, "rb") as f:
+                    logger.warning(
+                        f"Using deprecated pickle format for {self._file_metadata_file}. "
+                        "Please consider migrating to JSON format."
+                    )
+                    # Security note: pickle is insecure, but maintained for backward compatibility
+                    return pickle.load(f)
 
     def _makedirs(self):
         if self._filesystem.exists(self._path):
@@ -279,8 +318,9 @@ class ParquetDatasetMetadata:
         """
         Save file metadata to a specified file.
         """
-        with self._filesystem.open(self._file_metadata_file, "wb") as f:
-            pickle.dump(self._file_metadata, f)
+        # Use JSON format instead of pickle for security
+        with self._filesystem.open(self._file_metadata_file, "w") as f:
+            json.dump(serialize_metadata(self._file_metadata), f, indent=2)
 
     def update_file_metadata(
         self, files: list[str] | None = None, verbose: bool = False, **kwargs
