@@ -3,9 +3,12 @@ import inspect
 import os
 import posixpath
 import threading
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
+from typing import Any, Dict, Optional, Union
 
 import duckdb as ddb
 import orjson
@@ -173,125 +176,134 @@ def get_friendly_disk_usage(storage: str) -> str:
 #############################################################################################################
 
 
-class MonitoredSimpleCacheFileSystem(SimpleCacheFileSystem):
-    def __init__(self, **kwargs):
-        # kwargs["cache_storage"] = posixpath.join(
-        #    kwargs.get("cache_storage"), kwargs.get("fs").protocol[0]
-        # )
-        self._verbose = kwargs.get("verbose", False)
-        super().__init__(**kwargs)
-        self._mapper = FileNameCacheMapper(kwargs.get("cache_storage"))
+class CacheMixin:
+    """Mixin for cache filesystem operations"""
 
-    def _check_file(self, path):
+    def __init__(self, **kwargs):
+        self._verbose = kwargs.get("verbose", False)
+        self.cache_storage = kwargs.get("cache_storage", "~/.tmp")
+        self.fs = kwargs.get("fs")
+        self._check_cache()  # Ensure cache is initialized
+        self._mapper = FileNameCacheMapper(self.cache_storage)
+
+    def _check_file_in_cache(self, path: str) -> Optional[str]:
+        """Check if file exists in cache storage"""
         self._check_cache()
         cache_path = self._mapper(path)
-        for storage in self.storage:
-            fn = posixpath.join(storage, cache_path)
-            if posixpath.exists(fn):
-                return fn
-            if self._verbose:
-                logger.info(f"Downloading {self.protocol[0]}://{path}")
 
-    # def glob(self, path):
-    #    return [self._strip_protocol(path)]
+        for storage in self.storage:
+            cache_file = posixpath.join(storage, cache_path)
+            if posixpath.exists(cache_file):
+                return cache_file
+
+            if self._verbose:
+                logger.info(f"Downloading {getattr(self.fs, 'protocol', ['file'])[0]}://{path}")
+
+        return None
+
+    def get_cached_file_size(self, path: str) -> int:
+        """Get size of cached file"""
+        stripped_path = self._strip_protocol(path)
+        cached_file = self._check_file_in_cache(stripped_path)
+        if cached_file is None:
+            # Check if file exists directly
+            if hasattr(self.fs, 'exists') and self.fs.exists(path):
+                return self.fs.size(path)
+            # For local files, check if path exists
+            elif os.path.exists(stripped_path):
+                return os.path.getsize(stripped_path)
+            else:
+                # Return 0 as fallback
+                return 0
+        else:
+            return os.path.getsize(cached_file)
+
+    def _strip_protocol(self, path: str) -> str:
+        """Strip protocol prefix from path"""
+        protocol = getattr(self.fs, 'protocol', 'file')
+        if isinstance(protocol, (list, tuple)):
+            protocol = protocol[0]
+
+        protocol_map = {
+            's3': 's3://',
+            'file': 'file://',
+            'local': 'local://',
+        }
+        prefix = protocol_map.get(protocol, '')
+
+        if prefix and path.startswith(prefix):
+            return path[len(prefix):]
+        return path
+
+
+class MonitoredSimpleCacheFileSystem(SimpleCacheFileSystem, CacheMixin):
+    """Enhanced cache filesystem with monitoring and validation"""
+
+    def __init__(self, **kwargs):
+        CacheMixin.__init__(self, **kwargs)
+        SimpleCacheFileSystem.__init__(self, **kwargs)
 
     def size(self, path):
-        cached_file = self._check_file(self._strip_protocol(path))
-        if cached_file is None:
-            return self.fs.size(path)
-        else:
-            return posixpath.getsize(cached_file)
+        """Get file size with cache support"""
+        return self.get_cached_file_size(path)
 
-    # def make_dirs(self, path, exist_ok=True):
-    #     if self.fs.exists(path) and :
-    #         return
-
-    #     return self.fs.makedirs(path, exist_ok=exist_ok)
-
+    # Delegate attribute access to wrapped filesystem
     def __getattribute__(self, item):
-        if item in {
-            # new items
-            "size",
-            "glob",
-            # previous
-            "load_cache",
-            "_open",
-            "save_cache",
-            "close_and_update",
-            "__init__",
-            "__getattribute__",
-            "__reduce__",
-            "_make_local_details",
-            "open",
-            "cat",
-            "cat_file",
-            "cat_ranges",
-            "get",
-            "read_block",
-            "tail",
-            "head",
-            "info",
-            "ls",
-            "exists",
-            "isfile",
-            "isdir",
-            "_check_file",
-            "_check_cache",
-            "_mkcache",
-            "clear_cache",
-            "clear_expired_cache",
-            "pop_from_cache",
-            "local_file",
-            "_paths_from_path",
-            "get_mapper",
-            "open_many",
-            "commit_many",
-            "hash_name",
-            "__hash__",
-            "__eq__",
-            "to_json",
-            "to_dict",
-            "cache_size",
-            "pipe_file",
-            "pipe",
-            "start_transaction",
-            "end_transaction",
-        }:
-            # all the methods defined in this class. Note `open` here, since
-            # it calls `_open`, but is actually in superclass
-            return lambda *args, **kw: getattr(type(self), item).__get__(self)(
-                *args, **kw
-            )
+        # Handle special attributes
         if item in ["__reduce_ex__"]:
             raise AttributeError
+
+        # Handle cache mixin's attributes
+        if hasattr(CacheMixin, item) and not item.startswith('_'):
+            return CacheMixin.__getattribute__(self, item)
+
+        # Handle this class's attributes
+        self_methods = {"size", "_check_file_in_cache", "get_cached_file_size"}
+        if item in self_methods:
+            return object.__getattribute__(self, item)
+
+        # Handle implemented methods
+        impl_methods = {
+            "_check_file", "_check_cache", "_mkcache", "clear_cache",
+            "clear_expired_cache", "pop_from_cache", "local_file"
+        }
+        if item in impl_methods:
+            return lambda *args, **kw: getattr(type(self), item).__get__(self)(*args, **kw)
+
+        # Handle properties
         if item in ["transaction"]:
-            # property
             return type(self).transaction.__get__(self)
+
+        # Handle class attributes
         if item in ["_cache", "transaction_type"]:
-            # class attributes
             return getattr(type(self), item)
+
         if item == "__class__":
             return type(self)
+
+        # Try instance dict first
         d = object.__getattribute__(self, "__dict__")
-        fs = d.get("fs", None)  # fs is not immediately defined
         if item in d:
             return d[item]
-        elif fs is not None:
-            if item in fs.__dict__:
-                # attribute of instance
-                return fs.__dict__[item]
-            # attributed belonging to the target filesystem
-            cls = type(fs)
-            m = getattr(cls, item)
-            if (inspect.isfunction(m) or inspect.isdatadescriptor(m)) and (
-                not hasattr(m, "__self__") or m.__self__ is None
-            ):
-                # instance method
-                return m.__get__(fs, cls)
-            return m  # class method or attribute
-        else:
-            # attributes of the superclass, while target is being set up
-            return super().__getattribute__(item)
+
+        # If we have a wrapped fs, delegate to it
+        wrapped_fs = d.get("fs", None)
+        if wrapped_fs is not None:
+            # Check filesystem's dict first
+            if hasattr(wrapped_fs, item):
+                return getattr(wrapped_fs, item)
+
+            # Check filesystem's class
+            fs_cls = type(wrapped_fs)
+            if hasattr(fs_cls, item):
+                m = getattr(fs_cls, item)
+                if (inspect.isfunction(m) or inspect.isdatadescriptor(m)) and \
+                   (not hasattr(m, "__self__") or m.__self__ is None):
+                    return m.__get__(wrapped_fs, fs_cls)
+                return m
+
+        # Fall back to superclass
+        return super().__getattribute__(item)
 
 
 def get_new_file_names(src: list[str], dst: list[str]) -> list[str]:
@@ -900,6 +912,196 @@ AbstractFileSystem.sync_folder = sync_folder
 # AbstractFileSystem.list_files_recursive = list_files_recursive
 
 
+# Configuration Classes to reduce parameter counts
+@dataclass
+class FileSystemConfig:
+    """Base configuration for filesystems"""
+    path: Optional[str] = None
+    protocol: str = "file"
+    cached: bool = False
+    cache_storage: str = "~/.tmp"
+    check_files: bool = False
+    cache_check: int = 120
+    expire_time: int = 24 * 60 * 60
+    same_names: bool = False
+
+
+@dataclass
+class S3Config(FileSystemConfig):
+    """S3-specific configuration"""
+    profile: Optional[str] = None
+    access_key: Optional[str] = None
+    secret_key: Optional[str] = None
+    session_token: Optional[str] = None
+    endpoint_url: Optional[str] = None
+    region: Optional[str] = None
+
+
+# Strategy Pattern for Authentication
+class AuthenticationStrategy:
+    """Abstract base class for authentication strategies"""
+
+    def apply_credentials(self, **kwargs) -> Dict[str, Any]:
+        """Apply authentication credentials to filesystem kwargs"""
+        pass
+
+
+class S3Authentication(AuthenticationStrategy):
+    """S3 authentication strategy"""
+
+    def __init__(self, profile=None, key=None, secret=None, token=None, endpoint_url=None):
+        self.profile = profile
+        self.key = key
+        self.secret = secret
+        self.token = token
+        self.endpoint_url = endpoint_url
+
+    def apply_credentials(self, **kwargs) -> Dict[str, Any]:
+        """Apply S3 credentials to kwargs"""
+        if self.profile:
+            kwargs['profile'] = self.profile
+        if self.key:
+            kwargs['key'] = self.key
+        if self.secret:
+            kwargs['secret'] = self.secret
+        if self.token:
+            kwargs['token'] = self.token
+        if self.endpoint_url:
+            kwargs['endpoint_url'] = self.endpoint_url
+        return kwargs
+
+
+class FileSystemBuilder:
+    """Builder class for filesystem creation"""
+
+    def __init__(self):
+        self.protocol = "file"
+        self.bucket = None
+        self.cached = False
+        self.cache_storage = "~/.tmp"
+        self.check_files = False
+        self.cache_check = 120
+        self.expire_time = 24 * 60 * 60
+        self.same_names = False
+        self.auth_strategy = None
+        self.existing_fs = None
+        self.kwargs = {}
+
+    def with_protocol(self, protocol: str):
+        """Set filesystem protocol"""
+        self.protocol = protocol
+        return self
+
+    def with_bucket(self, bucket: str):
+        """Set bucket/directory path"""
+        self.bucket = bucket
+        return self
+
+    def with_cache(self, enabled: bool = True, storage: str = "~/.tmp",
+                   check_files: bool = False, cache_check: int = 120,
+                   expire_time: int = 24 * 60 * 60, same_names: bool = False):
+        """Enable caching with configuration"""
+        self.cached = enabled
+        self.cache_storage = storage
+        self.check_files = check_files
+        self.cache_check = cache_check
+        self.expire_time = expire_time
+        self.same_names = same_names
+        return self
+
+    def with_s3_auth(self, profile=None, key=None, endpoint_url=None, secret=None, token=None):
+        """Configure S3 authentication"""
+        self.auth_strategy = S3Authentication(
+            profile=profile,
+            key=key,
+            secret=secret,
+            token=token,
+            endpoint_url=endpoint_url
+        )
+        return self
+
+    def with_existing_fs(self, fs: AbstractFileSystem):
+        """Use existing filesystem"""
+        self.existing_fs = fs
+        return self
+
+    def with_kwargs(self, **kwargs):
+        """Add additional kwargs"""
+        self.kwargs.update(kwargs)
+        return self
+
+    def _create_base_filesystem(self) -> AbstractFileSystem:
+        """Create the base filesystem"""
+        if self.existing_fs:
+            return self.existing_fs
+
+        if self.protocol == "s3":
+            return self._create_s3_filesystem()
+        else:
+            return self._create_local_filesystem()
+
+    def _create_s3_filesystem(self) -> AbstractFileSystem:
+        """Create S3 filesystem"""
+        from s3fs import S3FileSystem
+
+        kwargs = {'use_listings_cache': False}
+        if self.auth_strategy:
+            kwargs = self.auth_strategy.apply_credentials(**kwargs)
+
+        if "client_kwargs" in self.kwargs:
+            kwargs.update(self.kwargs)
+            return S3FileSystem(**kwargs)
+        else:
+            kwargs.update(self.kwargs)
+            from fsspec import filesystem
+            return filesystem(
+                protocol="s3",
+                use_listings_cache=False,
+                **kwargs
+            )
+
+    def _create_local_filesystem(self) -> AbstractFileSystem:
+        """Create local filesystem"""
+        from fsspec import filesystem
+        return filesystem("file", use_listings_cache=False)
+
+    def _wrap_with_directory(self, fs: AbstractFileSystem) -> AbstractFileSystem:
+        """Wrap filesystem with directory wrapper"""
+        if not self.bucket:
+            return fs
+
+        if self.protocol in ["file", "local"]:
+            self.bucket = posixpath.abspath(self.bucket)
+
+        return DirFileSystem(path=self.bucket, fs=fs)
+
+    def _wrap_with_cache(self, fs: AbstractFileSystem) -> AbstractFileSystem:
+        """Wrap filesystem with cache if enabled"""
+        if not self.cached:
+            return fs
+
+        cache_storage = self.cache_storage
+        if "~" in cache_storage:
+            cache_storage = posixpath.expanduser(cache_storage)
+
+        return MonitoredSimpleCacheFileSystem(
+            cache_storage=cache_storage,
+            check_files=self.check_files,
+            cache_check=self.cache_check,
+            expire_time=self.expire_time,
+            fs=fs,
+            same_names=self.same_names,
+            **self.kwargs
+        )
+
+    def build(self) -> AbstractFileSystem:
+        """Build the final filesystem"""
+        fs = self._create_base_filesystem()
+        fs = self._wrap_with_directory(fs)
+        fs = self._wrap_with_cache(fs)
+        return fs
+
+
 def FileSystem(
     bucket: str | None = None,
     fs: AbstractFileSystem | None = None,
@@ -917,56 +1119,127 @@ def FileSystem(
     same_names: bool = False,
     **kwargs,
 ) -> AbstractFileSystem:
+    """Simplified FileSystem factory using builder pattern"""
+    # Validate inputs
     if protocol is None and fs is None:
         protocol = "file"
-        # if bucket is None:
-        #    bucket = "."
 
-    if all([fs, profile, key, endpoint_url, secret, token, protocol]):
-        fs = filesystem("file", use_listings_cache=False)
+    # Create builder
+    builder = FileSystemBuilder()
 
-    elif fs is None:
-        if "client_kwargs" in kwargs:
-            fs = s3fs.S3FileSystem(
-                profile=profile,
-                key=key,
-                endpoint_url=endpoint_url,
-                secret=secret,
-                token=token,
-                **kwargs,
-            )
-        else:
-            fs = filesystem(
-                protocol=protocol,
-                profile=profile,
-                key=key,
-                endpoint_url=endpoint_url,
-                secret=secret,
-                token=token,
-                use_listings_cache=False,
-            )
+    # Build filesystem based on parameters
+    builder.with_protocol(protocol or "file")
 
-    if bucket is not None:
-        if protocol in ["file", "local"]:
-            bucket = posixpath.abspath(bucket)
-
-        fs = DirFileSystem(path=bucket, fs=fs)
+    if bucket:
+        builder.with_bucket(bucket)
 
     if cached:
-        if "~" in cache_storage:
-            cache_storage = posixpath.expanduser(cache_storage)
-
-        return MonitoredSimpleCacheFileSystem(
-            cache_storage=cache_storage,
+        builder.with_cache(
+            enabled=cached,
+            storage=cache_storage,
             check_files=check_files,
             cache_check=cache_check,
             expire_time=expire_time,
-            fs=fs,
-            same_names=same_names,
-            **kwargs,
+            same_names=same_names
         )
 
-    return fs
+    if fs:
+        builder.with_existing_fs(fs)
+    elif protocol == "s3":
+        builder.with_s3_auth(
+            profile=profile,
+            key=key,
+            secret=secret,
+            token=token,
+            endpoint_url=endpoint_url
+        )
+
+    builder.with_kwargs(**kwargs)
+
+    # Special case: if all auth params provided but no fs, use file
+    if all([fs is None, profile, key, endpoint_url, secret, token, protocol]):
+        builder.with_existing_fs(filesystem("file", use_listings_cache=False))
+
+    return builder.build()
+
+
+class PyArrowFileSystemBuilder:
+    """Builder for PyArrow filesystem"""
+
+    def __init__(self):
+        self.bucket = None
+        self.fs = None
+        self.credentials = {
+            "access_key": None,
+            "secret_key": None,
+            "session_token": None,
+            "endpoint_override": None,
+        }
+        self.protocol = None
+
+    def with_bucket(self, bucket: str):
+        """Set bucket/directory"""
+        self.bucket = bucket
+        return self
+
+    def with_fs(self, fs: AbstractFileSystem):
+        """Set existing filesystem"""
+        self.fs = fs
+        return self
+
+    def with_credentials(self, access_key=None, secret_key=None,
+                        session_token=None, endpoint_override=None):
+        """Set credentials"""
+        self.credentials.update({
+            "access_key": access_key,
+            "secret_key": secret_key,
+            "session_token": session_token,
+            "endpoint_override": endpoint_override,
+        })
+        return self
+
+    def _extract_protocol_and_credentials(self) -> tuple[str, dict]:
+        """Extract protocol and credentials from existing filesystem if provided"""
+        if self.fs is not None:
+            protocol = self.fs.protocol
+            if isinstance(protocol, tuple):
+                protocol = protocol[0]
+
+            if protocol == "dir":
+                self.bucket = self.fs.path
+                self.fs = self.fs.fs
+                protocol = self.fs.protocol
+                if isinstance(protocol, tuple):
+                    protocol = protocol[0]
+
+            if protocol == "s3":
+                return protocol, get_credentials_from_fssspec(self.fs, redact_secrets=False)
+
+        return self.protocol or "file", self.credentials
+
+    def _create_pyarrow_fs(self, protocol: str, credentials: dict) -> pfs.FileSystem:
+        """Create PyArrow filesystem based on protocol"""
+        if protocol == "s3":
+            return pfs.S3FileSystem(**credentials)
+        else:
+            return pfs.LocalFileSystem()
+
+    def _wrap_with_bucket(self, pa_fs: pfs.FileSystem) -> pfs.FileSystem:
+        """Wrap with bucket/directory if specified"""
+        if self.bucket is not None:
+            if self.protocol in ["file", "local", "None"]:
+                bucket = posixpath.abspath(self.bucket)
+            else:
+                bucket = self.bucket
+
+            return pfs.SubTreeFileSystem(base_fs=pa_fs, base_path=bucket)
+        return pa_fs
+
+    def build(self) -> pfs.FileSystem:
+        """Build the PyArrow filesystem"""
+        protocol, credentials = self._extract_protocol_and_credentials()
+        pa_fs = self._create_pyarrow_fs(protocol, credentials)
+        return self._wrap_with_bucket(pa_fs)
 
 
 def PyArrowFileSystem(
@@ -978,42 +1251,24 @@ def PyArrowFileSystem(
     endpoint_override: str | None = None,
     protocol: str | None = None,
 ) -> pfs.FileSystem:
-    credentials = None
-    if fs is not None:
-        protocol = fs.protocol[0] if isinstance(fs.protocol, tuple) else fs.protocol
+    """Simplified PyArrow filesystem factory using builder pattern"""
+    builder = PyArrowFileSystemBuilder()
 
-        if protocol == "dir":
-            bucket = fs.path
-            fs = fs.fs
-            protocol = fs.protocol[0] if isinstance(fs.protocol, tuple) else fs.protocol
+    if bucket:
+        builder.with_bucket(bucket)
 
-        if protocol == "s3":
-            credentials = get_credentials_from_fssspec(fs, redact_secrets=False)
-
-    if credentials is None:
-        credentials = {
-            "access_key": access_key,
-            "secret_key": secret_key,
-            "session_token": session_token,
-            "endpoint_override": endpoint_override,
-        }
-    if protocol == "s3":
-        fs = pfs.S3FileSystem(
-            **credentials,
-        )
-    elif protocol in ("file", "local", None):
-        fs = pfs.LocalFileSystem()
-
+    if fs:
+        builder.with_fs(fs)
     else:
-        fs = pfs.LocalFileSystem()
+        builder.protocol = protocol
+        builder.with_credentials(
+            access_key=access_key,
+            secret_key=secret_key,
+            session_token=session_token,
+            endpoint_override=endpoint_override
+        )
 
-    if bucket is not None:
-        if protocol in ["file", "local", "None"]:
-            bucket = posixpath.abspath(bucket)
-
-        fs = pfs.SubTreeFileSystem(base_fs=fs, base_path=bucket)
-
-    return fs
+    return builder.build()
 
 
 # class FileSystem:
