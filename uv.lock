@@ -1975,7 +1975,7 @@ wheels = [
 
 [[package]]
 name = "pydala2"
-version = "0.20.0"
+version = "0.21.1"
 source = { editable = "." }
 dependencies = [
     { name = "duckdb" },

@@ -5,6 +5,7 @@ import pickle  # Only for backward compatibility
 import posixpath
 import re
 import tempfile
+import base64
 from collections import defaultdict
 from typing import Any
 
@@ -26,12 +27,22 @@ from .schema import (
 
 
 def serialize_metadata(metadata: dict[str, pq.FileMetaData]) -> dict[str, Any]:
-    """Safely serialize metadata to JSON-compatible format."""
-    result = {}
+    """Safely serialize metadata to a JSON-compatible format.
+
+    We write each ``FileMetaData`` to an in-memory buffer using
+    ``write_metadata_file`` and base64-encode the resulting bytes for JSON.
+    """
+    result: dict[str, Any] = {}
     for path, meta in metadata.items():
-        # Convert FileMetaData to serializable format
+        # Write FileMetaData to an in-memory buffer
+        sink = pa.BufferOutputStream()
+        meta.write_metadata_file(sink)
+        buf = sink.getvalue()  # pyarrow.Buffer
+        raw: bytes = buf.to_pybytes()
+        # Base64 encode to make it JSON serializable
+        b64 = base64.b64encode(raw).decode("ascii")
         result[path] = {
-            "serialized_metadata": meta.serialize(),
+            "serialized_metadata_b64": b64,
             "num_rows": meta.num_rows,
             "num_columns": len(meta.schema),
             "created_by": meta.created_by,
@@ -41,12 +52,32 @@ def serialize_metadata(metadata: dict[str, pq.FileMetaData]) -> dict[str, Any]:
 
 
 def deserialize_metadata(data: dict[str, Any]) -> dict[str, pq.FileMetaData]:
-    """Safely deserialize metadata from JSON-compatible format."""
-    result = {}
+    """Safely deserialize metadata from JSON-compatible format.
+
+    Expects base64-encoded bytes under the key ``serialized_metadata_b64``.
+    Falls back to ``serialized_metadata`` if present and already a base64 string.
+    """
+    result: dict[str, pq.FileMetaData] = {}
     for path, meta_data in data.items():
         # Reconstruct FileMetaData from serialized data
-        buf = pa.py_buffer(meta_data["serialized_metadata"])
-        result[path] = pq.read_metadata(buf)
+        if "serialized_metadata_b64" in meta_data:
+            raw_bytes = base64.b64decode(meta_data["serialized_metadata_b64"])  # type: ignore[arg-type]
+        else:
+            # Backward-compatibility: if an older key is present and contains a
+            # base64 string, try decoding it; if it's bytes-like, use directly.
+            sm = meta_data.get("serialized_metadata")
+            if isinstance(sm, str):
+                raw_bytes = base64.b64decode(sm)
+            elif isinstance(sm, (bytes, bytearray)):
+                raw_bytes = bytes(sm)
+            else:
+                raise ValueError(
+                    "Serialized metadata missing or in unknown format for path: "
+                    + str(path)
+                )
+
+        reader = pa.BufferReader(raw_bytes)
+        result[path] = pq.read_metadata(reader)
     return result
 
 
