@@ -1,4 +1,4 @@
-from _fsspec_util.utils.polars import *
+from fsspec_utils.utils.polars import *
 # from functools import partial
 
 # import pandas as pd
