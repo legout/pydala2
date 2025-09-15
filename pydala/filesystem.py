@@ -208,90 +208,84 @@ class MonitoredSimpleCacheFileSystem(SimpleCacheFileSystem):
 
     #     return self.fs.makedirs(path, exist_ok=exist_ok)
 
-    def __getattribute__(self, item):
-        if item in {
-            # new items
-            "size",
-            "glob",
-            # previous
-            "load_cache",
-            "_open",
-            "save_cache",
-            "close_and_update",
-            "__init__",
-            "__getattribute__",
-            "__reduce__",
-            "_make_local_details",
-            "open",
-            "cat",
-            "cat_file",
-            "cat_ranges",
-            "get",
-            "read_block",
-            "tail",
-            "head",
-            "info",
-            "ls",
-            "exists",
-            "isfile",
-            "isdir",
-            "_check_file",
-            "_check_cache",
-            "_mkcache",
-            "clear_cache",
-            "clear_expired_cache",
-            "pop_from_cache",
-            "local_file",
-            "_paths_from_path",
-            "get_mapper",
-            "open_many",
-            "commit_many",
-            "hash_name",
-            "__hash__",
-            "__eq__",
-            "to_json",
-            "to_dict",
-            "cache_size",
-            "pipe_file",
-            "pipe",
-            "start_transaction",
-            "end_transaction",
-        }:
-            # all the methods defined in this class. Note `open` here, since
-            # it calls `_open`, but is actually in superclass
-            return lambda *args, **kw: getattr(type(self), item).__get__(self)(
-                *args, **kw
-            )
-        if item in ["__reduce_ex__"]:
-            raise AttributeError
-        if item in ["transaction"]:
-            # property
-            return type(self).transaction.__get__(self)
-        if item in ["_cache", "transaction_type"]:
-            # class attributes
+    def __getattribute__(self, item: str) -> Any:
+        if item in self._delegated_methods:
+            return lambda *args, **kwargs: getattr(type(self), item).__get__(self, type(self))(*args, **kwargs)
+        if item in {"__reduce_ex__", "__reduce__"}:
+            raise AttributeError(item)
+        if item == "transaction":
+            return type(self).transaction.__get__(self, type(self))
+        if item in {"_cache", "transaction_type"}:
             return getattr(type(self), item)
         if item == "__class__":
             return type(self)
+        return self._delegate_to_fs(item)
+
+    def _delegate_to_fs(self, item: str) -> Any:
+        """Delegate attribute access to the underlying filesystem."""
         d = object.__getattribute__(self, "__dict__")
-        fs = d.get("fs", None)  # fs is not immediately defined
+        fs = d.get("fs")
         if item in d:
             return d[item]
-        elif fs is not None:
-            if item in fs.__dict__:
-                # attribute of instance
-                return fs.__dict__[item]
-            # attributed belonging to the target filesystem
-            cls = type(fs)
-            m = getattr(cls, item)
-            if (inspect.isfunction(m) or inspect.isdatadescriptor(m)) and (
-                not hasattr(m, "__self__") or m.__self__ is None
-            ):
-                # instance method
-                return m.__get__(fs, cls)
-            return m  # class method or attribute
-        else:
-            # attributes of the superclass, while target is being set up
+        if fs is None:
             return super().__getattribute__(item)
+        if item in fs.__dict__:
+            return fs.__dict__[item]
+        cls = type(fs)
+        m = getattr(cls, item, None)
+        if m is None:
+            raise AttributeError(f"'{item}' not found in underlying fs")
+        if inspect.isfunction(m) or inspect.ismethoddescriptor(m):
+            if not hasattr(m, "__self__") or m.__self__ is None:
+                return m.__get__(fs, cls)
+        return m
+
+    _delegated_methods = {
+        "size",
+        "glob",
+        "load_cache",
+        "_open",
+        "save_cache",
+        "close_and_update",
+        "__init__",
+        "__getattribute__",
+        "__reduce__",
+        "_make_local_details",
+        "open",
+        "cat",
+        "cat_file",
+        "cat_ranges",
+        "get",
+        "read_block",
+        "tail",
+        "head",
+        "info",
+        "ls",
+        "exists",
+        "isfile",
+        "isdir",
+        "_check_file",
+        "_check_cache",
+        "_mkcache",
+        "clear_cache",
+        "clear_expired_cache",
+        "pop_from_cache",
+        "local_file",
+        "_paths_from_path",
+        "get_mapper",
+        "open_many",
+        "commit_many",
+        "hash_name",
+        "__hash__",
+        "__eq__",
+        "to_json",
+        "to_dict",
+        "cache_size",
+        "pipe_file",
+        "pipe",
+        "start_transaction",
+        "end_transaction",
+    }
 
 
 def get_new_file_names(src: list[str], dst: list[str]) -> list[str]:
@@ -324,147 +318,152 @@ def get_new_file_names(src: list[str], dst: list[str]) -> list[str]:
     ]
 
 
-def read_parquet(
-    self, path: str, filename: bool = False, **kwargs
-) -> dict[str, pl.DataFrame] | pl.DataFrame:
-    data = pl.from_arrow(read_table(path, filesystem=self, **kwargs))
+class FormatHandler(ABC):
+    @abstractmethod
+    def read_single(self, fs: AbstractFileSystem, path: str, **kwargs) -> Any:
+        pass
 
-    if filename:
-        return {path: data}
+    @abstractmethod
+    def read_dataset(self, fs: AbstractFileSystem, path: str | list[str], concat: bool = True, filename: bool = False, **kwargs) -> Any:
+        pass
 
-    return data
+    @abstractmethod
+    def write_single(self, fs: AbstractFileSystem, data: Any, path: str, **kwargs) -> None:
+        pass
 
+    @abstractmethod
+    def glob_pattern(self, path: str) -> str:
+        pass
 
-def read_parquet_schema(self, path: str, **kwargs) -> pa.Schema:
-    return pq.read_schema(path, filesystem=self, **kwargs)
+class ParquetHandler(FormatHandler):
+    def read_single(self, fs: AbstractFileSystem, path: str, filename: bool = False, **kwargs) -> dict[str, pl.DataFrame] | pl.DataFrame:
+        data = pl.from_arrow(read_table(path, filesystem=fs, **kwargs))
+        if filename:
+            return {path: data}
+        return data
 
+    def read_dataset(self, fs: AbstractFileSystem, path: str | list[str], concat: bool = True, filename: bool = False, **kwargs) -> dict[str, pl.DataFrame] | pl.DataFrame | list:
+        if filename:
+            concat = False
+        if isinstance(path, str):
+            files = fs.glob(fs.glob_pattern(posixpath.join(path, "*.parquet")))
+        else:
+            files = path
+        if isinstance(files, str):
+            files = [files]
+        dfs = run_parallel(self.read_single, files, fs=fs, filename=filename, **kwargs)
+        if concat:
+            dfs = pl.concat(dfs, how="diagonal_relaxed")
+        return dfs[0] if len(dfs) == 1 else dfs
 
-def read_paruet_metadata(self, path: str, **kwargs) -> pq.FileMetaData:
-    return pq.read_metadata(path, filesystem=self, **kwargs)
+    def write_single(self, fs: AbstractFileSystem, data: pl.DataFrame | pa.Table | pd.DataFrame | ddb.DuckDBPyRelation, path: str, **kwargs) -> None:
+        if isinstance(data, pl.DataFrame):
+            data = data.to_arrow().cast(convert_large_types_to_normal(data.schema))
+        elif isinstance(data, pd.DataFrame):
+            data = pa.Table.from_pandas(data, preserve_index=False)
+        elif isinstance(data, ddb.DuckDBPyRelation):
+            data = data.arrow()
+        pq.write_table(data, path, filesystem=fs, **kwargs)
 
+    def glob_pattern(self, path: str) -> str:
+        return posixpath.join(path, "*.parquet")
 
-def read_json(
-    self,
-    path: str,
-    filename: bool = False,
-    as_dataframe: bool = True,
-    flatten: bool = True,
-) -> dict | pl.DataFrame:
-    with self.open(path) as f:
-        # data = msgspec.json.decode(f.read())
-        data = orjson.loads(f.read())
+    def read_schema(self, fs: AbstractFileSystem, path: str, **kwargs) -> pa.Schema:
+        return pq.read_schema(path, filesystem=fs, **kwargs)
 
-    if as_dataframe:
-        data = pl.from_dicts(data)
-        if flatten:
-            data = data.explode_all().unnest_all()
+    def read_metadata(self, fs: AbstractFileSystem, path: str, **kwargs) -> pq.FileMetaData:
+        return pq.read_metadata(path, filesystem=fs, **kwargs)
 
-    if filename:
-        return {path: data}
+class JSONHandler(FormatHandler):
+    def read_single(self, fs: AbstractFileSystem, path: str, filename: bool = False, as_dataframe: bool = True, flatten: bool = True, **kwargs) -> dict | pl.DataFrame:
+        with fs.open(path) as f:
+            data = orjson.loads(f.read())
+        if as_dataframe:
+            data = pl.from_dicts(data)
+            if flatten:
+                data = data.explode_all().unnest_all()
+        if filename:
+            return {path: data}
+        return data
 
-    return data
+    def read_dataset(self, fs: AbstractFileSystem, path: str | list[str], concat: bool = True, filename: bool = False, as_dataframe: bool = True, flatten: bool = True, **kwargs) -> dict | pl.DataFrame | list:
+        if filename:
+            concat = False
+        if isinstance(path, str):
+            files = fs.glob(posixpath.join(path, "*.json"))
+        else:
+            files = path
+        if isinstance(files, str):
+            files = [files]
+        data = run_parallel(self.read_single, files, fs=fs, filename=filename, as_dataframe=as_dataframe, flatten=flatten, **kwargs)
+        if as_dataframe and concat:
+            data = pl.concat(data, how="diagonal_relaxed")
+        return data[0] if len(data) == 1 else data
 
+    def write_single(self, fs: AbstractFileSystem, data: dict | pl.DataFrame | pa.Table | pd.DataFrame | ddb.DuckDBPyRelation, path: str, **kwargs) -> None:
+        if isinstance(data, pl.DataFrame):
+            data = data.to_arrow().cast(convert_large_types_to_normal(data.schema)).to_pydict()
+        elif isinstance(data, pd.DataFrame):
+            data = pa.Table.from_pandas(data, preserve_index=False).to_pydict()
+        elif isinstance(data, ddb.DuckDBPyRelation):
+            data = data.arrow().to_pydict()
+        with fs.open(path, "w") as f:
+            f.write(orjson.dumps(data))
 
-def read_csv(
-    self, path: str, filename: bool = False, **kwargs
-) -> dict[str, pl.DataFrame] | pl.DataFrame:
-    with self.open(path) as f:
-        data = pl.from_csv(f, **kwargs)
+    def glob_pattern(self, path: str) -> str:
+        return posixpath.join(path, "*.json")
 
-    if filename:
-        return {path: data}
+class CSVHandler(FormatHandler):
+    def read_single(self, fs: AbstractFileSystem, path: str, filename: bool = False, **kwargs) -> dict[str, pl.DataFrame] | pl.DataFrame:
+        with fs.open(path) as f:
+            data = pl.from_csv(f, **kwargs)
+        if filename:
+            return {path: data}
+        return data
 
-    return data
+    def read_dataset(self, fs: AbstractFileSystem, path: str | list[str], concat: bool = True, filename: bool = False, **kwargs) -> dict[str, pl.DataFrame] | pl.DataFrame | list:
+        if filename:
+            concat = False
+        if isinstance(path, str):
+            files = fs.glob(posixpath.join(path, "*.csv"))
+        else:
+            files = path
+        if isinstance(files, str):
+            files = [files]
+        dfs = run_parallel(self.read_single, files, fs=fs, filename=filename, **kwargs)
+        if concat:
+            dfs = pl.concat(dfs, how="diagonal_relaxed")
+        return dfs[0] if len(dfs) == 1 else dfs
 
+    def write_single(self, fs: AbstractFileSystem, data: pl.DataFrame | pa.Table | pd.DataFrame | ddb.DuckDBPyRelation, path: str, **kwargs) -> None:
+        if isinstance(data, pa.Table):
+            data = pl.from_arrow(data)
+        elif isinstance(data, pd.DataFrame):
+            data = pl.from_pandas(data)
+        elif isinstance(data, ddb.DuckDBPyRelation):
+            data = data.pl()
+        with fs.open(path, "w") as f:
+            data.write_csv(f, **kwargs)
 
-def read_parquet_dataset(
-    self, path: str | list[str], concat: bool = True, filename: bool = False, **kwargs
-) -> (
-    dict[str, pl.DataFrame]
-    | pl.DataFrame
-    | list[dict[str, pl.DataFrame]]
-    | list[pl.DataFrame]
-):
-    if filename:
-        concat = False
+    def glob_pattern(self, path: str) -> str:
+        return posixpath.join(path, "*.csv")
 
-    if isinstance(path, str):
-        files = self.glob(posixpath.join(path, "*.parquet"))
-    else:
-        files = path
-    if isinstance(files, str):
-        files = [files]
+# Registry
+FORMAT_HANDLERS = {
+    "parquet": ParquetHandler(),
+    "json": JSONHandler(),
+    "csv": CSVHandler(),
+}
 
-    dfs = run_parallel(self.read_parquet, files, filename, **kwargs)
-
-    dfs = pl.concat(dfs, how="diagonal_relaxed") if concat else dfs
-
-    dfs = dfs[0] if len(dfs) == 1 else dfs
-
-    return dfs
-
-
-def read_json_dataset(
-    self,
-    path: str | list[str],
-    filename: bool = False,
-    as_dataframe: bool = True,
-    flatten: bool = True,
-    concat: bool = True,
-) -> (
-    dict[str, pl.DataFrame]
-    | pl.DataFrame
-    | list[dict[str, pl.DataFrame]]
-    | list[pl.DataFrame]
-):
-    if filename:
-        concat = False
-
-    if isinstance(path, str):
-        files = self.glob(posixpath.join(path, "*.json"))
-    else:
-        files = path
-    if isinstance(files, str):
-        files = [files]
-
-    data = run_parallel(
-        self.read_json,
-        files,
-        filename=filename,
-        as_dataframe=as_dataframe,
-        flatten=flatten,
-    )
-    if as_dataframe and concat:
-        data = pl.concat(data, how="diagonal_relaxed")
-
-    data = data[0] if len(data) == 1 else data
-
-    return data
-
-
-def read_csv_dataset(
-    self, path: str | list[str], concat: bool = True, filename: bool = False, **kwargs
-) -> (
-    dict[str, pl.DataFrame]
-    | pl.DataFrame
-    | list[dict[str, pl.DataFrame]]
-    | list[pl.DataFrame]
-):
-    if filename:
-        concat = False
-
-    if isinstance(path, str):
-        files = self.glob(posixpath.join(path, "*.csv"))
-    else:
-        files = path
-    if isinstance(files, str):
-        files = [files]
-    dfs = run_parallel(self.read_csv, files, self=self, **kwargs)
-
-    dfs = pl.concat(dfs, how="diagonal_relaxed") if concat else dfs
-    dfs = dfs[0] if len(dfs) == 1 else dfs
-
-    return dfs
+# Delegate methods
+AbstractFileSystem.read_parquet = lambda self, path, **kwargs: FORMAT_HANDLERS["parquet"].read_single(self, path, **kwargs)
+AbstractFileSystem.read_json = lambda self, path, **kwargs: FORMAT_HANDLERS["json"].read_single(self, path, **kwargs)
+AbstractFileSystem.read_csv = lambda self, path, **kwargs: FORMAT_HANDLERS["csv"].read_single(self, path, **kwargs)
+AbstractFileSystem.read_parquet_dataset = lambda self, path, **kwargs: FORMAT_HANDLERS["parquet"].read_dataset(self, path, **kwargs)
+AbstractFileSystem.read_json_dataset = lambda self, path, **kwargs: FORMAT_HANDLERS["json"].read_dataset(self, path, **kwargs)
+AbstractFileSystem.read_csv_dataset = lambda self, path, **kwargs: FORMAT_HANDLERS["csv"].read_dataset(self, path, **kwargs)
+AbstractFileSystem.read_parquet_schema = lambda self, path, **kwargs: FORMAT_HANDLERS["parquet"].read_schema(self, path, **kwargs)
+AbstractFileSystem.read_parquet_metadata = lambda self, path, **kwargs: FORMAT_HANDLERS["parquet"].read_metadata(self, path, **kwargs)
 
 
 def pyarrow_dataset(
@@ -751,45 +750,66 @@ def csv_to_parquet(
         )
 
 
+class ListerStrategy(ABC):
+    @abstractmethod
+    def list(self, fs: AbstractFileSystem, path: str | list[str], **kwargs) -> list[str]:
+        pass
+
+class DetailLister(ListerStrategy):
+    def list(self, fs: AbstractFileSystem, path: str | list[str], **kwargs) -> list:
+        return fs.listdir(path)
+
+class FileLister(ListerStrategy):
+    def list(self, fs: AbstractFileSystem, path: str | list[str], recursive: bool = False, maxdepth: int | None = None, **kwargs) -> list[str]:
+        paths = self._prepare_paths(fs, path, recursive, maxdepth)
+        files = [f for f in paths if "." in posixpath.basename(f)]
+        files += [f for f in sorted(set(paths) - set(files)) if fs.isfile(f)]
+        return files
+
+    def _prepare_paths(self, fs: AbstractFileSystem, path: str | list[str], recursive: bool, maxdepth: int | None) -> list[str]:
+        if isinstance(path, str):
+            if fs.isfile(path):
+                return [path]
+            path = path.rstrip("*").rstrip("/")
+            if fs.exists(path):
+                if not recursive:
+                    return fs.glob(posixpath.join(path, "*"))
+                if maxdepth is not None:
+                    return fs.glob(posixpath.join(path, *(["*"] * maxdepth)))
+                return fs.glob(posixpath.join(path, "**"))
+            return fs.glob(path)
+        return path
+
+class DirLister(ListerStrategy):
+    def list(self, fs: AbstractFileSystem, path: str | list[str], recursive: bool = False, maxdepth: int | None = None, **kwargs) -> list[str]:
+        paths = FileLister()._prepare_paths(fs, path, recursive, maxdepth)
+        dirs = [f for f in paths if "." not in posixpath.basename(f)]
+        dirs += [f for f in sorted(set(paths) - set(dirs)) if fs.isdir(f)]
+        return dirs
+
+class DefaultLister(ListerStrategy):
+    def list(self, fs: AbstractFileSystem, path: str | list[str], **kwargs) -> list[str]:
+        return FileLister()._prepare_paths(fs, path, kwargs.get("recursive", False), kwargs.get("maxdepth"))
+
+LISTER_STRATEGIES = {
+    "detail": DetailLister(),
+    "files_only": FileLister(),
+    "dirs_only": DirLister(),
+    "default": DefaultLister(),
+}
+
 def ls(
     self,
-    path,
+    path: str | list[str],
     recursive: bool = False,
     maxdepth: int | None = None,
     detail: bool = False,
     files_only: bool = False,
     dirs_only: bool = False,
-):
-    if detail:
-        return self.listdir(path)
-
-    if isinstance(path, str):
-        if self.isfile(path):
-            path = [path]
-        else:
-            path = path.rstrip("*").rstrip("/")
-            if self.exists(path):
-                if not recursive:
-                    path = self.glob(posixpath.join(path, "*"))
-                else:
-                    if maxdepth is not None:
-                        path = self.glob(posixpath.join(path, *(["*"] * maxdepth)))
-                    else:
-                        path = self.glob(posixpath.join(path, "**"))
-            else:
-                path = self.glob(path)
-
-    if files_only:
-        files = [f for f in path if "." in posixpath.basename(f)]
-        files += [f for f in sorted(set(path) - set(files)) if self.isfile(f)]
-        return files
-
-    if dirs_only:
-        dirs = [f for f in path if "." not in posixpath.basename(f)]
-        dirs += [f for f in sorted(set(path) - set(dirs)) if self.isdir(f)]
-        return dirs
-
-    return path
+) -> list[str] | dict:
+    strategy_key = "detail" if detail else ("files_only" if files_only else ("dirs_only" if dirs_only else "default"))
+    strategy = LISTER_STRATEGIES[strategy_key]
+    return strategy.list(self, path, recursive=recursive, maxdepth=maxdepth)
 
 
 def sync_folder(
@@ -900,120 +920,126 @@ AbstractFileSystem.sync_folder = sync_folder
 # AbstractFileSystem.list_files_recursive = list_files_recursive
 
 
-def FileSystem(
-    bucket: str | None = None,
-    fs: AbstractFileSystem | None = None,
-    profile: str | None = None,
-    key: str | None = None,
-    endpoint_url: str | None = None,
-    secret: str | None = None,
-    token: str | None = None,
-    protocol: str | None = None,
-    cached: bool = False,
-    cache_storage="~/.tmp",
-    check_files: bool = False,
-    cache_check: int = 120,
-    expire_time: int = 24 * 60 * 60,
-    same_names: bool = False,
-    **kwargs,
-) -> AbstractFileSystem:
-    if protocol is None and fs is None:
-        protocol = "file"
-        # if bucket is None:
-        #    bucket = "."
-
-    if all([fs, profile, key, endpoint_url, secret, token, protocol]):
-        fs = filesystem("file", use_listings_cache=False)
-
-    elif fs is None:
-        if "client_kwargs" in kwargs:
-            fs = s3fs.S3FileSystem(
-                profile=profile,
-                key=key,
-                endpoint_url=endpoint_url,
-                secret=secret,
-                token=token,
-                **kwargs,
-            )
-        else:
-            fs = filesystem(
-                protocol=protocol,
-                profile=profile,
-                key=key,
-                endpoint_url=endpoint_url,
-                secret=secret,
-                token=token,
-                use_listings_cache=False,
-            )
-
-    if bucket is not None:
-        if protocol in ["file", "local"]:
-            bucket = posixpath.abspath(bucket)
-
-        fs = DirFileSystem(path=bucket, fs=fs)
-
-    if cached:
-        if "~" in cache_storage:
-            cache_storage = posixpath.expanduser(cache_storage)
-
-        return MonitoredSimpleCacheFileSystem(
+class PydalaFileSystem:
+    def __init__(
+        self,
+        bucket: str | None = None,
+        fs: AbstractFileSystem | None = None,
+        profile: str | None = None,
+        key: str | None = None,
+        endpoint_url: str | None = None,
+        secret: str | None = None,
+        token: str | None = None,
+        protocol: str | None = "file",
+        cached: bool = False,
+        cache_storage: str = "~/.tmp",
+        check_files: bool = False,
+        cache_check: int = 120,
+        expire_time: int = 24 * 60 * 60,
+        same_names: bool = False,
+        for_pyarrow: bool = False,
+        **kwargs,
+    ) -> None:
+        self._fsspec_fs = self._create_fsspec_fs(
+            bucket=bucket,
+            fs=fs,
+            profile=profile,
+            key=key,
+            endpoint_url=endpoint_url,
+            secret=secret,
+            token=token,
+            protocol=protocol,
+            cached=cached,
             cache_storage=cache_storage,
             check_files=check_files,
             cache_check=cache_check,
             expire_time=expire_time,
-            fs=fs,
             same_names=same_names,
             **kwargs,
         )
-
-    return fs
-
-
-def PyArrowFileSystem(
-    bucket: str | None = None,
-    fs: AbstractFileSystem | None = None,
-    access_key: str | None = None,
-    secret_key: str | None = None,
-    session_token: str | None = None,
-    endpoint_override: str | None = None,
-    protocol: str | None = None,
-) -> pfs.FileSystem:
-    credentials = None
-    if fs is not None:
-        protocol = fs.protocol[0] if isinstance(fs.protocol, tuple) else fs.protocol
-
-        if protocol == "dir":
-            bucket = fs.path
-            fs = fs.fs
-            protocol = fs.protocol[0] if isinstance(fs.protocol, tuple) else fs.protocol
-
-        if protocol == "s3":
-            credentials = get_credentials_from_fssspec(fs, redact_secrets=False)
-
-    if credentials is None:
-        credentials = {
-            "access_key": access_key,
-            "secret_key": secret_key,
-            "session_token": session_token,
-            "endpoint_override": endpoint_override,
-        }
-    if protocol == "s3":
-        fs = pfs.S3FileSystem(
-            **credentials,
+        self._pyarrow_fs = self._create_pyarrow_fs(
+            bucket=bucket,
+            fs=self._fsspec_fs,
+            key=key,
+            secret=secret,
+            token=token,
+            endpoint_url=endpoint_url,
+            protocol=protocol,
+            **kwargs,
         )
-    elif protocol in ("file", "local", None):
-        fs = pfs.LocalFileSystem()
+        self.for_pyarrow = for_pyarrow
 
-    else:
-        fs = pfs.LocalFileSystem()
+    def _create_fsspec_fs(self, **params) -> AbstractFileSystem:
+        protocol = params.get("protocol", "file")
+        fs = params.get("fs")
+        if fs is None:
+            if "client_kwargs" in params:
+                fs = s3fs.S3FileSystem(**params)
+            else:
+                fs = filesystem(
+                    protocol=protocol,
+                    use_listings_cache=False,
+                    **{k: v for k, v in params.items() if k not in {"cached", "cache_storage", "check_files", "cache_check", "expire_time", "same_names"}},
+                )
+        if params.get("bucket"):
+            protocol = self._fsspec_fs.protocol[0] if hasattr(self._fsspec_fs, 'protocol') else protocol
+            if protocol in ["file", "local"]:
+                bucket = posixpath.abspath(params["bucket"])
+            fs = DirFileSystem(path=params["bucket"], fs=fs)
+        if params.get("cached"):
+            cache_storage = posixpath.expanduser(params["cache_storage"]) if "~" in params["cache_storage"] else params["cache_storage"]
+            return MonitoredSimpleCacheFileSystem(
+                cache_storage=cache_storage,
+                check_files=params["check_files"],
+                cache_check=params["cache_check"],
+                expire_time=params["expire_time"],
+                fs=fs,
+                same_names=params["same_names"],
+                **params,
+            )
+        return fs
 
-    if bucket is not None:
-        if protocol in ["file", "local", "None"]:
-            bucket = posixpath.abspath(bucket)
+    def _create_pyarrow_fs(self, bucket: str | None, fs: AbstractFileSystem, key: str | None, secret: str | None, token: str | None, endpoint_url: str | None, protocol: str | None, **kwargs) -> pfs.FileSystem:
+        credentials = None
+        if fs is not None:
+            protocol = fs.protocol[0] if isinstance(fs.protocol, tuple) else fs.protocol
+            if protocol == "dir":
+                bucket = fs.path
+                fs = fs.fs
+                protocol = fs.protocol[0] if isinstance(fs.protocol, tuple) else fs.protocol
+            if protocol == "s3":
+                credentials = get_credentials_from_fssspec(fs, redact_secrets=False)
+        if credentials is None:
+            credentials = {
+                "access_key": key,
+                "secret_key": secret,
+                "session_token": token,
+                "endpoint_override": endpoint_url,
+            }
+        if protocol == "s3":
+            pyfs = pfs.S3FileSystem(**credentials)
+        elif protocol in ("file", "local", None):
+            pyfs = pfs.LocalFileSystem()
+        else:
+            pyfs = pfs.LocalFileSystem()
+        if bucket is not None:
+            if protocol in ["file", "local", None]:
+                bucket = posixpath.abspath(bucket)
+            pyfs = pfs.SubTreeFileSystem(base_fs=pyfs, base_path=bucket)
+        return pyfs
 
-        fs = pfs.SubTreeFileSystem(base_fs=fs, base_path=bucket)
+    @property
+    def fs(self) -> AbstractFileSystem:
+        return self._fsspec_fs
 
-    return fs
+    @property
+    def pyarrow_fs(self) -> pfs.FileSystem:
+        return self._pyarrow_fs
+
+    def __getattr__(self, name: str):
+        if name in self._fsspec_fs.__dict__:
+            return self._fsspec_fs.__dict__[name]
+        return getattr(self._pyarrow_fs, name) if self.for_pyarrow else getattr(self._fsspec_fs, name)
 
 
 # class FileSystem:

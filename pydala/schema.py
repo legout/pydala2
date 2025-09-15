@@ -46,103 +46,106 @@ def sort_schema(schema: pa.Schema, names: list[str] | None = None) -> pa.Schema:
 #     )
 
 
-def convert_large_types_to_normal(schema: pa.Schema) -> pa.Schema:
-    # Define mapping of large types to standard types
-    type_mapping = {
-        pa.large_string(): pa.string(),
-        pa.large_binary(): pa.binary(),
-        pa.large_utf8(): pa.utf8(),
-        pa.large_list(pa.null()): pa.list_(pa.null()),
-        pa.large_list_view(pa.null()): pa.list_view(pa.null()),
-    }
-    # Convert fields
-    new_fields = []
-    for field in schema:
-        field_type = field.type
-        # Check if type exists in mapping
-        if field_type in type_mapping:
-            new_field = pa.field(
-                name=field.name,
-                type=type_mapping[field_type],
-                nullable=field.nullable,
-                metadata=field.metadata,
+class SchemaConverter:
+    @staticmethod
+    def convert_large_types_to_normal(schema: pa.Schema) -> pa.Schema:
+        # Define mapping of large types to standard types
+        type_mapping = {
+            pa.large_string(): pa.string(),
+            pa.large_binary(): pa.binary(),
+            pa.large_utf8(): pa.utf8(),
+            pa.large_list(pa.null()): pa.list_(pa.null()),
+            pa.large_list_view(pa.null()): pa.list_view(pa.null()),
+        }
+        # Convert fields
+        new_fields = []
+        for field in schema:
+            field_type = field.type
+            # Check if type exists in mapping
+            if field_type in type_mapping:
+                new_field = pa.field(
+                    name=field.name,
+                    type=type_mapping[field_type],
+                    nullable=field.nullable,
+                    metadata=field.metadata,
+                )
+                new_fields.append(new_field)
+            # Handle large lists with nested types
+            elif isinstance(field_type, pa.LargeListType):
+                new_field = pa.field(
+                    name=field.name,
+                    type=pa.list_(
+                        type_mapping[field_type.value_type]
+                        if field_type.value_type in type_mapping
+                        else field_type.value_type
+                    ),
+                    nullable=field.nullable,
+                    metadata=field.metadata,
+                )
+                new_fields.append(new_field)
+            # Handle dictionary with large_string, large_utf8, or large_binary values
+            elif isinstance(field_type, pa.DictionaryType):
+                new_field = pa.field(
+                    name=field.name,
+                    type=pa.dictionary(
+                        field_type.index_type,
+                        type_mapping[field_type.value_type]
+                        if field_type.value_type in type_mapping
+                        else field_type.value_type,
+                        field_type.ordered,
+                    ),
+                    # nullable=field.nullable,
+                    metadata=field.metadata,
+                )
+                new_fields.append(new_field)
+            else:
+                new_fields.append(field)
+
+        return pa.schema(new_fields)
+
+
+    @staticmethod
+    def convert_timestamp(
+        schema: pa.Schema,
+        timestamp_fields: str | list[str] | None = None,
+        unit: str | None = "us",
+        tz: str | None = None,
+        remove_tz: bool = False,
+    ) -> pa.Schema:
+        """Convert timestamp based on given unit and timezone.
+
+        Args:
+            schema (pa.Schema): Pyarrow schema.
+            timestamp_fields (str | list[str] | None, optional): timestamp fields. Defaults to None.
+            unit (str | None): timestamp unit. Defaults to "us".
+            tz (None, optional): timezone. Defaults to None.
+            remove_tz (str | None): Wheter to remove the timezone from the timestamp or not. Defaults to False.
+
+        Returns:
+            pa.Schema: Pyarrow schema with converted timestamp(s).
+        """
+        if timestamp_fields is None:
+            timestamp_fields = [
+                f
+                for f in schema.names
+                if isinstance(schema.field(f).type, pa.TimestampType)
+            ]
+
+        if isinstance(timestamp_fields, str):
+            timestamp_fields = [timestamp_fields]
+
+        for timestamp_field in timestamp_fields:
+            timestamp_field_idx = schema.get_field_index(timestamp_field)
+            unit = unit or schema.field(timestamp_field).type.unit
+            tz = tz or schema.field(timestamp_field).type.tz
+            if remove_tz:
+                tz = None
+            schema = schema.remove(timestamp_field_idx).insert(
+                timestamp_field_idx,
+                pa.field(timestamp_field, pa.timestamp(unit=unit, tz=tz)),
             )
-            new_fields.append(new_field)
-        # Handle large lists with nested types
-        elif isinstance(field_type, pa.LargeListType):
-            new_field = pa.field(
-                name=field.name,
-                type=pa.list_(
-                    type_mapping[field_type.value_type]
-                    if field_type.value_type in type_mapping
-                    else field_type.value_type
-                ),
-                nullable=field.nullable,
-                metadata=field.metadata,
-            )
-            new_fields.append(new_field)
-        # Handle dictionary with large_string, large_utf8, or large_binary values
-        elif isinstance(field_type, pa.DictionaryType):
-            new_field = pa.field(
-                name=field.name,
-                type=pa.dictionary(
-                    field_type.index_type,
-                    type_mapping[field_type.value_type]
-                    if field_type.value_type in type_mapping
-                    else field_type.value_type,
-                    field_type.ordered,
-                ),
-                # nullable=field.nullable,
-                metadata=field.metadata,
-            )
-            new_fields.append(new_field)
-        else:
-            new_fields.append(field)
 
-    return pa.schema(new_fields)
-
-
-def convert_timestamp(
-    schema: pa.Schema,
-    timestamp_fields: str | list[str] | None = None,
-    unit: str | None = "us",
-    tz: str | None = None,
-    remove_tz: bool = False,
-) -> pa.Schema:
-    """Convert timestamp based on given unit and timezone.
-
-    Args:
-        schema (pa.Schema): Pyarrow schema.
-        timestamp_fields (str | list[str] | None, optional): timestamp fields. Defaults to None.
-        unit (str | None): timestamp unit. Defaults to "us".
-        tz (None, optional): timezone. Defaults to None.
-        remove_tz (str | None): Wheter to remove the timezone from the timestamp or not. Defaults to False.
-
-    Returns:
-        pa.Schema: Pyarrow schema with converted timestamp(s).
-    """
-    if timestamp_fields is None:
-        timestamp_fields = [
-            f
-            for f in schema.names
-            if isinstance(schema.field(f).type, pa.TimestampType)
-        ]
-
-    if isinstance(timestamp_fields, str):
-        timestamp_fields = [timestamp_fields]
-
-    for timestamp_field in timestamp_fields:
-        timestamp_field_idx = schema.get_field_index(timestamp_field)
-        unit = unit or schema.field(timestamp_field).type.unit
-        tz = tz or schema.field(timestamp_field).type.tz
-        if remove_tz:
-            tz = None
-        schema = schema.remove(timestamp_field_idx).insert(
-            timestamp_field_idx,
-            pa.field(timestamp_field, pa.timestamp(unit=unit, tz=tz)),
-        )
-
-    return schema
+        return schema
 
 
 def replace_field(schema: pa.Schema, field: str, dtype: pa.DataType) -> pa.Schema:
@@ -263,70 +266,71 @@ def cast_str2bool(
     return table.select(columns)
 
 
-def replace_schema(
-    table: pa.Table,
-    schema: pa.Schema | None = None,
-    field_dtype: dict | None = None,
-    ts_unit: str | None = "us",
-    tz: str | None = None,
-    alter_schema: bool = True,
-) -> pa.Table:
-    """
-    Replaces the schema of a PyArrow table with the specified schema or modifies the existing schema.
+    @staticmethod
+    def replace_schema(
+        table: pa.Table,
+        schema: pa.Schema | None = None,
+        field_dtype: dict | None = None,
+        ts_unit: str | None = "us",
+        tz: str | None = None,
+        alter_schema: bool = True,
+    ) -> pa.Table:
+        """
+        Replaces the schema of a PyArrow table with the specified schema or modifies the existing schema.
 
-    Args:
-        table (pa.Table): The PyArrow table to modify.
-        schema (pa.Schema | None, optional): The new schema to replace the existing schema. Defaults to None.
-        field_dtype (dict | None, optional): A dictionary mapping field names to their new data types. Defaults to None.
-        alter_schema (bool, optional): If True, adds missing fields to the table based on the new schema.
-            If False, drops fields from the table that are not present in the new schema. Defaults to True.
+        Args:
+            table (pa.Table): The PyArrow table to modify.
+            schema (pa.Schema | None, optional): The new schema to replace the existing schema. Defaults to None.
+            field_dtype (dict | None, optional): A dictionary mapping field names to their new data types. Defaults to None.
+            alter_schema (bool, optional): If True, adds missing fields to the table based on the new schema.
+                If False, drops fields from the table that are not present in the new schema. Defaults to True.
 
-    Returns:
-        pa.Table: The modified table with the replaced or modified schema.
-    """
-    schema_org = table.schema
-    if field_dtype is not None:
+        Returns:
+            pa.Table: The modified table with the replaced or modified schema.
+        """
+        schema_org = table.schema
+        if field_dtype is not None:
+            schema = schema or table.schema
+            for field, dtype in field_dtype.items():
+                schema = modify_field(schema=schema, field=field, dtype=dtype)
+
         schema = schema or table.schema
-        for field, dtype in field_dtype.items():
-            schema = modify_field(schema=schema, field=field, dtype=dtype)
 
-    schema = schema or table.schema
+        if schema == schema_org:
+            return table
 
-    if schema == schema_org:
-        return table
+        # add missing fields to the table
+        missing_fields = [
+            field for field in schema.names if field not in table.column_names
+        ]
 
-    # add missing fields to the table
-    missing_fields = [
-        field for field in schema.names if field not in table.column_names
-    ]
+        for field in missing_fields:
+            table = table.append_column(
+                field, pa.array([None] * len(table), type=schema.field(field).type)
+            )
 
-    for field in missing_fields:
-        table = table.append_column(
-            field, pa.array([None] * len(table), type=schema.field(field).type)
-        )
+        if not alter_schema:
+            table = table.drop(
+                [field for field in table.column_names if field not in schema.names]
+            )
 
-    if not alter_schema:
-        table = table.drop(
-            [field for field in table.column_names if field not in schema.names]
-        )
+        int2timestamp_columns = [
+            col
+            for col in schema.names
+            if pa.types.is_timestamp(schema.field(col).type)
+            and (
+                pa.types.is_integer(schema_org.field(col).type)
+                if col in schema_org.names
+                else False
+            )
+        ]
+        table = cast_int2timestamp(table, int2timestamp_columns, unit=ts_unit, tz=tz)
+        # cast str to bool
+        table = cast_str2bool(table, schema=schema)
 
-    int2timestamp_columns = [
-        col
-        for col in schema.names
-        if pa.types.is_timestamp(schema.field(col).type)
-        and (
-            pa.types.is_integer(schema_org.field(col).type)
-            if col in schema_org.names
-            else False
-        )
-    ]
-    table = cast_int2timestamp(table, int2timestamp_columns, unit=ts_unit, tz=tz)
-    # cast str to bool
-    table = cast_str2bool(table, schema=schema)
+        return table.select(schema.names).cast(schema)
 
-    return table.select(schema.names).cast(schema)
-
-    # return table.select(schema.names)
+        # return table.select(schema.names)
 
 
 def _unify_schemas(

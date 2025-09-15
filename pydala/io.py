@@ -18,7 +18,7 @@ from loguru import logger
 from .filesystem import clear_cache
 from .helpers.datetime import get_timestamp_column
 from .helpers.polars import pl
-from .schema import convert_large_types_to_normal, convert_timestamp, replace_schema
+from .schema import SchemaConverter
 from .table import PydalaTable
 
 
@@ -110,37 +110,24 @@ class Writer:
         self.path = None
         self._filesystem = filesystem
 
-    def _to_polars(self):
-        """
-        Convert the data attribute to a Polars DataFrame.
-
-        This function checks the type of the data attribute and converts it to a Polars DataFrame if it is not
-        already one.
-        It supports conversion from Arrow tables, Pandas DataFrames, and DuckDBPyRelations.
-
-        """
-        if isinstance(self.data, pa.Table):
-            self.data = pl.from_arrow(self.data)
-        elif isinstance(self.data, pd.DataFrame):
-            self.data = pl.from_pandas(self.data)
-        elif isinstance(self.data, duckdb.DuckDBPyRelation):
-            self.data = self.data.pl()
-
-    def _to_arrow(self):
-        """
-        Convert the data in the DataFrame to Arrow format.
-
-        This method checks the type of the data and converts it to Arrow format accordingly.
-        It supports conversion from Polars DataFrames, Polars LazyFrames, Pandas DataFrames, and DuckDBPyRelations.
-        """
-        if isinstance(self.data, pl.DataFrame):
-            self.data = self.data.to_arrow()
-        elif isinstance(self.data, pl.LazyFrame):
-            self.data = self.data.collect().to_arrow()
-        elif isinstance(self.data, pd.DataFrame):
-            self.data = pa.Table.from_pandas(self.data)
-        elif isinstance(self.data, duckdb.DuckDBPyRelation):
-            self.data = self.data.arrow()
+    def _convert_to(self, target_format: str):
+        """Convert data to the target format ('polars' or 'arrow')."""
+        if target_format == 'polars':
+            if isinstance(self.data, pa.Table):
+                self.data = pl.from_arrow(self.data)
+            elif isinstance(self.data, pd.DataFrame):
+                self.data = pl.from_pandas(self.data)
+            elif isinstance(self.data, duckdb.DuckDBPyRelation):
+                self.data = self.data.pl()
+        elif target_format == 'arrow':
+            if isinstance(self.data, pl.DataFrame):
+                self.data = self.data.to_arrow()
+            elif isinstance(self.data, pl.LazyFrame):
+                self.data = self.data.collect().to_arrow()
+            elif isinstance(self.data, pd.DataFrame):
+                self.data = pa.Table.from_pandas(self.data)
+            elif isinstance(self.data, duckdb.DuckDBPyRelation):
+                self.data = self.data.arrow()
 
     def _set_schema(self):
         """
@@ -278,17 +265,17 @@ class Writer:
         self._set_schema()
         self._use_large_string = use_large_string
         if not use_large_string:
-            self.schema = convert_large_types_to_normal(self.schema)
+            self.schema = SchemaConverter.convert_large_types_to_normal(self.schema)
 
         if tz is not None or ts_unit is not None or remove_tz:
-            self.schema = convert_timestamp(
+            self.schema = SchemaConverter.convert_timestamp(
                 self.schema,
                 tz=tz,
                 unit=ts_unit,
                 remove_tz=remove_tz,
             )
 
-        self.data = replace_schema(
+        self.data = SchemaConverter.replace_schema(
             self.data,
             self.schema,
             # ts_unit=None,
@@ -322,6 +309,40 @@ class Writer:
             self.data = self.data.collect()
         return self.data.shape
 
+    def _get_basename_template(self, basename: str | None) -> str:
+        if basename is None:
+            return (
+                "data-"
+                f"{dt.datetime.now().strftime('%Y%m%d_%H%M%S%f')[:-3]}-{uuid.uuid4().hex[:16]}-{{i}}.parquet"
+            )
+        return f"{basename}-{{i}}.parquet"
+
+    def _file_visitor(self, written_file, verbose: bool, metadata: list):
+        if verbose:
+            logger.info(f"path={written_file.path}")
+            logger.info(f"size={written_file.size} bytes")
+            logger.info(f"metadata={written_file.metadata}")
+        metadata.append({written_file.path: written_file.metadata})
+
+    def _write_with_retry(self, create_dir: bool, metadata: list, *args, **kwargs):
+        retries = 0
+        while retries < 2:
+            try:
+                pds.write_dataset(
+                    *args,
+                    file_visitor=lambda wf: self._file_visitor(wf, kwargs.get('verbose', False), metadata),
+                    create_dir=create_dir,
+                    **kwargs,
+                )
+                return
+            except Exception as e:
+                retries += 1
+                if retries == 2:
+                    raise e
+                self.clear_cache()
+                time.sleep(0.1)
+                create_dir = False
+
     def write_to_dataset(
         self,
         row_group_size: int | None = None,
@@ -352,65 +373,33 @@ class Writer:
         Returns:
             None
         """
-        self._to_arrow()
+        self._convert_to('arrow')
 
-        if basename is None:
-            basename_template = (
-                "data-"
-                f"{dt.datetime.now().strftime('%Y%m%d_%H%M%S%f')[:-3]}-{uuid.uuid4().hex[:16]}-{{i}}.parquet"
-            )
-        else:
-            basename_template = f"{basename}-{{i}}.parquet"
+        basename_template = self._get_basename_template(basename)
+        file_options = pds.ParquetFileFormat().make_write_options(compression=compression)
 
-        file_options = pds.ParquetFileFormat().make_write_options(
-            compression=compression
-        )
-
-        if hasattr(self._filesystem, "fs"):
-            if "local" in self._filesystem.fs.protocol:
-                create_dir = True
-        else:
-            if "local" in self._filesystem.protocol:
-                create_dir = True
+        if hasattr(self._filesystem, "fs") and "local" in self._filesystem.fs.protocol:
+            create_dir = True
+        elif "local" in self._filesystem.protocol:
+            create_dir = True
 
         metadata = []
-
-        def file_visitor(written_file):
-            if verbose:
-                logger.info(f"path={written_file.path}")
-                logger.info(f"size={written_file.size} bytes")
-                logger.info(f"metadata={written_file.metadata}")
-            # written_file.metadata.set_file_path(written_file.path)
-            metadata.append({written_file.path: written_file.metadata})
-
-        retries = 0
-        while retries < 2:
-            try:
-                pds.write_dataset(
-                    self.data,
-                    base_dir=self.base_path,
-                    filesystem=self._filesystem,
-                    file_options=file_options,
-                    partitioning=partitioning_columns,
-                    partitioning_flavor=partitioning_flavor,
-                    basename_template=basename_template,
-                    min_rows_per_group=row_group_size,
-                    max_rows_per_group=row_group_size,
-                    max_rows_per_file=max_rows_per_file,
-                    existing_data_behavior="overwrite_or_ignore",
-                    create_dir=create_dir,
-                    format="parquet",
-                    file_visitor=file_visitor,
-                    **kwargs,
-                )
-                break
-            except Exception as e:
-                retries += 1
-                if retries == 2:
-                    raise e
-                self.clear_cache()
-                time.sleep(0.1)
-                create_dir = False
+        write_kwargs = {
+            'base_dir': self.base_path,
+            'filesystem': self._filesystem,
+            'file_options': file_options,
+            'partitioning': partitioning_columns,
+            'partitioning_flavor': partitioning_flavor,
+            'basename_template': basename_template,
+            'min_rows_per_group': row_group_size,
+            'max_rows_per_group': row_group_size,
+            'max_rows_per_file': max_rows_per_file,
+            'existing_data_behavior': "overwrite_or_ignore",
+            'format': "parquet",
+            'verbose': verbose,
+            **kwargs,
+        }
+        self._write_with_retry(create_dir, metadata, self.data, **write_kwargs)
         return metadata
 
     def clear_cache(self) -> None:

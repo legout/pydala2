@@ -10,6 +10,75 @@ from munch import Munch, munchify, toYAML, unmunchify
 from pydala.helpers.polars import pl
 
 from .dataset import CsvDataset, JsonDataset, ParquetDataset, PyarrowDataset
+
+from abc import ABC, abstractmethod
+
+class AbstractLoader(ABC):
+    def _matches_format(self, params) -> bool:
+        raise NotImplementedError
+
+    def _read_data(self, catalog, params, **kwargs) -> pl.DataFrame:
+        raise NotImplementedError
+
+    def _get_dataset_class(self):
+        raise NotImplementedError
+
+    def load(self, catalog, table_name, as_dataset: bool, with_metadata: bool = False, **kwargs):
+        params = catalog._get_table_params(table_name=table_name)
+        if not self._matches_format(params):
+            return None
+        if not as_dataset:
+            df = self._read_data(catalog, params, **kwargs)
+            catalog.ddb_con.register(table_name, df)
+            return df
+        cls = self._get_dataset_class(with_metadata)
+        return cls(params.path, filesystem=catalog.fs[params.filesystem], name=table_name, ddb_con=catalog.ddb_con, **kwargs)
+
+class ParquetLoader(AbstractLoader):
+    def _matches_format(self, params) -> bool:
+        return 'parquet' in params.format.lower()
+
+    def _read_data(self, catalog, params, **kwargs) -> pl.DataFrame:
+        fs = catalog.fs[params.filesystem]
+        if params.path.endswith('.parquet'):
+            return fs.read_parquet(params.path, **kwargs)
+        return fs.read_parquet_dataset(params.path, **kwargs)
+
+    def _get_dataset_class(self, with_metadata: bool = True):
+        return ParquetDataset if with_metadata else PyarrowDataset
+
+class CsvLoader(AbstractLoader):
+    def _matches_format(self, params) -> bool:
+        return 'csv' in params.format.lower()
+
+    def _read_data(self, catalog, params, **kwargs) -> pl.DataFrame:
+        fs = catalog.fs[params.filesystem]
+        if params.path.endswith('.csv'):
+            return fs.read_csv(params.path, **kwargs)
+        return fs.read_csv_dataset(params.path, **kwargs)
+
+    def _get_dataset_class(self, with_metadata: bool = True):
+        return CsvDataset
+
+class JsonLoader(AbstractLoader):
+    def _matches_format(self, params) -> bool:
+        return 'json' in params.format.lower()
+
+    def _read_data(self, catalog, params, **kwargs) -> pl.DataFrame:
+        fs = catalog.fs[params.filesystem]
+        if params.path.endswith('.json'):
+            return fs.read_json(params.path, **kwargs)
+        return fs.read_json_dataset(params.path, **kwargs)
+
+    def _get_dataset_class(self, with_metadata: bool = True):
+        return JsonDataset
+
+# Registry
+LOADERS = {
+    'parquet': ParquetLoader(),
+    'csv': CsvLoader(),
+    'json': JsonLoader(),
+}
 from .filesystem import FileSystem
 from .helpers.misc import delattr_rec, get_nested_keys, getattr_rec, setattr_rec
 from .helpers.sql import get_table_names
@@ -162,87 +231,22 @@ class Catalog:
         )
 
     def load_parquet(
-        self, table_name: str, as_dataset=True, with_metadata: bool = True, **kwargs
+        self, table_name: str, as_dataset: bool = True, with_metadata: bool = True, **kwargs
     ) -> ParquetDataset | PyarrowDataset | pl.DataFrame | None:
-        params = self._get_table_params(table_name=table_name)
-
-        if "parquet" not in params.format.lower():
-            return
-        if not as_dataset:
-            if params.path.endswith(".parquet"):
-                df = self.fs[params.filesystem].read_parquet(params.path, **kwargs)
-                self.ddb_con.register(table_name, df)
-                return df
-
-            df = self.fs[params.filesystem].read_parquet_dataset(params.path, **kwargs)
-            self.ddb_con.register(table_name, df)
-            return df
-
-        if with_metadata:
-            return ParquetDataset(
-                params.path,
-                filesystem=self.fs[params.filesystem],
-                name=table_name,
-                ddb_con=self.ddb_con,
-                **kwargs,
-            )
-
-        return PyarrowDataset(
-            params.path,
-            filesystem=self.fs[params.filesystem],
-            name=table_name,
-            ddb_con=self.ddb_con,
-            **kwargs,
-        )
+        """Load Parquet table as DataFrame or dataset."""
+        return self.load(table_name, as_dataset=as_dataset, with_metadata=with_metadata, **kwargs)
 
     def load_csv(
         self, table_name: str, as_dataset: bool = True, **kwargs
     ) -> CsvDataset | pl.DataFrame | None:
-        params = self._get_table_params(table_name=table_name)
-
-        if "csv" not in params.format.lower():
-            return
-        if not as_dataset:
-            if params.path.endswith(".csv"):
-                df = self.fs[params.filesystem].read_parquet(params.path, **kwargs)
-                self.ddb_con.register(table_name, df)
-                return df
-
-            df = self.fs[params.filesystem].read_parquet_dataset(params.path, **kwargs)
-            self.ddb_con.register(table_name, df)
-            return df
-
-        return CsvDataset(
-            params.path,
-            filesystem=self.fs[params.filesystem],
-            name=table_name,
-            ddb_con=self.ddb_con,
-            **kwargs,
-        )
+        """Load CSV table as DataFrame or dataset."""
+        return self.load(table_name, as_dataset=as_dataset, with_metadata=False, **kwargs)
 
     def load_json(
         self, table_name: str, as_dataset: bool = True, **kwargs
     ) -> JsonDataset | pl.DataFrame | None:
-        params = self._get_table_params(table_name=table_name)
-
-        if "json" not in params.format.lower():
-            return
-        if not as_dataset:
-            if params.path.endswith(".json"):
-                df = self.fs[params.filesystem].read_json(params.path, **kwargs)
-                self.ddb_con.register(table_name, df)
-                return df
-
-            df = self.fs[params.filesystem].read_json_dataset(params.path, **kwargs)
-            self.ddb_con.register(table_name, df)
-            return df
-        return JsonDataset(
-            params.path,
-            filesystem=self.fs[params.filesystem],
-            name=table_name,
-            ddb_con=self.ddb_con,
-            **kwargs,
-        )
+        """Load JSON table as DataFrame or dataset."""
+        return self.load(table_name, as_dataset=as_dataset, with_metadata=False, **kwargs)
 
     def load(
         self,
@@ -253,30 +257,15 @@ class Catalog:
         **kwargs,
     ):
         params = self._get_table_params(table_name=table_name)
-
-        if params.format.lower() == "parquet":
-            if table_name not in self.table and not reload:
-                self.table[table_name] = self.load_parquet(
-                    table_name,
-                    as_dataset=as_dataset,
-                    with_metadata=with_metadata,
-                    **kwargs,
-                )
-            return self.table[table_name]
-
-        elif params.format.lower() == "csv":
-            if table_name not in self.table and not reload:
-                self.table[table_name] = self.load_csv(
-                    table_name, as_dataset=as_dataset, **kwargs
-                )
-            return self.table[table_name]
-
-        elif params.format.lower() == "json":
-            if table_name not in self.table and not reload:
-                self.table[table_name] = self.load_json(table_name, **kwargs)
-            return self.table[table_name]
-
-        # return None
+        format_lower = params.format.lower()
+        loader = LOADERS.get(format_lower)
+        if loader is None:
+            return None
+        if table_name not in self.table and not reload:
+            self.table[table_name] = loader.load(
+                self, table_name, as_dataset, with_metadata, **kwargs
+            )
+        return self.table[table_name]
 
     # def _ddb_table_mapping(self, table_name: str):
     #     params = getattr_rec(self._catalog, self._get_table_from_table_name(table_name=table_name))
