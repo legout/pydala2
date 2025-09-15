@@ -28,7 +28,7 @@ def escape_sql_identifier(identifier: str) -> str:
         raise ValueError(f"Invalid identifier: {identifier}")
     
     # Double quote identifiers for SQL standard compliance
-    return f'"{identifier.replace('"', '"")}"'
+    return f'"{identifier.replace('"', '\\"')}"'
 
 
 def escape_sql_literal(value: Any) -> str:
@@ -53,7 +53,7 @@ def escape_sql_literal(value: Any) -> str:
         return str(value)
     
     if isinstance(value, bool):
-        return "TRUE" if value else "FALSE"
+        return "'TRUE'" if value else "'FALSE'"
     
     # For other types, convert to string and escape
     escaped = str(value).replace("'", "''")
@@ -208,7 +208,7 @@ def sanitize_filename(filename: str) -> str:
         Sanitized filename
     """
     if not filename:
-        raise ValueError("Filename cannot be empty")
+        return "unnamed"
     
     # Remove path separators and dangerous characters
     sanitized = re.sub(r'[<>:"/\\|?*\x00-\x1F]', '', filename)

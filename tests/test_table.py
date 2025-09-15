@@ -2,13 +2,13 @@ import unittest
 from unittest.mock import Mock
 import pyarrow.dataset as pds
 import pyarrow as pa
-from pydala.table import YourTableClass
+from pydala.table import PydalaTable
 
 
-class TestYourTableClass(unittest.TestCase):
+class TestPydalaTable(unittest.TestCase):
     def setUp(self):
         # Create a mock table object
-        self.table = YourTableClass()
+        self.table = PydalaTable()
 
     def test_scanner(self):
         # Define the expected arguments for the to_arrow_scanner method

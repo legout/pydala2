@@ -3,7 +3,14 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.dataset as pds
 
+from .config import ConversionConfig, ScanConfig, TableMetadata
+from .converters import (
+    ArrowConverter, BatchReaderConverter, DuckDBConverter,
+    PandasConverter, PolarsConverter
+)
 from .helpers.polars import pl as _pl
+from .sort_handler import SortHandler
+from .table_scanner import TableScanner
 
 
 class PydalaTable:
@@ -17,15 +24,31 @@ class PydalaTable:
         else:
             self.ddb_con = ddb_con
 
-        self._type = (
-            "duckdb" if isinstance(result, _duckdb.DuckDBPyRelation) else "pyarrow"
-        )
-        if self._type == "pyarrow":
-            self._dataset = result
-            self._ddb = self.ddb_con.from_arrow(result)
+        # Determine table type and set up metadata
+        table_type = "duckdb" if isinstance(result, _duckdb.DuckDBPyRelation) else "pyarrow"
+
+        if table_type == "pyarrow":
+            dataset = result
+            ddb_relation = self.ddb_con.from_arrow(result)
         else:
-            self._dataset = pds.dataset(result.arrow())
-            self._ddb = result
+            dataset = pds.dataset(result.arrow())
+            ddb_relation = result
+
+        # Initialize metadata and components
+        self._metadata = TableMetadata(
+            table_type=table_type,
+            dataset=dataset,
+            ddb_relation=ddb_relation,
+            ddb_connection=self.ddb_con
+        )
+
+        # Initialize components
+        self._scanner = TableScanner(self._metadata)
+        self._arrow_converter = ArrowConverter(self._metadata)
+        self._duckdb_converter = DuckDBConverter(self._metadata)
+        self._polars_converter = PolarsConverter(self._metadata)
+        self._pandas_converter = PandasConverter(self._metadata)
+        self._batch_reader_converter = BatchReaderConverter(self._metadata)
 
     @staticmethod
     def _get_sort_by(
@@ -45,52 +68,7 @@ class PydalaTable:
         Raises:
             ValueError: If sort_by is not a string, list of strings, or list of tuples.
         """
-        if isinstance(sort_by, str):
-            sort_by = [s.split(" ") for s in sort_by.split(",")]
-            sort_by = [[s[0], "ascending"] if len(s) == 1 else s for s in sort_by]
-
-        elif isinstance(sort_by, list | tuple):
-            if isinstance(sort_by[0], str):
-                sort_by = [
-                    [s, "ascending"] if isinstance(s, str) else s for s in sort_by
-                ]
-            if isinstance(sort_by[0], list):
-                sort_by = [[s[0], s[1]] for s in sort_by]
-
-        for i in range(len(sort_by)):
-            if sort_by[i][1].lower() in ["asc", "ascending"]:
-                sort_by[i][1] = "ascending"
-            elif sort_by[i][1].lower() in ["desc", "descending"]:
-                sort_by[i][1] = "descending"
-
-        if type_ == "pyarrow":
-            return {"sorting": [(s[0], s[1]) for s in sort_by]}
-
-        elif type_ == "duckdb":
-            sort_by = ",".join(
-                [
-                    " ".join(
-                        [
-                            s[0],
-                            s[1]
-                            .replace("ascending", "ASC")
-                            .replace("descending", "DESC"),
-                        ]
-                    )
-                    for s in sort_by
-                ]
-            )
-            return sort_by
-
-        elif type_ == "polars":
-            by = [s[0] for s in sort_by]
-            descending = [s[1].lower() == "descending" for s in sort_by]
-            return {"by": by, "descending": descending}
-
-        else:
-            raise ValueError(
-                "sort_by must be a string, list of strings, or list of tuples."
-            )
+        return SortHandler.get_sort_by(sort_by, type_)
 
     def to_arrow_dataset(self) -> pds.Dataset:
         """
@@ -99,7 +77,7 @@ class PydalaTable:
         Returns:
             pds.Dataset: The PyArrow dataset if the type is "pyarrow", otherwise None.
         """
-        return self._dataset
+        return self._metadata.dataset
 
     @property
     def arrow_dataset(self) -> pds.Dataset:
@@ -145,36 +123,17 @@ class PydalaTable:
         Raises:
             ValueError: If the table type is not "pyarrow".
         """
-
-        if self._type != "pyarrow":
-            raise ValueError("This method is only available for pyarrow datasets.")
-
-        if isinstance(columns, str):
-            columns = [columns]
-
-        if sort_by is not None:
-            sort_by = self._get_sort_by(sort_by, "pyarrow")
-            return self._dataset.sort_by(**sort_by).scanner(
-                columns=columns,
-                filter=filter,
-                batch_size=batch_size,
-                batch_readahead=batch_readahead,
-                fragment_readahead=fragment_readahead,
-                fragment_scan_options=fragment_scan_options,
-                use_threads=use_threads,
-                memory_pool=memory_pool,
-            )
-        else:
-            return self._dataset.scanner(
-                columns=columns,
-                filter=filter,
-                batch_size=batch_size,
-                batch_readahead=batch_readahead,
-                fragment_readahead=fragment_readahead,
-                fragment_scan_options=fragment_scan_options,
-                use_threads=use_threads,
-                memory_pool=memory_pool,
-            )
+        return self._scanner.to_arrow_scanner(
+            columns=columns,
+            filter=filter,
+            batch_size=batch_size,
+            sort_by=sort_by,
+            batch_readahead=batch_readahead,
+            fragment_readahead=fragment_readahead,
+            fragment_scan_options=fragment_scan_options,
+            use_threads=use_threads,
+            memory_pool=memory_pool,
+        )
 
     def to_scanner(
         self,
@@ -210,17 +169,16 @@ class PydalaTable:
         Returns:
             pds.Scanner: The scanner object for efficient data scanning.
         """
-
         return self.to_arrow_scanner(
             columns=columns,
             filter=filter,
             batch_size=batch_size,
+            sort_by=sort_by,
             batch_readahead=batch_readahead,
             fragment_readahead=fragment_readahead,
             fragment_scan_options=fragment_scan_options,
             use_threads=use_threads,
             memory_pool=memory_pool,
-            sort_by=sort_by,
         )
 
     def scanner(
@@ -256,17 +214,16 @@ class PydalaTable:
         Returns:
             pds.Scanner: Scanner object for scanning the table.
         """
-
         return self.to_arrow_scanner(
             columns=columns,
             filter=filter,
             batch_size=batch_size,
+            sort_by=sort_by,
             batch_readahead=batch_readahead,
             fragment_readahead=fragment_readahead,
             fragment_scan_options=fragment_scan_options,
             use_threads=use_threads,
             memory_pool=memory_pool,
-            sort_by=sort_by,
         )
 
     def to_duckdb(
@@ -293,26 +250,15 @@ class PydalaTable:
         Returns:
             _duckdb.DuckDBPyRelation: The converted DuckDBPyRelation object.
         """
-
-        if isinstance(columns, str):
-            columns = [columns]
-
-        columns = "*" if columns is None else ",".join(columns)
-
-        if lazy:
-            if sort_by is not None:
-                sort_by = self._get_sort_by(sort_by, "duckdb")
-                ddb = self._ddb.select(columns).order(sort_by)
-            else:
-                ddb = self._ddb.select(columns)
-        else:
-            ddb = self.ddb_con.from_arrow(
-                self.scanner(
-                    columns=columns, sort_by=sort_by, batch_size=batch_size, **kwargs
-                ).to_table()
-            )
-
-        return ddb.distinct() if distinct else ddb
+        config = ConversionConfig(
+            columns=columns,
+            sort_by=sort_by,
+            distinct=distinct,
+            lazy=lazy,
+            batch_size=batch_size,
+            **kwargs
+        )
+        return self._duckdb_converter.convert(config)
 
     def to_batch_reader(
         self,
@@ -349,24 +295,20 @@ class PydalaTable:
         Returns:
             pa.RecordBatchReader: The batch reader object.
         """
-
-        if self._type == "pyarrow" and sort_by is None and not distinct:
-            if batch_size == 131072:
-                return self.to_arrow_scanner(
-                    columns=columns,
-                    filter=filter,
-                    batch_size=batch_size,
-                    sort_by=sort_by,
-                    batch_readahead=batch_readahead,
-                    fragment_readahead=fragment_readahead,
-                    fragment_scan_options=fragment_scan_options,
-                    use_threads=use_threads,
-                    memory_pool=memory_pool,
-                ).to_reader()
-
-        return self.to_duckdb(
-            columns=columns, lazy=lazy, sort_by=sort_by, distinct=distinct
-        ).fetch_arrow_reader(batch_size=batch_size)
+        config = ConversionConfig(
+            columns=columns,
+            sort_by=sort_by,
+            distinct=distinct,
+            lazy=lazy,
+            batch_size=batch_size,
+            filter=filter,
+            batch_readahead=batch_readahead,
+            fragment_readahead=fragment_readahead,
+            fragment_scan_options=fragment_scan_options,
+            use_threads=use_threads,
+            memory_pool=memory_pool,
+        )
+        return self._batch_reader_converter.convert(config)
 
     def to_batches(
         self,
@@ -402,7 +344,6 @@ class PydalaTable:
         Returns:
             pa.RecordBatch: The resulting sequence of RecordBatches.
         """
-
         return self.to_batch_reader(
             columns=columns,
             filter=filter,
@@ -460,27 +401,19 @@ class PydalaTable:
         Returns:
             pa.Table: The converted Arrow Table.
         """
-
-        if self._type == "pyarrow":
-            t = self.scanner(
-                columns=columns,
-                filter=filter,
-                batch_size=batch_size,
-                sort_by=sort_by,
-                batch_readahead=batch_readahead,
-                fragment_readahead=fragment_readahead,
-                fragment_scan_options=fragment_scan_options,
-                use_threads=use_threads,
-                memory_pool=memory_pool,
-            ).to_table()
-            if distinct:
-                return _pl.from_arrow(t).unique(maintain_order=True).to_arrow()
-            return t
-
-        else:
-            return self.to_duckdb(
-                columns=columns, sort_by=sort_by, distinct=distinct
-            ).to_arrow_table()
+        scan_config = ScanConfig(
+            columns=columns,
+            filter=filter,
+            batch_size=batch_size,
+            sort_by=sort_by,
+            batch_readahead=batch_readahead,
+            fragment_readahead=fragment_readahead,
+            fragment_scan_options=fragment_scan_options,
+            use_threads=use_threads,
+            memory_pool=memory_pool,
+            distinct=distinct,
+        )
+        return self._arrow_converter.to_table(scan_config)
 
     def to_arrow(
         self,
@@ -516,7 +449,6 @@ class PydalaTable:
         Returns:
             pa.Table: The converted Arrow table.
         """
-
         return self.to_arrow_table(
             columns=columns,
             filter=filter,
@@ -564,7 +496,6 @@ class PydalaTable:
         Returns:
             pa.Table: The resulting Arrow Table.
         """
-
         return self.to_arrow_table(
             columns=columns,
             filter=filter,
@@ -614,40 +545,15 @@ class PydalaTable:
         Returns:
             _pl.DataFrame | _pl.LazyFrame: The resulting Polars DataFrame or LazyFrame.
         """
-
-        if isinstance(columns, str):
-            columns = [columns]
-
-        if self._type == "pyarrow":
-            if lazy:
-                df = _pl.scan_pyarrow_dataset(self._dataset, batch_size=batch_size)
-                if columns is not None:
-                    df = df.select(columns)
-                if sort_by is not None:
-                    sort_by = self._get_sort_by(sort_by, "polars")
-                    df = df.sort(**sort_by)
-                if distinct:
-                    df = df.unique(maintain_order=True)
-            else:
-                df = _pl.from_arrow(
-                    self.to_batches(
-                        columns=columns,
-                        batch_size=batch_size,
-                        sort_by=sort_by,
-                        distinct=distinct,
-                        **kwargs,
-                    )
-                )
-        else:
-            df = self.to_duckdb(
-                lazy=lazy,
-                columns=columns,
-                sort_by=sort_by,
-                distinct=distinct,
-                batch_size=batch_size,
-                **kwargs,
-            ).pl(batch_size=batch_size)
-        return df
+        config = ConversionConfig(
+            columns=columns,
+            sort_by=sort_by,
+            distinct=distinct,
+            lazy=lazy,
+            batch_size=batch_size,
+            **kwargs
+        )
+        return self._polars_converter.convert(config)
 
     @property
     def pl(self) -> _pl.DataFrame | _pl.LazyFrame:
@@ -678,9 +584,13 @@ class PydalaTable:
         Returns:
             pd.DataFrame: A pandas DataFrame representing the table.
         """
-        return self.to_arrow_table(
-            columns=columns, sort_by=sort_by, distinct=distinct, **kwargs
-        ).to_pandas()
+        config = ConversionConfig(
+            columns=columns,
+            sort_by=sort_by,
+            distinct=distinct,
+            **kwargs
+        )
+        return self._pandas_converter.convert(config)
 
     def to_df(
         self,
@@ -728,10 +638,10 @@ class PydalaTable:
         return self.ddb_con.sql(sql)
 
     def __repr__(self):
-        # if self._type == "pyarrow":
+        # if self._metadata.table_type == "pyarrow":
         #    return self.to_polars().head(10).collect().__repr__()
         # return self.result.limit(10).__repr__()
         return self.to_duckdb().limit(10).__repr__()
 
     def __call__(self):
-        return self.result
+        return self._metadata.ddb_relation

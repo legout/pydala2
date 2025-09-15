@@ -100,7 +100,7 @@ class TestPathSecurity:
         with pytest.raises(ValueError):
             validate_path("../etc/passwd")
         with pytest.raises(ValueError):
-            validate_path("..\windows\system32")
+            validate_path(r"..\windows\system32")
         with pytest.raises(ValueError):
             validate_path("/absolute/path")
         
