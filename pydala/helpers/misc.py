@@ -1,15 +1,11 @@
 from fsspec_utils.utils.misc import run_parallel
-from fsspec import AbstractFileSystem
-# import posixpath
-# import re
-# from typing import Any
+import posixpath
+import re
 
 import pyarrow as pa
-# import pyarrow.compute as pc
-# import pyarrow.parquet as pq
+import pyarrow.parquet as pq
 import tqdm
-# from fsspec import AbstractFileSystem
-from fsspec import filesystem as fsspec_filesystem
+from fsspec import filesystem as fsspec_filesystem, AbstractFileSystem
 from joblib import Parallel, delayed
 
 # # from ..schema import convert_large_types_to_normal
