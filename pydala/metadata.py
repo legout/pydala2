@@ -17,7 +17,6 @@ from loguru import logger
 
 from .filesystem import FileSystem, clear_cache
 
-# from .helpers.metadata import collect_parquet_metadata  # , remove_from_metadata
 from .helpers.misc import get_partitions_from_path, run_parallel, unify_schemas_pl
 from .schema import (
     convert_large_types_to_normal,  # unify_schemas
@@ -65,7 +64,7 @@ def collect_parquet_metadata(
         filesystem (AbstractFileSystem | pfs.FileSystem | None, optional): Filesystem. Defaults to None.
         n_jobs (int, optional): n_jobs parameter of joblib.Parallel. Defaults to -1.
         backend (str, optional): backend parameter of joblib.Parallel. Defaults to "threading".
-        verbose (bool, optional): Wheter to show the task progress using tqdm or not. Defaults to True.
+        verbose (bool, optional): Whether to show the task progress using tqdm or not. Defaults to True.
 
     Returns:
         dict[str, pq.FileMetaData]: Parquet metadata of the given files.
@@ -111,9 +110,7 @@ def remove_from_metadata(
     """
     row_groups = []
     if rm_files is not None:
-        if base_path is not None:
-            rm_files = [f.replace(base_path, "").lstrip("/") for f in rm_files]
-
+        rm_files = _normalize_file_paths(rm_files, base_path)
         # row_groups to keep
         row_groups += [
             metadata.row_group(i)
@@ -121,9 +118,7 @@ def remove_from_metadata(
             if metadata.row_group(i).column(0).file_path not in rm_files
         ]
     if keep_files is not None:
-        if base_path is not None:
-            keep_files = [f.replace(base_path, "").lstrip("/") for f in keep_files]
-
+        keep_files = _normalize_file_paths(keep_files, base_path)
         # row_groups to keep
         row_groups += [
             metadata.row_group(i)
@@ -139,6 +134,102 @@ def remove_from_metadata(
         return new_metadata
 
     return metadata
+
+
+def _normalize_file_paths(files: list[str], base_path: str | None = None) -> list[str]:
+    """Normalize file paths by removing base path prefix if provided."""
+    if base_path is not None:
+        return [f.replace(base_path, "").lstrip("/") for f in files]
+    return files
+
+
+def _log_if_verbose(verbose: bool, message: str) -> None:
+    """Log message if verbose mode is enabled."""
+    if verbose:
+        logger.info(message)
+
+
+def _create_empty_statistics() -> dict[str, Any]:
+    """Create an empty statistics dictionary with default values."""
+    return {
+        "has_min_max": False,
+        "min": None,
+        "max": None,
+        "null_count": None,
+        "distinct_count": None,
+        "num_values": None,
+        "physical_type": "UNKNOWN",
+    }
+
+
+def _process_filter_operator(filter_expr: str, operator: str) -> str:
+    """Process filter expression for a given operator."""
+    if operator == ">":
+        return f"({filter_expr.replace('>', '.max>')} OR {filter_expr.split('>')[0]}.max IS NULL)"
+    elif operator == "<":
+        return f"({filter_expr.replace('<', '.min<')} OR {filter_expr.split('<')[0]}.min IS NULL)"
+    elif operator == "=":
+        return (
+            f"({filter_expr.replace('=', '.min<=')} OR {filter_expr.split('=')[0]}.min IS NULL) "
+            + f"AND ({filter_expr.replace('=', '.max>=')} OR {filter_expr.split('=')[0]}.max IS NULL)"
+        )
+    return filter_expr
+
+
+def _calculate_file_differences(current_files: list[str], existing_files: list[str] | None) -> tuple[list[str], list[str]]:
+    """Calculate the differences between current and existing file lists.
+
+    Returns:
+        tuple: (new_files, removed_files)
+    """
+    if existing_files is None:
+        return current_files, []
+
+    current_set = set(current_files)
+    existing_set = set(existing_files)
+
+    new_files = sorted(current_set - existing_set)
+    removed_files = sorted(existing_set - current_set)
+
+    return new_files, removed_files
+
+
+def _process_row_group_metadata(metadata_: pq.FileMetaData, rg_num: int, partitioning: None | str | list[str] = None) -> dict[str, Any]:
+    """Process a single row group and return its metadata."""
+    row_group = metadata_.row_group(rg_num)
+    file_path = row_group.column(0).file_path
+    result = {
+        "file_path": file_path,
+        "num_columns": row_group.num_columns,
+        "num_rows": row_group.num_rows,
+        "total_byte_size": row_group.total_byte_size,
+        "compression": row_group.column(0).compression,
+    }
+
+    # Handle partitioning
+    partitioning_ = partitioning or ("hive" if "=" in file_path else partitioning)
+    if partitioning_ is not None:
+        partitions = dict(
+            get_partitions_from_path(file_path, partitioning=partitioning_)
+        )
+        result.update(partitions)
+
+    # Process column statistics
+    for col_num in range(row_group.num_columns):
+        rgc = row_group.column(col_num)
+        rgc = rgc.to_dict()
+        col_name = rgc.pop("path_in_schema")
+        rgc.pop("file_path")
+        rgc.pop("compression")
+        if "statistics" in rgc:
+            if rgc["statistics"] is not None:
+                rgc.update(rgc.pop("statistics"))
+            else:
+                rgc.pop("statistics")
+                rgc.update(_create_empty_statistics())
+        result[col_name] = rgc
+
+    return result
 
 
 def get_file_paths(
@@ -197,14 +288,13 @@ class ParquetDatasetMetadata:
         )
 
         self._makedirs()
-        # self.load_files()
 
         self._fs_kwargs = fs_kwargs
 
         self._metadata_file = posixpath.join(path, "_metadata")
         self._file_metadata_file = posixpath.join(path, "_file_metadata")
         self._metadata = self._read_metadata()
-        self._file_metadata = None  # self._read_file_metadata()
+        self._file_metadata = None
         if update_metadata:
             self.update()
 
@@ -212,7 +302,7 @@ class ParquetDatasetMetadata:
         if self.has_metadata_file:
             return pq.read_metadata(self._metadata_file, filesystem=self._filesystem)
 
-    def _read_file_metadata(self) -> dict[str : pq.FileMetaData] | None:
+    def _read_file_metadata(self) -> dict[str, pq.FileMetaData] | None:
         if self.has_file_metadata_file:
             # First try to open as text (JSON)
             try:
@@ -221,21 +311,28 @@ class ParquetDatasetMetadata:
                     return deserialize_metadata(data)
             except (json.JSONDecodeError, UnicodeDecodeError):
                 # Fall back to binary pickle format for backward compatibility
-                with self._filesystem.open(self._file_metadata_file, "rb") as f:
-                    logger.warning(
-                        f"Using deprecated pickle format for {self._file_metadata_file}. "
-                        "Please consider migrating to JSON format."
-                    )
-                    # Security note: pickle is insecure, but maintained for backward compatibility
-                    return pickle.load(f)
+                try:
+                    with self._filesystem.open(self._file_metadata_file, "rb") as f:
+                        logger.warning(
+                            f"Using deprecated pickle format for {self._file_metadata_file}. "
+                            "Please consider migrating to JSON format."
+                        )
+                        # Security note: pickle is insecure, but maintained for backward compatibility
+                        return pickle.load(f)
+                except (pickle.PickleError, EOFError) as e:
+                    logger.error(f"Failed to read pickle file {self._file_metadata_file}: {e}")
+                    return None
+            except (OSError, IOError) as e:
+                logger.error(f"Failed to read file metadata file {self._file_metadata_file}: {e}")
+                return None
 
     def _makedirs(self):
         if self._filesystem.exists(self._path):
             return
         try:
             self._filesystem.mkdir(self._path)
-        except Exception as e:
-            _ = e
+        except (OSError, PermissionError) as e:
+            # If directory creation fails, try to create a temporary file to ensure the path exists
             self._filesystem.touch(posixpath.join(self._path, "tmp.delete"))
             self._filesystem.rm(posixpath.join(self._path, "tmp.delete"))
 
@@ -287,8 +384,7 @@ class ParquetDatasetMetadata:
         if files is None:
             files = self._ls_files()
 
-        if verbose:
-            logger.info(f"Collecting metadata for {len(files)} files.")
+        _log_if_verbose(verbose, f"Collecting metadata for {len(files)} files.")
 
         file_metadata = collect_parquet_metadata(
             files=files,
@@ -307,12 +403,23 @@ class ParquetDatasetMetadata:
         else:
             self._file_metadata = file_metadata
 
+        # Clear cached properties when new metadata is collected
+        if hasattr(self, '_cached_file_schemas'):
+            del self._cached_file_schemas
+        if hasattr(self, '_cached_files_in_file_metadata'):
+            del self._cached_files_in_file_metadata
+
     def _rm_file_metadata(self, files: list[str] | None = None) -> None:
         """
         Removes file metadata for files that are no longer in the dataset.
         """
         for f in files:
             self._file_metadata.pop(f)
+        # Clear cached properties
+        if hasattr(self, '_cached_file_schemas'):
+            del self._cached_file_schemas
+        if hasattr(self, '_cached_files_in_file_metadata'):
+            del self._cached_files_in_file_metadata
 
     def _dump_file_metadata(self):
         """
@@ -338,26 +445,21 @@ class ParquetDatasetMetadata:
         Returns:
             None
         """
-        new_files = files or []
-        rm_files = []
-        if verbose:
-            logger.info("Updating file metadata.")
+        _log_if_verbose(verbose, "Updating file metadata.")
+
         if not files:
             files = self._ls_files()
 
-            if self.has_file_metadata:
-                new_files += sorted(set(files) - set(self.files_in_file_metadata))
-                rm_files += sorted(set(self.files_in_file_metadata) - set(files))
-            else:
-                new_files += files
+        if self.has_file_metadata:
+            new_files, rm_files = _calculate_file_differences(files, self.files_in_file_metadata)
+        else:
+            new_files, rm_files = files, []
 
         if new_files:
-            if verbose:
-                logger.info(f"Collecting metadata for {len(new_files)} new files.")
+            _log_if_verbose(verbose, f"Collecting metadata for {len(new_files)} new files.")
             self._collect_file_metadata(files=new_files, verbose=verbose, **kwargs)
         else:
-            if verbose:
-                logger.info("No new files to collect metadata for.")
+            _log_if_verbose(verbose, "No new files to collect metadata for.")
 
         if rm_files:
             self._rm_file_metadata(files=rm_files)
@@ -385,6 +487,15 @@ class ParquetDatasetMetadata:
             self._file_metadata = None
             self._filesystem.rm(self._file_metadata_file)
 
+        # Clear all cached properties
+        cached_attrs = [
+            '_cached_file_schemas', '_cached_files_in_file_metadata',
+            '_cached_files_in_metadata'
+        ]
+        for attr in cached_attrs:
+            if hasattr(self, attr):
+                delattr(self, attr)
+
         self.clear_cache()
 
     def _get_unified_schema(
@@ -404,10 +515,7 @@ class ParquetDatasetMetadata:
             )
 
         if len(new_files):
-            if verbose:
-                logger.info(
-                    f"Get unified schema for number of new files: {len(new_files)}"
-                )
+            _log_if_verbose(verbose, f"Get unified schema for number of new files: {len(new_files)}")
             schemas = [self.file_schemas[f] for f in new_files]
 
             if self.has_metadata:
@@ -427,8 +535,7 @@ class ParquetDatasetMetadata:
                 self.metadata.schema.to_arrow_schema()
             )
             schemas_equal = True
-        if verbose:
-            logger.info(f"Schema is equal: {schemas_equal}")
+        _log_if_verbose(verbose, f"Schema is equal: {schemas_equal}")
 
         return unified_schema, schemas_equal
 
@@ -481,10 +588,7 @@ class ParquetDatasetMetadata:
         file_schemas_to_repair = {f: self.file_schemas[f] for f in files_to_repair}
         # repair schema of files
         if len(files_to_repair):
-            if verbose:
-                logger.info(
-                    f"Repairing schema for number of files: {len(files_to_repair)}"
-                )
+            _log_if_verbose(verbose, f"Repairing schema for number of files: {len(files_to_repair)}")
 
             repair_schema(
                 files=files_to_repair,
@@ -530,38 +634,41 @@ class ParquetDatasetMetadata:
         if not self.has_file_metadata:
             return
 
-        rm_files = sorted(
-            (set(self.files_in_metadata) - set(self.files_in_file_metadata))
+        new_files, rm_files = _calculate_file_differences(
+            self.files_in_file_metadata, self.files_in_metadata
         )
 
-        new_files = sorted(
-            (set(self.files_in_file_metadata) - set(self.files_in_metadata))
-        )
-        if verbose:
-            logger.info(f"Number of files to remove: {len(rm_files)}")
-            logger.info(f"Number of files to add: {len(new_files)}")
+        _log_if_verbose(verbose, f"Number of files to remove: {len(rm_files)}")
+        _log_if_verbose(verbose, f"Number of files to add: {len(new_files)}")
+
         if len(rm_files) or (len(new_files) and not self.has_metadata) or reload:
-            if verbose:
-                logger.info("Updateing metadata: Rewrite metadata from file metadata")
-
-            self._metadata = copy.copy(
-                self.file_metadata[self.files_in_file_metadata[0]]
-            )
-            for f in self.files_in_file_metadata[1:]:
-                self._metadata.append_row_groups(self._file_metadata[f])
-
+            _log_if_verbose(verbose, "Updating metadata: Rewrite metadata from file metadata")
+            self._rewrite_metadata_from_file_metadata()
         elif len(new_files):
-            if verbose:
-                logger.info("Updateing metadata: Append new file metadata")
-
-            for f in new_files:
-                self._metadata.append_row_groups(self.file_metadata[f])
+            _log_if_verbose(verbose, "Updating metadata: Append new file metadata")
+            self._append_new_file_metadata(new_files)
         else:
-            if verbose:
-                logger.info("Updateing metadata: No changes")
+            _log_if_verbose(verbose, "Updating metadata: No changes")
 
         self._write_metadata_file()
         self.load_files()
+
+        # Clear cached properties when metadata is updated
+        if hasattr(self, '_cached_files_in_metadata'):
+            del self._cached_files_in_metadata
+
+    def _rewrite_metadata_from_file_metadata(self):
+        """Rewrite metadata from file metadata."""
+        self._metadata = copy.copy(
+            self.file_metadata[self.files_in_file_metadata[0]]
+        )
+        for f in self.files_in_file_metadata[1:]:
+            self._metadata.append_row_groups(self._file_metadata[f])
+
+    def _append_new_file_metadata(self, new_files: list[str]):
+        """Append new file metadata to existing metadata."""
+        for f in new_files:
+            self._metadata.append_row_groups(self.file_metadata[f])
 
     def update(
         self,
@@ -701,12 +808,14 @@ class ParquetDatasetMetadata:
 
     @property
     def file_schemas(self):
-        return {
-            f: convert_large_types_to_normal(
-                self._file_metadata[f].schema.to_arrow_schema()
-            )
-            for f in self._file_metadata
-        }
+        if not hasattr(self, '_cached_file_schemas'):
+            self._cached_file_schemas = {
+                f: convert_large_types_to_normal(
+                    self._file_metadata[f].schema.to_arrow_schema()
+                )
+                for f in self._file_metadata
+            }
+        return self._cached_file_schemas
 
     @property
     def files_in_file_metadata(self) -> list:
@@ -716,10 +825,12 @@ class ParquetDatasetMetadata:
         Returns:
             A list of file paths in the file metadata of the dataset.
         """
-        if self.has_file_metadata:
-            return sorted(set(self._file_metadata.keys()))
-        else:
-            return []
+        if not hasattr(self, '_cached_files_in_file_metadata'):
+            if self.has_file_metadata:
+                self._cached_files_in_file_metadata = sorted(set(self._file_metadata.keys()))
+            else:
+                self._cached_files_in_file_metadata = []
+        return self._cached_files_in_file_metadata
 
     @property
     def has_metadata_file(self):
@@ -760,10 +871,12 @@ class ParquetDatasetMetadata:
         Returns:
             A list of file paths referenced in the metadata of the dataset.
         """
-        if self.has_metadata:
-            return get_file_paths(self.metadata)
-        else:
-            return []
+        if not hasattr(self, '_cached_files_in_metadata'):
+            if self.has_metadata:
+                self._cached_files_in_metadata = get_file_paths(self.metadata)
+            else:
+                self._cached_files_in_metadata = []
+        return self._cached_files_in_metadata
 
     @property
     def file_schema(self):
@@ -825,7 +938,6 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
             None
         """
 
-        # self._parquet_dataset_metadata = parquet_dataset_metadata
 
         super().__init__(
             path=path,
@@ -843,9 +955,9 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
             self.ddb_con = ddb_con
         try:
             self.update_metadata_table()
-
-        except Exception as e:
-            print(e)
+        except (duckdb.Error, pa.ArrowError) as e:
+            logger.error(f"Failed to update metadata table: {e}")
+            raise
 
     def reset_scan(self):
         """
@@ -860,67 +972,18 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
     ):
         """
         Generates a polars DataFrame with statistics for each row group in the dataset.
-
         """
         if isinstance(metadata, pq.FileMetaData):
             metadata = [metadata]
 
         metadata_table = defaultdict(list)
 
-        def process_row_group(metadata_, rg_num):
-            row_group = metadata_.row_group(rg_num)
-            file_path = row_group.column(0).file_path
-            result = {
-                "file_path": file_path,
-                "num_columns": row_group.num_columns,
-                "num_rows": row_group.num_rows,
-                "total_byte_size": row_group.total_byte_size,
-                "compression": row_group.column(0).compression,
-            }
-
-            if "=" in file_path:
-                partitioning_ = partitioning or "hive"
-            else:
-                partitioning_ = partitioning
-
-            if partitioning_ is not None:
-                partitions = dict(
-                    get_partitions_from_path(file_path, partitioning=partitioning_)
-                )
-                result.update(partitions)
-
-            for col_num in range(row_group.num_columns):
-                rgc = row_group.column(col_num)
-                rgc = rgc.to_dict()
-                col_name = rgc.pop("path_in_schema")
-                rgc.pop("file_path")
-                rgc.pop("compression")
-                if "statistics" in rgc:
-                    if rgc["statistics"] is not None:
-                        rgc.update(rgc.pop("statistics"))
-                    else:
-                        rgc.pop("statistics")
-                        rgc.update(
-                            {
-                                "has_min_max": False,
-                                "min": None,
-                                "max": None,
-                                "null_count": None,
-                                "distinct_count": None,
-                                "num_values": None,
-                                "physical_type": "UNKNOWN",
-                            }
-                        )
-                metadata_table[col_name].append(rgc)
-
-            return result
-
         with concurrent.futures.ThreadPoolExecutor() as executor:
             futures = []
             for metadata_ in metadata:
                 for rg_num in range(metadata_.num_row_groups):
                     futures.append(
-                        executor.submit(process_row_group, metadata_, rg_num)
+                        executor.submit(_process_row_group_metadata, metadata_, rg_num, partitioning)
                     )
 
             for future in concurrent.futures.as_completed(futures):
@@ -940,7 +1003,6 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
                 metadata=self.metadata,
                 partitioning=self._partitioning,
             )
-            # self._metadata_table = pa.Table.from_pydict(metadata_table)
             self._metadata_table = self.ddb_con.from_arrow(
                 pa.Table.from_pydict(metadata_table)
             )
@@ -966,7 +1028,7 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
         Returns:
             list: A list of modified filter expressions.
         """
-        # chech if filter_expr is a date string
+        # check if filter_expr is a date string
         filter_expr_mod = []
         is_date = False
         is_timestamp = False
@@ -978,16 +1040,12 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
             is_date = len(res[0]) <= 13
             is_timestamp = len(res[0]) > 13
 
-        # print(is_date)
         if ">" in filter_expr:
-            filter_expr = f"({filter_expr.replace('>', '.max>')} OR {filter_expr.split('>')[0]}.max IS NULL)"
+            filter_expr = _process_filter_operator(filter_expr, ">")
         elif "<" in filter_expr:
-            filter_expr = f"({filter_expr.replace('<', '.min<')} OR {filter_expr.split('<')[0]}.min IS NULL)"
+            filter_expr = _process_filter_operator(filter_expr, "<")
         elif "=" in filter_expr:
-            filter_expr = (
-                f"({filter_expr.replace('=', '.min<=')} OR {filter_expr.split('=')[0]}.min IS NULL) "
-                + f"AND ({filter_expr.replace('=', '.max>=')} OR {filter_expr.split('=')[0]}.max IS NULL)"
-            )
+            filter_expr = _process_filter_operator(filter_expr, "=")
 
         if is_date:
             filter_expr = (
@@ -1027,14 +1085,7 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
             filter_expr_mod = []
 
             for fe in filter_expr:
-                # if (
-                #    re.split("[>=<]", fe)[0].lstrip("(")
-                #    in self.metadata_table.column_names
-                # ):
                 col = re.split("[>=<]", fe)[0].lstrip("(")
-                # if not isinstance(
-                #    self.metadata_table.schema.field(col).type, pa.StructType
-                # ):
                 if self.metadata_table.select(col).types[0].id != "struct":
                     filter_expr_mod.append(fe)
                 else:
@@ -1042,28 +1093,11 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
 
             self._filter_expr_mod = " AND ".join(filter_expr_mod)
 
-            # self._metadata_table_scanned = (
-            #    self._con.from_arrow(self.metadata_table)
-            #    .filter(self._filter_expr_mod)
-            #    .arrow()
-            # )
             self._metadata_table_scanned = self._metadata_table.filter(
                 self._filter_expr_mod
             )
 
-    # def filter(self, filter_expr: str | None = None):
-    #     """
-    #     Filters the dataset for files that match the given filter expression.
-
-    #     Args:
-    #         filter_expr (str | None): A filter expression to apply to the dataset. Defaults to None.
-    #         lazy (bool): Whether to perform the scan lazily or eagerly. Defaults to True.
-
-    #     Returns:
-    #         None
-    #     """
-    #     self.scan(filter_expr=filter_expr)
-
+    
     @property
     def latest_filter_expr(self):
         """
@@ -1090,12 +1124,7 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
         else:
             return self.files
 
-    # @property
-    # def files(self):
-    #    return sorted(
-    #        set(map(lambda x: x[0], self.metadata_table.select("file_path").fetchall()))
-    #    )
-
+  
     @property
     def is_scanned(self):
         """
