@@ -139,9 +139,6 @@ class BaseDataset:
         )
         self._timestamp_column = timestamp_column
 
-        # self.load_files()
-
-        # NOTE: Set partitioning manually, if not set, try to infer it
         if partitioning is None:
             # try to infer partitioning
             try:
