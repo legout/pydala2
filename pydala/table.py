@@ -9,11 +9,30 @@ from .helpers.polars import pl as _pl
 
 
 class PydalaTable:
+    """A unified table interface supporting multiple backends.
+
+    This class provides a consistent interface for working with tabular data
+    across different backends (PyArrow and DuckDB). It supports conversion
+    to various formats and provides efficient data access methods.
+
+    Attributes:
+        ddb_con: DuckDB connection for SQL operations.
+        _type: Backend type ('pyarrow' or 'duckdb').
+        _dataset: Underlying PyArrow dataset.
+        _ddb: DuckDB relation object.
+    """
+
     def __init__(
         self,
         result: pds.Dataset | _duckdb.DuckDBPyRelation,
         ddb_con: _duckdb.DuckDBPyConnection | None = None,
-    ):
+    ) -> None:
+        """Initialize a PydalaTable instance.
+
+        Args:
+            result: The data source - either a PyArrow dataset or DuckDB relation.
+            ddb_con: Existing DuckDB connection. If None, creates a new one.
+        """
         if ddb_con is None:
             self.ddb_con = _duckdb.connect()
         else:
@@ -367,20 +386,22 @@ class PydalaTable:
         distinct: bool = False,
         **kwargs,
     ) -> _duckdb.DuckDBPyRelation:
-        """
-        Converts the table to a DuckDBPyRelation object.
+        """Convert the table to a DuckDB relation.
+
+        This method provides access to DuckDB's SQL engine and optimized
+        query execution. It supports both lazy and eager evaluation modes.
 
         Args:
-            lazy (bool, optional): If True, the conversion is lazy. Defaults to True.
-            columns (str | list[str] | None, optional): The columns to select. Defaults to None.
-            batch_size (int, optional): The batch size for scanning the table. Defaults to 131072.
-            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): The columns to sort by.
-                Defaults to None.
-            distinct (bool, optional): If True, removes duplicate rows. Defaults to False.
-            **kwargs: Additional keyword arguments.
+            lazy: If True, returns a lazy relation for further optimization.
+                  If False, materializes the result immediately.
+            columns: Columns to select from the table. Defaults to all columns.
+            batch_size: Batch size for scanning when materializing.
+            sort_by: Column(s) to sort by in the result.
+            distinct: Whether to return only distinct rows.
+            **kwargs: Additional arguments for underlying operations.
 
         Returns:
-            _duckdb.DuckDBPyRelation: The converted DuckDBPyRelation object.
+            A DuckDBPyRelation object representing the table data.
         """
 
         if isinstance(columns, str):
@@ -584,26 +605,25 @@ class PydalaTable:
         use_threads: bool = True,
         memory_pool: pa.MemoryPool | None = None,
     ) -> pa.Table:
-        """
-        Converts the table to an Arrow table.
+        """Convert the table to a PyArrow Table.
+
+        This method provides a convenient alias for to_arrow_table() with
+        the same functionality and parameters.
 
         Args:
-            columns (str | list[str] | None, optional): Columns to include in the Arrow table.
-                Defaults to None.
-            filter (pds.Expression | None, optional): Filter expression to apply. Defaults to None.
-            batch_size (int, optional): Batch size for reading data. Defaults to 131072.
-            sort_by (str | list[str] | list[tuple[str, str]] | None, optional): Columns to sort by.
-                Defaults to None.
-            distinct (bool, optional): Whether to return distinct rows. Defaults to False.
-            batch_readahead (int, optional): Number of batches to read ahead. Defaults to 16.
-            fragment_readahead (int, optional): Number of fragments to read ahead. Defaults to 4.
-            fragment_scan_options (pds.FragmentScanOptions | None, optional): Fragment scan options.
-                Defaults to None.
-            use_threads (bool, optional): Whether to use multiple threads. Defaults to True.
-            memory_pool (pa.MemoryPool | None, optional): Memory pool to use. Defaults to None.
+            columns: Columns to include in the Arrow table. Defaults to all columns.
+            filter: Filter expression to apply during conversion.
+            batch_size: Batch size for reading data from the source.
+            sort_by: Column(s) to sort by before returning the table.
+            distinct: Whether to return only distinct rows.
+            batch_readahead: Number of batches to read ahead for performance.
+            fragment_readahead: Number of fragments to read ahead.
+            fragment_scan_options: Options for fragment scanning.
+            use_threads: Whether to use multiple threads for reading.
+            memory_pool: Memory pool for Arrow allocations.
 
         Returns:
-            pa.Table: The converted Arrow table.
+            The converted PyArrow Table.
         """
 
         return self.to_arrow_table(
@@ -686,22 +706,23 @@ class PydalaTable:
         batch_size: int = 131072,
         **kwargs,
     ) -> _pl.DataFrame | _pl.LazyFrame:
-        """
-        Converts the table to a Polars DataFrame or LazyFrame.
+        """Convert the table to a Polars DataFrame or LazyFrame.
+
+        This method efficiently converts the table to Polars format, with
+        support for both lazy and eager evaluation. When using PyArrow backend,
+        it leverages Polars' native PyArrow scanner for optimal performance.
 
         Args:
-            lazy (bool, optional): If True, returns a LazyFrame. If False, returns a DataFrame. Defaults to True.
-            columns (str | list[str] | None, optional): Columns to include in the resulting DataFrame/LazyFrame.
-                Defaults to None.
-            sort_by (str | list[str] | None, optional): Columns to sort the resulting DataFrame/LazyFrame by.
-                Defaults to None.
-            distinct (bool, optional): If True, removes duplicate rows from the resulting DataFrame/LazyFrame.
-                Defaults to False.
-            batch_size (int, optional): The batch size used for scanning the PyArrow dataset. Defaults to 131072.
-            **kwargs: Additional keyword arguments to be passed to the underlying functions.
+            lazy: If True, returns a LazyFrame for lazy evaluation.
+                   If False, returns a materialized DataFrame.
+            columns: Columns to include in the result. Defaults to all columns.
+            sort_by: Column(s) to sort by before returning the result.
+            distinct: Whether to return only distinct rows.
+            batch_size: Batch size for scanning from the data source.
+            **kwargs: Additional arguments passed to underlying conversion methods.
 
         Returns:
-            _pl.DataFrame | _pl.LazyFrame: The resulting Polars DataFrame or LazyFrame.
+            A Polars DataFrame or LazyFrame depending on the lazy parameter.
         """
 
         if isinstance(columns, str):
@@ -755,17 +776,19 @@ class PydalaTable:
         distinct: bool = False,
         **kwargs,
     ) -> pd.DataFrame:
-        """
-        Convert the table to a pandas DataFrame.
+        """Convert the table to a pandas DataFrame.
+
+        This method converts the table to pandas format via PyArrow for
+        optimal performance and memory efficiency.
 
         Args:
-            columns (str | list[str] | None): Optional. Columns to include in the DataFrame.
-            sort_by (str | list[str] | None): Optional. Columns to sort the DataFrame by.
-            distinct (bool): Optional. Whether to return distinct rows in the DataFrame.
-            **kwargs: Additional keyword arguments to be passed to the underlying methods.
+            columns: Columns to include in the DataFrame. Defaults to all columns.
+            sort_by: Column(s) to sort by before conversion.
+            distinct: Whether to return only distinct rows.
+            **kwargs: Additional arguments passed to to_arrow_table().
 
         Returns:
-            pd.DataFrame: A pandas DataFrame representing the table.
+            A pandas DataFrame containing the table data.
         """
         return self.to_arrow_table(
             columns=columns, sort_by=sort_by, distinct=distinct, **kwargs
@@ -804,23 +827,45 @@ class PydalaTable:
         """
         return self.to_pandas()
 
-    def sql(self, sql: str):
-        """
-        Executes the given SQL query on the database connection.
+    def sql(self, sql: str) -> _duckdb.DuckDBPyRelation:
+        """Execute a SQL query using the table's DuckDB connection.
+
+        This method provides direct SQL access to the table data through
+        the DuckDB connection. The table is automatically registered and
+        can be referenced in SQL queries.
 
         Args:
-            sql (str): The SQL query to execute.
+            sql: The SQL query to execute.
 
         Returns:
-            The result of the SQL query execution.
+            The result of the SQL query as a DuckDB relation.
+
+        Note:
+            The table is registered with DuckDB and can be referenced
+            by name in SQL queries. Use parameterized queries for security
+            when dealing with user input.
         """
         return self.ddb_con.sql(sql)
 
-    def __repr__(self):
-        # if self._type == "pyarrow":
-        #    return self.to_polars().head(10).collect().__repr__()
-        # return self.result.limit(10).__repr__()
+    def __repr__(self) -> str:
+        """Return a string representation of the table.
+
+        Returns a preview of the table showing the first 10 rows.
+        The representation is generated through DuckDB for consistent
+        formatting across different backends.
+
+        Returns:
+            String representation of the table preview.
+        """
         return self.to_duckdb().limit(10).__repr__()
 
-    def __call__(self):
+    def __call__(self) -> pds.Dataset | _duckdb.DuckDBPyRelation:
+        """Return the underlying result object.
+
+        This allows the table to be called directly to access the
+        underlying PyArrow dataset or DuckDB relation.
+
+        Returns:
+            The underlying data object (PyArrow dataset or DuckDB relation).
+        """
         return self.result

@@ -64,26 +64,54 @@ def get_credentials_from_fssspec(fs: AbstractFileSystem, redact_secrets: bool = 
     return {}
 
 
-def get_total_directory_size(directory: str):
+def get_total_directory_size(directory: str) -> int:
+    """Calculate the total size of all files in a directory.
+
+    Args:
+        directory: Path to the directory to analyze.
+
+    Returns:
+        Total size in bytes of all files in the directory and subdirectories.
+    """
     return sum(f.stat().st_size for f in Path(directory).glob("**/*") if f.is_file())
 
 
 class FileNameCacheMapper(AbstractCacheMapper):
-    def __init__(self, directory):
+    """A cache mapper that preserves original file names.
+
+    This mapper ensures that cached files maintain their original names
+    rather than being hashed, which makes it easier to inspect and
+    manage the cache.
+    """
+
+    def __init__(self, directory: str) -> None:
+        """Initialize the FileNameCacheMapper.
+
+        Args:
+            directory: Base directory for cache storage.
+        """
         # Validate and normalize the directory path
         self.directory = validate_path(directory)
 
     def __call__(self, path: str) -> str:
+        """Map a path to a cache location.
+
+        Args:
+            path: Original file path to cache.
+
+        Returns:
+            Path within the cache directory maintaining the original filename.
+        """
         # Validate the input path to prevent traversal
         validated_path = validate_path(path)
-        
+
         # Safely join paths
         full_path = safe_join(self.directory, validated_path)
-        
+
         # Create parent directory if needed
         parent_dir = posixpath.dirname(full_path)
         os.makedirs(parent_dir, exist_ok=True)
-        
+
         # Return relative path from directory
         return validated_path
 
@@ -115,7 +143,16 @@ class throttle(object):
         return wrapper
 
 
-def sizeof_fmt(num, suffix="B"):
+def sizeof_fmt(num: float, suffix="B") -> str:
+    """Format a number of bytes as a human-readable string.
+
+    Args:
+        num: Number of bytes to format.
+        suffix: Suffix to append to the formatted string.
+
+    Returns:
+        Human-readable string representation (e.g., '1.5 MiB').
+    """
     for unit in ("", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi"):
         if abs(num) < 1024.0:
             return f"{num:3.1f}{unit}{suffix}"
@@ -124,15 +161,27 @@ def sizeof_fmt(num, suffix="B"):
 
 
 class DiskUsageTracker:
-    """Thread-safe disk usage tracking."""
-    
-    def __init__(self):
+    """Thread-safe disk usage tracking with delta calculations.
+
+    This class tracks disk usage over time, calculating deltas between
+    measurements to show how much disk space has been consumed.
+    """
+
+    def __init__(self) -> None:
+        """Initialize the DiskUsageTracker."""
         self._last_free = None
         self._first_free = None
         self._lock = threading.Lock()
     
     def get_usage_message(self, storage: str) -> str:
-        """Get friendly disk usage message with deltas."""
+        """Get friendly disk usage message with deltas.
+
+        Args:
+            storage: Path to the storage location to check.
+
+        Returns:
+            Formatted string with usage information including deltas.
+        """
         with self._lock:
             usage = psutil.disk_usage(storage)
             if self._first_free is None:
@@ -150,8 +199,11 @@ class DiskUsageTracker:
             self._last_free = usage.free
             return message
     
-    def reset(self):
-        """Reset tracking state."""
+    def reset(self) -> None:
+        """Reset tracking state.
+
+        Clears all stored usage information and starts fresh tracking.
+        """
         with self._lock:
             self._first_free = None
             self._last_free = None
@@ -162,7 +214,16 @@ _disk_tracker = DiskUsageTracker()
 
 
 def get_friendly_disk_usage(storage: str) -> str:
-    """Get friendly disk usage message (legacy function)."""
+    """Get friendly disk usage message (legacy function).
+
+    This is a convenience function that uses the global DiskUsageTracker instance.
+
+    Args:
+        storage: Path to the storage location to check.
+
+    Returns:
+        Formatted string with disk usage information.
+    """
     return _disk_tracker.get_usage_message(storage)
 
 
@@ -174,7 +235,21 @@ def get_friendly_disk_usage(storage: str) -> str:
 
 
 class MonitoredSimpleCacheFileSystem(SimpleCacheFileSystem):
-    def __init__(self, **kwargs):
+    """A cached filesystem with monitoring and filename preservation.
+
+    This class extends SimpleCacheFileSystem to provide better monitoring
+    of cache operations and preserves original filenames in the cache
+    for easier inspection.
+    """
+
+    def __init__(self, **kwargs) -> None:
+        """Initialize the MonitoredSimpleCacheFileSystem.
+
+        Args:
+            **kwargs: Arguments passed to parent class, including:
+                - verbose: Whether to log download messages
+                - cache_storage: Directory for cache storage
+        """
         # kwargs["cache_storage"] = posixpath.join(
         #    kwargs.get("cache_storage"), kwargs.get("fs").protocol[0]
         # )
@@ -182,7 +257,15 @@ class MonitoredSimpleCacheFileSystem(SimpleCacheFileSystem):
         super().__init__(**kwargs)
         self._mapper = FileNameCacheMapper(kwargs.get("cache_storage"))
 
-    def _check_file(self, path):
+    def _check_file(self, path: str) -> str | None:
+        """Check if a file exists in cache.
+
+        Args:
+            path: Path to check in cache.
+
+        Returns:
+            Path to cached file if found, None otherwise.
+        """
         self._check_cache()
         cache_path = self._mapper(path)
         for storage in self.storage:
@@ -195,7 +278,15 @@ class MonitoredSimpleCacheFileSystem(SimpleCacheFileSystem):
     # def glob(self, path):
     #    return [self._strip_protocol(path)]
 
-    def size(self, path):
+    def size(self, path: str) -> int:
+        """Get file size, using cached version if available.
+
+        Args:
+            path: Path to file to check.
+
+        Returns:
+            File size in bytes.
+        """
         cached_file = self._check_file(self._strip_protocol(path))
         if cached_file is None:
             return self.fs.size(path)
@@ -209,6 +300,11 @@ class MonitoredSimpleCacheFileSystem(SimpleCacheFileSystem):
     #     return self.fs.makedirs(path, exist_ok=exist_ok)
 
     def __getattribute__(self, item):
+        """Custom attribute access to route methods appropriately.
+
+        This method ensures that filesystem operations are properly routed
+        either to the cache implementation or the underlying filesystem.
+        """
         if item in {
             # new items
             "size",
