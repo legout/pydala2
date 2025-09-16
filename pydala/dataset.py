@@ -1118,7 +1118,7 @@ class PyarrowDataset(BaseDataset):
         )
 
 
-class CsvDataset(PyarrowDataset):
+class CSVDataset(PyarrowDataset):
     def __init__(
         self,
         path: str,
@@ -1145,7 +1145,7 @@ class CsvDataset(PyarrowDataset):
         )
 
 
-class JsonDataset(BaseDataset):
+class JSONDataset(BaseDataset):
     def __init__(
         self,
         path: str,
