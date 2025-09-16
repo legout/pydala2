@@ -1,4 +1,4 @@
-# PyDala2 
+# PyDala2
 
 <p align="center">
   <img src="logo.jpeg" width="400" alt="PyDala2">
@@ -6,130 +6,178 @@
 
 [![PyPI version](https://badge.fury.io/py/pydala2.svg)](https://badge.fury.io/py/pydala2)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/legout/pydala2)
-
+[![Documentation](https://img.shields.io/badge/docs-latest-blue.svg)](https://pydala2.readthedocs.io)
 
 ## Overview 📖
-Pydala is a high-performance Python library for managing Parquet datasets with powerful metadata capabilities. Built on Apache Arrow, it provides an efficient, user-friendly interface for handling large-scale data operations.
+
+PyDala2 is a high-performance Python library for managing Parquet datasets with advanced metadata capabilities. Built on Apache Arrow, it provides efficient management of Parquet datasets with features including:
+
+- Smart dataset management with metadata optimization
+- Multi-format support (Parquet, CSV, JSON)
+- Multi-backend integration (Polars, PyArrow, DuckDB, Pandas)
+- Advanced querying with predicate pushdown
+- Schema management with automatic validation
+- Performance optimization with caching and partitioning
+- Catalog system for centralized dataset management
 
 ## ✨ Key Features
- - 📦 Smart Dataset Management: Efficient Parquet handling with metadata optimization
- - 🔄 Robust Caching: Built-in support for faster data access
- - 🔌 Seamless Integration: Works with Polars, PyArrow, and DuckDB
- - 🔍 Advanced Querying: SQL-like filtering with predicate pushdown
- - 🛠️ Schema Management: Automatic validation and tracking
+
+- **🚀 High Performance**: Built on Apache Arrow with optimized memory usage and processing speed
+- **📊 Smart Dataset Management**: Efficient Parquet handling with metadata optimization and caching
+- **🔄 Multi-backend Support**: Seamlessly switch between Polars, PyArrow, DuckDB, and Pandas
+- **🔍 Advanced Querying**: SQL-like filtering with predicate pushdown for maximum efficiency
+- **📋 Schema Management**: Automatic validation, evolution, and tracking of data schemas
+- **⚡ Performance Optimization**: Built-in caching, compression, and intelligent partitioning
+- **🛡️ Type Safety**: Comprehensive validation and error handling throughout the library
+- **🏗️ Catalog System**: Centralized dataset management across namespaces
 
 ## 🚀 Quick Start
+
 ### Installation
+
 ```bash
+# Install PyDala2
 pip install pydala2
+
+# Install with all optional dependencies
+pip install pydala2[all]
+
+# Install with specific backends
+pip install pydala2[polars,duckdb]
 ```
 
-### 📊 Creating a Dataset
+### Basic Usage
+
 ```python
-from pydala.dataset import ParquetDataset
+from pydala import ParquetDataset
+import pandas as pd
 
-dataset = ParquetDataset(
-    path="path/to/dataset",
-    partitioning="hive",         # Hive-style partitioning
-    timestamp_column="timestamp", # For time-based operations
-    cached=True                  # Enable performance caching
-)
-```
+# Create a dataset
+dataset = ParquetDataset("data/my_dataset")
 
-### 💾 Writing Data
-```python
-import polars as pl
-
-# Create sample time-series data
-df = pl.DataFrame({
-    "timestamp": pl.date_range(0, 1000, "1d"),
-    "value": range(1000)
+# Write data
+data = pd.DataFrame({
+    'id': range(100),
+    'category': ['A', 'B', 'C'] * 33 + ['A'],
+    'value': [i * 2 for i in range(100)]
 })
-
-# Write with smart partitioning and compression
 dataset.write_to_dataset(
-    data=df,                    # Can be a polars or pandas DataFrame or an Arrow Table, Dataset, or RecordBatch or a duckdb result 
-    mode="overwrite",           # Options: "overwrite", "append", "delta"
-    row_group_size=250_000,     # Optimize chunk size
-    compression="zstd",         # High-performance compression
-    partition_by=["year", "month"], # Auto-partition by time
-    unique=True                 # Ensure data uniqueness
+    data=data,
+    partition_cols=['category']
 )
+
+# Read with filtering - automatic backend selection
+result = dataset.filter("category IN ('A', 'B') AND value > 50")
+
+# Export to different formats
+df_polars = result.table.to_polars()  # or use shortcut: result.t.pl
+df_pandas = result.table.df           # or result.t.df
+duckdb_rel = result.table.ddb         # or result.t.ddb
 ```
 
-### 📥 Reading & Converting Data
+### Using Different Backends
+
 ```python
-dataset.load(update_metadata=True)
+# PyDala2 provides automatic backend selection
+# Just access data in your preferred format:
 
-# Flexible data format conversion
-pt = dataset.t                  # PyDala Table
-df_polars = pt.to_polars()      # Convert to Polars
-df_pandas = pt.to_pandas()      # Convert to Pandas
-df_arrow = pt.to_arrow()        # Convert to Arrow
-rel_ddb = pt.to_ddb()           # Convert DuckDB relation
+# Polars LazyFrame (recommended for performance)
+lazy_df = dataset.table.pl  # or dataset.t.pl
+result = (
+    lazy_df
+    .filter(pl.col("value") > 100)
+    .group_by("category")
+    .agg(pl.mean("value"))
+    .collect()
+)
 
-# and many more... 
+# DuckDB (for SQL queries)
+result = dataset.ddb_con.sql("""
+    SELECT category, AVG(value) as avg_value
+    FROM dataset
+    GROUP BY category
+""").to_arrow()
+
+# PyArrow Table (for columnar operations)
+table = dataset.table.arrow  # or dataset.t.arrow
+
+# Pandas DataFrame (for compatibility)
+df_pandas = dataset.table.df  # or dataset.t.df
+
+# Direct export methods
+df_polars = dataset.table.to_polars(lazy=False)
+table = dataset.table.to_arrow()
+df_pandas = dataset.table.to_pandas()
 ```
 
-### 🔍 Smart Querying
+### Catalog Management
+
 ```python
-# Efficient filtered reads with predicate pushdown
-pt_filtered = dataset.filter("timestamp > '2023-01-01'")
+from pydala import Catalog
 
-# Chaining operations
-df_filtered = (
-    dataset
-    .filter("column_name > 100")
-    .pl.with_columns(
-        pl.col("column_name").str.slice(0, 5).alias("new_column_name")
-        )
-    .to_pandas()
-    )
+# Create catalog from YAML configuration
+catalog = Catalog("catalog.yaml")
 
-# Fast metadata-only scans
-pt_scanned = dataset.scan("column_name > 100")
+# YAML configuration example:
+# tables:
+#   sales_2023:
+#     path: "/data/sales/2023"
+#     filesystem: "local"
+#   customers:
+#     path: "/data/customers"
+#     filesystem: "local"
 
-# Access matching files
-matching_files = ds.scan_files
+# Query across datasets using automatic table loading
+result = catalog.query("""
+    SELECT
+        s.*,
+        c.customer_name,
+        c.segment
+    FROM sales_2023 s
+    JOIN customers c ON s.customer_id = c.id
+    WHERE s.date >= '2023-01-01'
+""")
+
+# Or access datasets directly
+sales_dataset = catalog.get_dataset("sales_2023")
+filtered_sales = sales_dataset.filter("amount > 1000")
 ```
-
-### 🔄 Metadata Management
-```python
-# Incremental metadata update
-dataset.load(update_metadata=True)   # Update for new files
-
-# Full metadata refresh
-dataset.load(reload_metadata=True)   # Reload all metadata
-
-# Repair schema/metadata
-dataset.repair_schema()
-```
-
-### ⚡ Performance Optimization Tools
-```python
-# Optimize storage types
-dataset.opt_dtypes()              # Automatic type optimization
-
-# Smart file management
-dataset.compact_by_rows(max_rows=100_000)  # Combine small files
-dataset.repartition(partitioning_columns=["date"])  # Optimize partitions
-dataset.compact_by_timeperiod(interval="1d")  # Time-based optimization
-dataset.compact_partitions()  # Partition structure optimization
-```
-
-## ⚠️ Important Notes
-Type optimization involves full dataset rewrite
-Choose compaction strategy based on your access patterns
-Regular metadata updates ensure optimal query performance
 
 ## 📚 Documentation
-There is a comprehensive [tutorial](https://code2tutorial.com/tutorial/a988dfd0-820d-471e-a802-14feedba5813/index.md) available to help you get started with PyDala2, covering all features and functionalities in detail.
 
-*Note: This is generated with [Code2Tutorial](https://code2tutorial.com/).*
+Comprehensive documentation is available at [pydala2.readthedocs.io](https://pydala2.readthedocs.io):
+
+### Getting Started
+- [Installation Guide](https://pydala2.readthedocs.io/getting-started)
+- [Quick Start Tutorial](https://pydala2.readthedocs.io/quick-start)
+
+### User Guide
+- [Basic Usage](https://pydala2.readthedocs.io/user-guide/basic-usage)
+- [Data Operations](https://pydala2.readthedocs.io/user-guide/data-operations)
+- [Performance Optimization](https://pydala2.readthedocs.io/user-guide/performance)
+- [Catalog Management](https://pydala2.readthedocs.io/user-guide/catalog-management)
+- [Schema Management](https://pydala2.readthedocs.io/user-guide/schema-management)
+
+### API Reference
+- [Core Classes](https://pydala2.readthedocs.io/api/core)
+- [Dataset Classes](https://pydala2.readthedocs.io/api/datasets)
+- [Table Operations](https://pydala2.readthedocs.io/api/table)
+- [Metadata Management](https://pydala2.readthedocs.io/api/metadata)
+- [Catalog System](https://pydala2.readthedocs.io/api/catalog)
+- [Filesystem](https://pydala2.readthedocs.io/api/filesystem)
+- [Utilities](https://pydala2.readthedocs.io/api/utilities)
+
+### Advanced Topics
+- [Performance Tuning](https://pydala2.readthedocs.io/advanced/performance-tuning)
+- [Integration Patterns](https://pydala2.readthedocs.io/advanced/integration)
+- [Deployment Guide](https://pydala2.readthedocs.io/advanced/deployment)
+- [Troubleshooting](https://pydala2.readthedocs.io/advanced/troubleshooting)
 
 ## 🤝 Contributing
-Contributions welcome! See our contribution guidelines.
+
+Contributions are welcome! Please see our [Contributing Guide](https://pydala2.readthedocs.io/contributing) for details.
 
 ## 📝 License
+
 [MIT License](LICENSE)
+

@@ -11,7 +11,7 @@ from munch import Munch, munchify, toYAML, unmunchify
 
 # Local imports
 from pydala.helpers.polars import pl
-from .dataset import CsvDataset, JsonDataset, ParquetDataset, PyarrowDataset
+from .dataset import CSVDataset, JSONDataset, ParquetDataset, PyarrowDataset
 from .filesystem import FileSystem
 from .helpers.misc import delattr_rec, get_nested_keys, getattr_rec, setattr_rec
 from .helpers.sql import get_table_names
@@ -75,6 +75,21 @@ class Catalog:
 
         Returns:
             The loaded catalog configuration as a Munch object.
+
+        Raises:
+            FileNotFoundError: If the catalog file doesn't exist.
+            yaml.YAMLError: If the catalog file is invalid YAML.
+
+        Note:
+            The catalog structure should follow the format:
+                tables:
+                    namespace1:
+                        table1:
+                            path: /path/to/table1
+                            format: parquet
+                            options: {...}
+                    namespace2:
+                        ...
         """
         with self._catalog_filesystem.open(self._catalog_path, "r") as f:
             catalog = munchify(yaml.full_load(f))
@@ -95,6 +110,14 @@ class Catalog:
 
         This method loads the existing catalog from disk, applies any updates
         (including table deletions), and writes it back to the filesystem.
+
+        Args:
+            delete_table: If specified, removes this table from the catalog
+                before writing. Format should be 'namespace.table_name'.
+
+        Raises:
+            OSError: If there's an error writing to the filesystem.
+            yaml.YAMLError: If there's an error serializing the catalog.
         """
         with self._catalog_filesystem.open(self._catalog_path, "r") as f:
             catalog = munchify(yaml.full_load(f))
@@ -328,16 +351,16 @@ class Catalog:
 
     def load_csv(
         self, table_name: str, as_dataset: bool = True, **kwargs
-    ) -> CsvDataset | pl.DataFrame | None:
+    ) -> CSVDataset | pl.DataFrame | None:
         """Load a CSV table from the catalog.
 
         Args:
             table_name: Name of the table to load.
-            as_dataset: If True, returns a CsvDataset. If False, returns a DataFrame.
+            as_dataset: If True, returns a CSVDataset. If False, returns a DataFrame.
             **kwargs: Additional arguments passed to the dataset constructor.
 
         Returns:
-            CsvDataset or DataFrame depending on as_dataset parameter,
+            CSVDataset or DataFrame depending on as_dataset parameter,
             or None if table is not in CSV format.
         """
         params = self._get_table_params(table_name=table_name)
@@ -354,7 +377,7 @@ class Catalog:
             self.ddb_con.register(table_name, df)
             return df
 
-        return CsvDataset(
+        return CSVDataset(
             params.path,
             filesystem=self.fs[params.filesystem],
             name=table_name,
@@ -364,16 +387,16 @@ class Catalog:
 
     def load_json(
         self, table_name: str, as_dataset: bool = True, **kwargs
-    ) -> JsonDataset | pl.DataFrame | None:
+    ) -> JSONDataset | pl.DataFrame | None:
         """Load a JSON table from the catalog.
 
         Args:
             table_name: Name of the table to load.
-            as_dataset: If True, returns a JsonDataset. If False, returns a DataFrame.
+            as_dataset: If True, returns a JSONDataset. If False, returns a DataFrame.
             **kwargs: Additional arguments passed to the dataset constructor.
 
         Returns:
-            JsonDataset or DataFrame depending on as_dataset parameter,
+            JSONDataset or DataFrame depending on as_dataset parameter,
             or None if table is not in JSON format.
         """
         params = self._get_table_params(table_name=table_name)
@@ -389,7 +412,7 @@ class Catalog:
             df = self.fs[params.filesystem].read_json_dataset(params.path, **kwargs)
             self.ddb_con.register(table_name, df)
             return df
-        return JsonDataset(
+        return JSONDataset(
             params.path,
             filesystem=self.fs[params.filesystem],
             name=table_name,
@@ -404,7 +427,7 @@ class Catalog:
         with_metadata: bool = True,
         reload: bool = False,
         **kwargs,
-    ) -> ParquetDataset | CsvDataset | JsonDataset | pl.DataFrame | None:
+    ) -> ParquetDataset | CSVDataset | JSONDataset | pl.DataFrame | None:
         """Load a table from the catalog, automatically detecting format.
 
         This method caches loaded tables to avoid repeated loading. Tables
@@ -512,8 +535,8 @@ class Catalog:
         | duckdb.DuckDBPyRelation
         | ParquetDataset
         | PydalaTable
-        | CsvDataset
-        | JsonDataset
+        | CSVDataset
+        | JSONDataset
         | PyarrowDataset
         | None = None,
         table_name: str | None = None,
@@ -543,7 +566,7 @@ class Catalog:
             Exception: If table_name is required but not provided.
             Exception: If table exists and overwrite is False.
         """
-        if isinstance(data, ParquetDataset | PyarrowDataset | CsvDataset | JsonDataset):
+        if isinstance(data, ParquetDataset | PyarrowDataset | CSVDataset | JSONDataset):
             if table_name is None:
                 table_name = data.name
 
@@ -582,7 +605,7 @@ class Catalog:
 
         if data is not None:
             if isinstance(
-                data, ParquetDataset | PyarrowDataset | CsvDataset | JsonDataset
+                data, ParquetDataset | PyarrowDataset | CSVDataset | JSONDataset
             ):
                 if fields.get("path") == data._path:
                     return
@@ -665,8 +688,8 @@ class Catalog:
         | duckdb.DuckDBPyRelation
         | ParquetDataset
         | PydalaTable
-        | CsvDataset
-        | JsonDataset
+        | CSVDataset
+        | JSONDataset
         | PyarrowDataset,
         table_name: str,
         as_dataset: bool = True,

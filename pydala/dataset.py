@@ -1222,7 +1222,7 @@ class PyarrowDataset(BaseDataset):
         )
 
 
-class CsvDataset(PyarrowDataset):
+class CSVDataset(PyarrowDataset):
     """A dataset implementation for CSV files.
 
     This class provides specialized handling for CSV datasets using
@@ -1269,7 +1269,7 @@ class CsvDataset(PyarrowDataset):
         )
 
 
-class JsonDataset(BaseDataset):
+class JSONDataset(BaseDataset):
     """A dataset implementation for JSON files.
 
     This class provides specialized handling for JSON datasets using
