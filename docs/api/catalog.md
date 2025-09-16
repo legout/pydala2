@@ -213,7 +213,7 @@ def load_csv(
     cached: bool = False,
     timestamp_column: str | None = None,
     **table_options
-) -> CsvDataset
+) -> CSVDataset
 ```
 Load a CSV dataset and register it in the catalog.
 
@@ -229,7 +229,7 @@ Load a CSV dataset and register it in the catalog.
 - `**table_options`: Additional table options
 
 **Returns:**
-- `CsvDataset`: The loaded CSV dataset
+- `CSVDataset`: The loaded CSV dataset
 
 **Example:**
 ```python
@@ -255,7 +255,7 @@ def load_json(
     cached: bool = False,
     timestamp_column: str | None = None,
     **table_options
-) -> JsonDataset
+) -> JSONDataset
 ```
 Load a JSON dataset and register it in the catalog.
 
@@ -271,7 +271,7 @@ Load a JSON dataset and register it in the catalog.
 - `**table_options`: Additional table options
 
 **Returns:**
-- `JsonDataset`: The loaded JSON dataset
+- `JSONDataset`: The loaded JSON dataset
 
 **Example:**
 ```python

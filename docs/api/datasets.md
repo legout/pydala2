@@ -309,10 +309,10 @@ dataset.load()
 arrow_dataset = dataset.to_arrow_dataset()
 ```
 
-## CsvDataset
+## CSVDataset
 
 ```python
-class CsvDataset(BaseDataset)
+class CSVDataset(BaseDataset)
 ```
 
 Dataset implementation for CSV files with support for various CSV formats and options.
@@ -320,7 +320,7 @@ Dataset implementation for CSV files with support for various CSV formats and op
 ### Constructor
 
 ```python
-CsvDataset(
+CSVDataset(
     path: str,
     name: str | None = None,
     filesystem: AbstractFileSystem | None = None,
@@ -343,9 +343,9 @@ Load CSV files using PyArrow's CSV reading capabilities.
 
 **Example:**
 ```python
-from pydala import CsvDataset
+from pydala import CSVDataset
 
-dataset = CsvDataset("data/sales.csv")
+dataset = CSVDataset("data/sales.csv")
 dataset.load()
 
 # Read with CSV options
@@ -355,10 +355,10 @@ data = dataset.read(
 )
 ```
 
-## JsonDataset
+## JSONDataset
 
 ```python
-class JsonDataset(BaseDataset)
+class JSONDataset(BaseDataset)
 ```
 
 Dataset implementation for JSON files with support for nested JSON structures.
@@ -366,7 +366,7 @@ Dataset implementation for JSON files with support for nested JSON structures.
 ### Constructor
 
 ```python
-JsonDataset(
+JSONDataset(
     path: str,
     name: str | None = None,
     filesystem: AbstractFileSystem | None = None,
@@ -389,9 +389,9 @@ Load JSON files using PyArrow's JSON reading capabilities.
 
 **Example:**
 ```python
-from pydala import JsonDataset
+from pydala import JSONDataset
 
-dataset = JsonDataset("data/events")
+dataset = JSONDataset("data/events")
 dataset.load()
 
 # Read JSON data
@@ -499,7 +499,7 @@ dataset.optimize.repartition(partition_cols=['year', 'month', 'day'])
 |--------------|----------|-----------|
 | `ParquetDataset` | Columnar data, analytics | Compression, partitioning, metadata |
 | `PyarrowDataset` | Arrow-native operations | Maximum Arrow compatibility |
-| `CsvDataset` | CSV data interchange | Flexible CSV parsing options |
-| `JsonDataset` | Nested/semi-structured data | JSON schema support |
+| `CSVDataset` | CSV data interchange | Flexible CSV parsing options |
+| `JSONDataset` | Nested/semi-structured data | JSON schema support |
 
 Choose the appropriate dataset type based on your data format and use case requirements.
