@@ -1,3 +1,4 @@
+# Standard library imports
 import datetime as dt
 import logging
 import posixpath
@@ -5,6 +6,7 @@ import re
 import tempfile
 import typing as t
 
+# Third-party imports
 import duckdb as _duckdb
 import pandas as pd
 import polars.selectors as cs
@@ -17,6 +19,7 @@ from fsspec import AbstractFileSystem
 # Initialize logger
 logger = logging.getLogger(__name__)
 
+# Local imports
 from .filesystem import FileSystem, clear_cache
 from .helpers.datetime import get_timestamp_column
 from .helpers.sql import sql2pyarrow_filter
@@ -52,6 +55,16 @@ class BaseDataset:
         ddb_con: _duckdb.DuckDBPyConnection | None = None,
         **fs_kwargs,
     ):
+        # Input validation
+        if not isinstance(path, str) or not path:
+            raise ValueError("path must be a non-empty string")
+        if format is not None and not isinstance(format, str):
+            raise ValueError("format must be a string or None")
+        if partitioning is not None and not isinstance(partitioning, (str, list)):
+            raise ValueError("partitioning must be a string, list, or None")
+        if timestamp_column is not None and not isinstance(timestamp_column, str):
+            raise ValueError("timestamp_column must be a string or None")
+
         self._path = path
         self._schema = schema
         self._bucket = bucket
@@ -107,16 +120,7 @@ class BaseDataset:
                 partitioning = None
         self._partitioning = partitioning
 
-        # if self.has_files:
-        #     if partitioning == "ignore":
-        #         self._partitioning = None
-        #     elif partitioning is None and "=" in self._files[0]:
-        #         self._partitioning = "hive"
-        #     else:
-        #         self._partitioning = partitioning
-        # else:
-        #     self._partitioning = partitioning
-
+        
         try:
             self.load()
         except FileNotFoundError as e:
@@ -125,7 +129,6 @@ class BaseDataset:
             logger.warning(f"Failed to load dataset {self._path}: {e}")
             # Don't raise - allow dataset to be created without files
 
-    # @abstactmethod
     def load_files(self) -> None:
         """
         Loads the files from the specified path with the specified format.
@@ -144,7 +147,7 @@ class BaseDataset:
             for fn in sorted(self._filesystem.glob(glob_pattern))
         ]
 
-    def _makedirs(self):
+    def _makedirs(self) -> None:
         if self._filesystem.exists(self._path):
             return
         try:

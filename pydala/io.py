@@ -1,20 +1,21 @@
+# Standard library imports
 import datetime as dt
 import posixpath
 import time
 import uuid
 
+# Third-party imports
 import duckdb
 import pandas as pd
 import polars.selectors as cs
 import pyarrow as pa
 import pyarrow.dataset as pds
-
-# import pyarrow.dataset as pds
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 from fsspec import filesystem as fsspec_filesystem
 from loguru import logger
 
+# Local imports
 from .filesystem import clear_cache
 from .helpers.datetime import get_timestamp_column
 from .helpers.polars import pl
@@ -47,8 +48,8 @@ def write_table(
     if not filesystem.exists(posixpath.dirname(path)):
         try:
             filesystem.makedirs(posixpath.dirname(path), exist_ok=True)
-        except Exception:
-            pass
+        except (OSError, PermissionError) as e:
+            logger.warning(f"Failed to create directory {posixpath.dirname(path)}: {e}")
 
     if filesystem is None:
         filesystem = fsspec_filesystem("file")
@@ -110,7 +111,7 @@ class Writer:
         self.path = None
         self._filesystem = filesystem
 
-    def _to_polars(self):
+    def _to_polars(self) -> None:
         """
         Convert the data attribute to a Polars DataFrame.
 
@@ -126,7 +127,7 @@ class Writer:
         elif isinstance(self.data, duckdb.DuckDBPyRelation):
             self.data = self.data.pl()
 
-    def _to_arrow(self):
+    def _to_arrow(self) -> None:
         """
         Convert the data in the DataFrame to Arrow format.
 
@@ -142,7 +143,7 @@ class Writer:
         elif isinstance(self.data, duckdb.DuckDBPyRelation):
             self.data = self.data.arrow()
 
-    def _set_schema(self):
+    def _set_schema(self) -> None:
         """
         Sets the schema of the DataFrame.
 
@@ -163,7 +164,7 @@ class Writer:
             ]
         )
 
-    def sort_data(self, by: str | list[str] | list[tuple[str, str]] | None = None):
+    def sort_data(self, by: str | list[str] | list[tuple[str, str]] | None = None) -> None:
         """
         Sorts the data in the PydalaTable object based on the specified column(s).
 
@@ -184,7 +185,7 @@ class Writer:
             by = PydalaTable._get_sort_by(by, type_="pyarrow")
             self.data = self.data.sort_by(**by)
 
-    def unique(self, columns: bool | str | list[str] = False):
+    def unique(self, columns: bool | str | list[str] = False) -> None:
         """
         Generates a unique subset of the DataFrame based on the specified columns.
 
@@ -205,7 +206,7 @@ class Writer:
 
     def add_datepart_columns(
         self, columns: list[str], timestamp_column: str | None = None
-    ):
+    ) -> None:
         """
         Adds datepart columns to the data.
 
@@ -259,11 +260,11 @@ class Writer:
     def cast_schema(
         self,
         use_large_string: bool = False,
-        tz: str = None,
-        ts_unit: str = None,
+        tz: str | None = None,
+        ts_unit: str | None = None,
         remove_tz: bool = False,
         alter_schema: bool = False,
-    ):
+    ) -> None:
         """
         Casts the schema of the data object based on the specified parameters.
 
@@ -301,7 +302,7 @@ class Writer:
         self,
         other: pl.DataFrame | pl.LazyFrame,
         subset: str | list[str] | None = None,
-    ):
+    ) -> None:
         """
         Computes the difference between the current DataFrame and another DataFrame or LazyFrame.
 
@@ -315,7 +316,7 @@ class Writer:
         self.data = self.data.delta(other, subset=subset)
 
     @property
-    def shape(self):
+    def shape(self) -> tuple[int, int]:
         if self.data is None:
             return 0
         if isinstance(self.data, pl.LazyFrame):
@@ -354,35 +355,76 @@ class Writer:
         """
         self._to_arrow()
 
-        if basename is None:
-            basename_template = (
-                "data-"
-                f"{dt.datetime.now().strftime('%Y%m%d_%H%M%S%f')[:-3]}-{uuid.uuid4().hex[:16]}-{{i}}.parquet"
-            )
-        else:
-            basename_template = f"{basename}-{{i}}.parquet"
+        # Generate basename template
+        basename_template = self._generate_basename_template(basename)
 
+        # Configure file options
         file_options = pds.ParquetFileFormat().make_write_options(
             compression=compression
         )
 
-        if hasattr(self._filesystem, "fs"):
-            if "local" in self._filesystem.fs.protocol:
-                create_dir = True
-        else:
-            if "local" in self._filesystem.protocol:
-                create_dir = True
+        # Determine if directories should be created
+        create_dir = self._should_create_dir(create_dir)
 
+        # Track metadata
         metadata = []
 
+        # Create file visitor
+        file_visitor = self._create_file_visitor(verbose, metadata)
+
+        # Write dataset with retry logic
+        self._write_dataset_with_retry(
+            file_options=file_options,
+            partitioning_columns=partitioning_columns,
+            partitioning_flavor=partitioning_flavor,
+            basename_template=basename_template,
+            row_group_size=row_group_size,
+            max_rows_per_file=max_rows_per_file,
+            create_dir=create_dir,
+            file_visitor=file_visitor,
+            **kwargs,
+        )
+
+        return metadata
+
+    def _generate_basename_template(self, basename: str | None) -> str:
+        """Generate the basename template for output files."""
+        if basename is None:
+            return (
+                "data-"
+                f"{dt.datetime.now().strftime('%Y%m%d_%H%M%S%f')[:-3]}-{uuid.uuid4().hex[:16]}-{{i}}.parquet"
+            )
+        return f"{basename}-{{i}}.parquet"
+
+    def _should_create_dir(self, create_dir: bool) -> bool:
+        """Determine if directories should be created based on filesystem type."""
+        if hasattr(self._filesystem, "fs"):
+            return create_dir or "local" in self._filesystem.fs.protocol
+        return create_dir or "local" in self._filesystem.protocol
+
+    def _create_file_visitor(self, verbose: bool, metadata: list):
+        """Create a file visitor function for tracking written files."""
         def file_visitor(written_file):
             if verbose:
                 logger.info(f"path={written_file.path}")
                 logger.info(f"size={written_file.size} bytes")
                 logger.info(f"metadata={written_file.metadata}")
-            # written_file.metadata.set_file_path(written_file.path)
             metadata.append({written_file.path: written_file.metadata})
+        return file_visitor
 
+    def _write_dataset_with_retry(
+        self,
+        file_options,
+        partitioning_columns,
+        partitioning_flavor,
+        basename_template,
+        row_group_size,
+        max_rows_per_file,
+        create_dir,
+        file_visitor,
+        **kwargs,
+    ):
+        """Write the dataset with retry logic."""
         retries = 0
         while retries < 2:
             try:
@@ -411,7 +453,6 @@ class Writer:
                 self.clear_cache()
                 time.sleep(0.1)
                 create_dir = False
-        return metadata
 
     def clear_cache(self) -> None:
         """

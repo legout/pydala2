@@ -1,8 +1,10 @@
+# Third-party imports
 import duckdb as _duckdb
 import pandas as pd
 import pyarrow as pa
 import pyarrow.dataset as pds
 
+# Local imports
 from .helpers.polars import pl as _pl
 
 
@@ -28,6 +30,69 @@ class PydalaTable:
             self._ddb = result
 
     @staticmethod
+    def _parse_sort_by_string(sort_by: str) -> list[list[str]]:
+        """Parse a string sort specification into a list of [field, direction] pairs."""
+        result = []
+        for spec in sort_by.split(","):
+            spec = spec.strip()
+            parts = spec.rsplit(" ", 1)
+            if len(parts) == 1:
+                result.append([parts[0], "ascending"])
+            else:
+                field, direction = parts
+                result.append([field, direction.lower()])
+        return result
+
+    @staticmethod
+    def _parse_sort_by_list(sort_by: list | tuple) -> list[list[str]]:
+        """Parse a list/tuple sort specification into a list of [field, direction] pairs."""
+        if isinstance(sort_by[0], str):
+            return [[s, "ascending"] if isinstance(s, str) else s for s in sort_by]
+        elif isinstance(sort_by[0], list):
+            return [[s[0], s[1]] for s in sort_by]
+        else:
+            raise ValueError("Invalid sort_by format")
+
+    @staticmethod
+    def _normalize_sort_directions(sort_by: list[list[str]]) -> list[list[str]]:
+        """Normalize sort directions to 'ascending' or 'descending'."""
+        normalized = []
+        for field, direction in sort_by:
+            direction_lower = direction.lower()
+            if direction_lower in ["asc", "ascending"]:
+                normalized.append([field, "ascending"])
+            elif direction_lower in ["desc", "descending"]:
+                normalized.append([field, "descending"])
+            else:
+                raise ValueError(f"Invalid sort direction: {direction}")
+        return normalized
+
+    @staticmethod
+    def _format_for_pyarrow(sort_by: list[list[str]]) -> dict:
+        """Format sort specification for PyArrow."""
+        return {"sorting": [(s[0], s[1]) for s in sort_by]}
+
+    @staticmethod
+    def _format_for_duckdb(sort_by: list[list[str]]) -> str:
+        """Format sort specification for DuckDB."""
+        return ",".join(
+            [
+                " ".join([
+                    s[0],
+                    s[1].replace("ascending", "ASC").replace("descending", "DESC"),
+                ])
+                for s in sort_by
+            ]
+        )
+
+    @staticmethod
+    def _format_for_polars(sort_by: list[list[str]]) -> dict:
+        """Format sort specification for Polars."""
+        by = [s[0] for s in sort_by]
+        descending = [s[1].lower() == "descending" for s in sort_by]
+        return {"by": by, "descending": descending}
+
+    @staticmethod
     def _get_sort_by(
         sort_by: str | list[str] | list[tuple[str, str]], type_: str | None = "pyarrow"
     ) -> dict | str:
@@ -45,52 +110,28 @@ class PydalaTable:
         Raises:
             ValueError: If sort_by is not a string, list of strings, or list of tuples.
         """
+        # Parse the input into a consistent format
         if isinstance(sort_by, str):
-            sort_by = [s.split(" ") for s in sort_by.split(",")]
-            sort_by = [[s[0], "ascending"] if len(s) == 1 else s for s in sort_by]
-
-        elif isinstance(sort_by, list | tuple):
-            if isinstance(sort_by[0], str):
-                sort_by = [
-                    [s, "ascending"] if isinstance(s, str) else s for s in sort_by
-                ]
-            if isinstance(sort_by[0], list):
-                sort_by = [[s[0], s[1]] for s in sort_by]
-
-        for i in range(len(sort_by)):
-            if sort_by[i][1].lower() in ["asc", "ascending"]:
-                sort_by[i][1] = "ascending"
-            elif sort_by[i][1].lower() in ["desc", "descending"]:
-                sort_by[i][1] = "descending"
-
-        if type_ == "pyarrow":
-            return {"sorting": [(s[0], s[1]) for s in sort_by]}
-
-        elif type_ == "duckdb":
-            sort_by = ",".join(
-                [
-                    " ".join(
-                        [
-                            s[0],
-                            s[1]
-                            .replace("ascending", "ASC")
-                            .replace("descending", "DESC"),
-                        ]
-                    )
-                    for s in sort_by
-                ]
-            )
-            return sort_by
-
-        elif type_ == "polars":
-            by = [s[0] for s in sort_by]
-            descending = [s[1].lower() == "descending" for s in sort_by]
-            return {"by": by, "descending": descending}
-
+            sort_by = PydalaTable._parse_sort_by_string(sort_by)
+        elif isinstance(sort_by, (list, tuple)):
+            sort_by = PydalaTable._parse_sort_by_list(sort_by)
         else:
             raise ValueError(
                 "sort_by must be a string, list of strings, or list of tuples."
             )
+
+        # Normalize sort directions
+        sort_by = PydalaTable._normalize_sort_directions(sort_by)
+
+        # Format based on the target type
+        if type_ == "pyarrow":
+            return PydalaTable._format_for_pyarrow(sort_by)
+        elif type_ == "duckdb":
+            return PydalaTable._format_for_duckdb(sort_by)
+        elif type_ == "polars":
+            return PydalaTable._format_for_polars(sort_by)
+        else:
+            raise ValueError(f"Unsupported type_: {type_}")
 
     def to_arrow_dataset(self) -> pds.Dataset:
         """
@@ -114,12 +155,12 @@ class PydalaTable:
         self,
         columns: str | list[str] | None = None,
         filter: pds.Expression | None = None,
-        batch_size: int = 131072,
+        batch_size: int | None = None,
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
-        batch_readahead: int = 16,
-        fragment_readahead: int = 4,
+        batch_readahead: int | None = None,
+        fragment_readahead: int | None = None,
         fragment_scan_options: pds.FragmentScanOptions | None = None,
-        use_threads: bool = True,
+        use_threads: bool | None = None,
         memory_pool: pa.MemoryPool | None = None,
     ) -> pds.Scanner:
         """
@@ -129,14 +170,18 @@ class PydalaTable:
             columns (str | list[str] | None, optional): Columns to include in the scanner.
                 Defaults to None.
             filter (pds.Expression | None, optional): Filter expression to apply. Defaults to None.
-            batch_size (int, optional): Batch size for scanning. Defaults to 131072.
+            batch_size (int | None, optional): Batch size for scanning.
+                If None, uses default from ScannerConfig.
             sort_by (str | list[str] | list[tuple[str, str]] | None, optional): Columns to sort by.
                 Defaults to None.
-            batch_readahead (int, optional): Number of batches to read ahead. Defaults to 16.
-            fragment_readahead (int, optional): Number of fragments to read ahead. Defaults to 4.
+            batch_readahead (int | None, optional): Number of batches to read ahead.
+                If None, uses default from ScannerConfig.
+            fragment_readahead (int | None, optional): Number of fragments to read ahead.
+                If None, uses default from ScannerConfig.
             fragment_scan_options (pds.FragmentScanOptions | None, optional): Fragment scan options.
                 Defaults to None.
-            use_threads (bool, optional): Whether to use multiple threads. Defaults to True.
+            use_threads (bool | None, optional): Whether to use multiple threads.
+                If None, uses default from ScannerConfig.
             memory_pool (pa.MemoryPool | None, optional): Memory pool to use. Defaults to None.
 
         Returns:
@@ -145,9 +190,27 @@ class PydalaTable:
         Raises:
             ValueError: If the table type is not "pyarrow".
         """
+        from .constants import ScannerConfig
 
         if self._type != "pyarrow":
             raise ValueError("This method is only available for pyarrow datasets.")
+
+        # Use config defaults if not specified
+        config = ScannerConfig()
+        batch_size = batch_size or config.batch_size
+        batch_readahead = batch_readahead or config.batch_readahead
+        fragment_readahead = fragment_readahead or config.fragment_readahead
+        use_threads = use_threads if use_threads is not None else config.use_threads
+        fragment_scan_options = fragment_scan_options or config.fragment_scan_options
+        memory_pool = memory_pool or config.memory_pool
+
+        # Validate parameters
+        if batch_size <= 0:
+            raise ValueError("batch_size must be a positive integer")
+        if batch_readahead < 0:
+            raise ValueError("batch_readahead must be a non-negative integer")
+        if fragment_readahead < 0:
+            raise ValueError("fragment_readahead must be a non-negative integer")
 
         if isinstance(columns, str):
             columns = [columns]
@@ -191,6 +254,9 @@ class PydalaTable:
         """
         Converts the table to a scanner object for efficient data scanning.
 
+        .. deprecated::
+            Use scanner() instead. This method will be removed in a future version.
+
         Args:
             columns (str | list[str] | None, optional): Columns to include in the scanner.
                 Defaults to None.
@@ -210,8 +276,15 @@ class PydalaTable:
         Returns:
             pds.Scanner: The scanner object for efficient data scanning.
         """
+        import warnings
 
-        return self.to_arrow_scanner(
+        warnings.warn(
+            "to_scanner() is deprecated, use scanner() instead",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
+        return self.scanner(
             columns=columns,
             filter=filter,
             batch_size=batch_size,
@@ -227,12 +300,12 @@ class PydalaTable:
         self,
         columns: str | list[str] | None = None,
         filter: pds.Expression | None = None,
-        batch_size: int = 131072,
+        batch_size: int | None = None,
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
-        batch_readahead: int = 16,
-        fragment_readahead: int = 4,
+        batch_readahead: int | None = None,
+        fragment_readahead: int | None = None,
         fragment_scan_options: pds.FragmentScanOptions | None = None,
-        use_threads: bool = True,
+        use_threads: bool | None = None,
         memory_pool: pa.MemoryPool | None = None,
     ) -> pds.Scanner:
         """
@@ -242,30 +315,46 @@ class PydalaTable:
             columns (str | list[str] | None, optional): Columns to include in the scan. Defaults to None.
             filter (pds.Expression | None, optional): Filter expression to apply during the scan.
                 Defaults to None.
-            batch_size (int, optional): Number of rows to read per batch. Defaults to 131072.
+            batch_size (int | None, optional): Number of rows to read per batch.
+                If None, uses default from ScannerConfig.
             sort_by (str | list[str] | list[tuple[str, str]] | None, optional): Columns to sort the scan by.
                 Defaults to None.
-            batch_readahead (int, optional): Number of batches to read ahead. Defaults to 16.
-            fragment_readahead (int, optional): Number of fragments to read ahead. Defaults to 4.
+            batch_readahead (int | None, optional): Number of batches to read ahead.
+                If None, uses default from ScannerConfig.
+            fragment_readahead (int | None, optional): Number of fragments to read ahead.
+                If None, uses default from ScannerConfig.
             fragment_scan_options (pds.FragmentScanOptions | None, optional): Fragment scan options.
                 Defaults to None.
-            use_threads (bool, optional): Whether to use multiple threads for scanning. Defaults to True.
+            use_threads (bool | None, optional): Whether to use multiple threads for scanning.
+                If None, uses default from ScannerConfig.
             memory_pool (pa.MemoryPool | None, optional): Memory pool to use for allocations.
                 Defaults to None.
 
         Returns:
             pds.Scanner: Scanner object for scanning the table.
         """
+        from .constants import ScannerConfig
+
+        # Use config defaults if not specified
+        config = ScannerConfig()
+
+        # Validate parameters before passing to to_arrow_scanner
+        if batch_size is not None and batch_size <= 0:
+            raise ValueError("batch_size must be a positive integer")
+        if batch_readahead is not None and batch_readahead < 0:
+            raise ValueError("batch_readahead must be a non-negative integer")
+        if fragment_readahead is not None and fragment_readahead < 0:
+            raise ValueError("fragment_readahead must be a non-negative integer")
 
         return self.to_arrow_scanner(
             columns=columns,
             filter=filter,
-            batch_size=batch_size,
-            batch_readahead=batch_readahead,
-            fragment_readahead=fragment_readahead,
-            fragment_scan_options=fragment_scan_options,
-            use_threads=use_threads,
-            memory_pool=memory_pool,
+            batch_size=batch_size or config.batch_size,
+            batch_readahead=batch_readahead or config.batch_readahead,
+            fragment_readahead=fragment_readahead or config.fragment_readahead,
+            fragment_scan_options=fragment_scan_options or config.fragment_scan_options,
+            use_threads=use_threads if use_threads is not None else config.use_threads,
+            memory_pool=memory_pool or config.memory_pool,
             sort_by=sort_by,
         )
 

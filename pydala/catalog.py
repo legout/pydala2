@@ -1,5 +1,7 @@
+# Standard library imports
 import posixpath
 
+# Third-party imports
 import duckdb
 import pandas as pd
 import pyarrow as pa
@@ -7,8 +9,8 @@ import yaml
 from fsspec import AbstractFileSystem
 from munch import Munch, munchify, toYAML, unmunchify
 
+# Local imports
 from pydala.helpers.polars import pl
-
 from .dataset import CsvDataset, JsonDataset, ParquetDataset, PyarrowDataset
 from .filesystem import FileSystem
 from .helpers.misc import delattr_rec, get_nested_keys, getattr_rec, setattr_rec
@@ -54,23 +56,27 @@ class Catalog:
         else:
             self.params.tables = self.params.tables
 
-    def _write_catalog(self, delete_table: str = None):
+    def _write_catalog(self, delete_table: str = None) -> None:
+        """Write the catalog configuration to disk.
+
+        This method loads the existing catalog from disk, applies any updates
+        (including table deletions), and writes it back to the filesystem.
+        """
         with self._catalog_filesystem.open(self._catalog_path, "r") as f:
             catalog = munchify(yaml.full_load(f))
+
         if delete_table is not None:
             delattr_rec(catalog, delete_table)
 
-        if self._namespace is not None:
-            self.params.tables[self._namespace].update(self.params.tables)
-        else:
-            self.params.tables.update(self.params.tables)
-
+        # Update the catalog with current parameters.
+        # This ensures any runtime changes to table configurations are persisted.
+        # Note: self.params may contain modifications made during the session.
         catalog.update(self.params)
 
         with self._catalog_filesystem.open(self._catalog_path, "w") as f:
             yaml.dump(unmunchify(catalog), f)
 
-    def _load_filesystems(self):
+    def _load_filesystems(self) -> None:
         if hasattr(self.params, "filesystem"):
             self.fs = Munch()
 
@@ -110,7 +116,7 @@ class Catalog:
     def _get_table_params(self, table_name: str) -> Munch:
         return getattr_rec(self.params.tables, table_name)
 
-    def _set_table_params(self, table_name: str, **fields):
+    def _set_table_params(self, table_name: str, **fields) -> None:
         if table_name in self.all_tables:
             getattr_rec(
                 self.params.tables,
