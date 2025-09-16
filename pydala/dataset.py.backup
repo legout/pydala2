@@ -4,7 +4,6 @@ import posixpath
 import re
 import tempfile
 import typing as t
-from typing import Union, List, Dict, Any, Optional, Tuple
 
 import duckdb as _duckdb
 import pandas as pd
@@ -17,24 +16,6 @@ from fsspec import AbstractFileSystem
 
 # Initialize logger
 logger = logging.getLogger(__name__)
-
-# Type aliases
-WriteDataTypes = Union[
-    _pl.DataFrame,
-    _pl.LazyFrame,
-    pa.Table,
-    pa.RecordBatch,
-    pa.RecordBatchReader,
-    pd.DataFrame,
-    _duckdb.DuckDBPyConnection,
-    List['WriteDataTypes']
-]
-
-# Constants
-DEFAULT_MAX_ROWS_PER_FILE = 2_500_000
-DEFAULT_ROW_GROUP_SIZE = 250_000
-DEFAULT_COMPRESSION = "zstd"
-DEFAULT_TS_UNIT = "us"
 
 from .filesystem import FileSystem, clear_cache
 from .helpers.datetime import get_timestamp_column
@@ -99,14 +80,28 @@ class BaseDataset:
         else:
             self.name = name
 
-        self.ddb_con = self._setup_duckdb_connection(ddb_con)
+        if ddb_con is None:
+            ddb_con = _duckdb.connect()
+
+        self.ddb_con = ddb_con
+        # enable object caching for e.g. parquet metadata
+        self.ddb_con.execute(
+            f"""PRAGMA enable_object_cache;
+            SET THREADS={psutil.cpu_count() * 2};"""
+        )
         self._timestamp_column = timestamp_column
 
         # self.load_files()
 
         # NOTE: Set partitioning manually, if not set, try to infer it
         if partitioning is None:
-            partitioning = self._infer_partitioning()
+            # try to infer partitioning
+            try:
+                if any(["=" in obj for obj in self.fs.lss(self._path)]):
+                    partitioning = "hive"
+            except FileNotFoundError as e:
+                _ = e
+                partitioning = None
         else:
             if partitioning == "ignore":
                 partitioning = None
@@ -164,53 +159,6 @@ class BaseDataset:
                 logger.error(f"Alternative directory creation also failed: {e2}")
                 raise
 
-    def _setup_duckdb_connection(self, ddb_con: Optional[_duckdb.DuckDBPyConnection] = None) -> _duckdb.DuckDBPyConnection:
-        """Setup and configure DuckDB connection with default settings."""
-        if ddb_con is None:
-            ddb_con = _duckdb.connect()
-
-        # Enable object caching for e.g. parquet metadata
-        ddb_con.execute(
-            f"""PRAGMA enable_object_cache;
-            SET THREADS={psutil.cpu_count() * 2};"""
-        )
-        return ddb_con
-
-    def _setup_timestamp_column(self) -> None:
-        """Setup timestamp column and timezone if available."""
-        if self._timestamp_column is None:
-            self._timestamp_columns = get_timestamp_column(self.table.pl.head(10))
-            if len(self._timestamp_columns) > 0:
-                self._timestamp_column = self._timestamp_columns[0]
-
-        if self._timestamp_column is not None:
-            tz = self.schema.field(self._timestamp_column).type.tz
-            self._tz = tz
-            if tz is not None:
-                # Use parameterized query to prevent SQL injection
-                self.ddb_con.execute("SET TimeZone=?", [str(tz)])
-        else:
-            self._tz = None
-
-    def _infer_partitioning(self) -> Optional[Union[str, List[str]]]:
-        """Infer partitioning scheme from file paths."""
-        try:
-            if any(["=" in obj for obj in self.fs.lss(self._path)]):
-                return "hive"
-        except FileNotFoundError:
-            pass
-        return None
-
-    def _delete_dataset_files(self, files: Union[str, List[str]]) -> None:
-        """Delete files from dataset with proper path handling."""
-        if isinstance(files, str):
-            files = [files]
-
-        if self._path not in files[0]:
-            files = [posixpath.join(self._path, fn) for fn in files]
-
-        self._filesystem.rm(files, recursive=True)
-
     @property
     def files(self) -> list:
         """
@@ -255,7 +203,19 @@ class BaseDataset:
             self.table = PydalaTable(result=self._arrow_dataset, ddb_con=self.ddb_con)
             # self.ddb_con.register("arrow__dataset", self._arrow_parquet_dataset)
 
-            self._setup_timestamp_column()
+            if self._timestamp_column is None:
+                self._timestamp_columns = get_timestamp_column(self.table.pl.head(10))
+                if len(self._timestamp_columns) > 0:
+                    self._timestamp_column = self._timestamp_columns[0]
+
+            if self._timestamp_column is not None:
+                tz = self.schema.field(self._timestamp_column).type.tz
+                self._tz = tz
+                if tz is not None:
+                    # Use parameterized query to prevent SQL injection
+                    self.ddb_con.execute("SET TimeZone=?", [str(tz)])
+            else:
+                self._tz = None
 
             self.ddb_con.register(f"{self.name}", self._arrow_dataset)
 
@@ -370,14 +330,19 @@ class BaseDataset:
             # print(f"No dataset loaded yet. Run {self}.load()")
             return 0
 
-    def delete_files(self, files: Union[str, List[str]]):
+    def delete_files(self, files: str | list[str]):
         """
         Deletes the specified files from the dataset.
 
         Args:
-            files (str | list[str]): The file(s) to be deleted.
+            files (str | list[str], optional): The file(s) to be deleted. If not provided, all files in the dataset
+                will be deleted. Defaults to None.
         """
-        self._delete_dataset_files(files)
+
+        if self._path not in files[0]:
+            files = [posixpath.join(self._path, fn) for fn in files]
+        self._filesystem.rm(files, recursive=True)
+        # self.load(reload=True)
 
     def vacuum(self):
         """
@@ -657,85 +622,33 @@ class BaseDataset:
 
         return self.filter(" AND ".join(filter_expr)).pl
 
-    def _prepare_write_data(self, data: WriteDataTypes) -> List[WriteDataTypes]:
-        """Normalize data to a list format."""
-        if (
-            not isinstance(data, list)
-            and not isinstance(data, tuple)
-            and not isinstance(data, pa.RecordBatchReader)
-        ):
-            data = [data]
-        return data
-
-    def _get_write_schema(self, partition_by: Optional[Union[str, List[str]]], alter_schema: bool) -> Optional[pa.Schema]:
-        """Get the appropriate schema for writing."""
-        if not partition_by:
-            return self.metadata.schema.to_arrow_schema() if self.metadata else None
-        else:
-            return self.schema if self.schema else None
-
-    def _configure_writer(
-        self,
-        writer: Writer,
-        sort_by: Optional[Union[str, List[str], List[Tuple[str, str]]]],
-        unique: Union[bool, str, List[str]],
-        ts_unit: str,
-        tz: Optional[str],
-        remove_tz: bool,
-        alter_schema: bool,
-        partition_by: Optional[Union[str, List[str]]],
-    ) -> None:
-        """Configure the writer with sorting, uniqueness, and schema settings."""
-        writer.sort_data(by=sort_by)
-
-        if unique:
-            writer.unique(columns=unique)
-
-        writer.cast_schema(
-            ts_unit=ts_unit,
-            tz=tz,
-            remove_tz=remove_tz,
-            alter_schema=alter_schema,
-        )
-
-        if partition_by:
-            writer.add_datepart_columns(
-                columns=partition_by,
-                timestamp_column=self._timestamp_column,
-            )
-
-    def _handle_delta_mode(
-        self,
-        writer: Writer,
-        delta_subset: Optional[Union[str, List[str]]],
-    ) -> None:
-        """Handle delta mode updates."""
-        if self.is_loaded:
-            writer._to_polars()
-            other_df = self._get_delta_other_df(
-                writer.data,
-                filter_columns=delta_subset,
-            )
-            if other_df is not None:
-                writer.delta(other=other_df, subset=delta_subset)
-
-    def _handle_overwrite_mode(self) -> None:
-        """Handle overwrite mode by deleting existing files."""
-        del_files = [posixpath.join(self._path, fn) for fn in self.files]
-        self.delete_files(del_files)
-
     def write_to_dataset(
         self,
-        data: WriteDataTypes,
+        data: (
+            _pl.DataFrame
+            | _pl.LazyFrame
+            | pa.Table
+            | pa.RecordBatch
+            | pd.DataFrame
+            | _duckdb.DuckDBPyConnection
+            | list[
+                _pl.DataFrame
+                | _pl.LazyFrame
+                | pa.Table
+                | pa.RecordBatch
+                | pd.DataFrame
+                | _duckdb.DuckDBPyConnection
+            ]
+        ),
         mode: str = "append",  # "delta", "overwrite"
         basename: str | None = None,
         partition_by: str | list[str] | None = None,
-        max_rows_per_file: int | None = DEFAULT_MAX_ROWS_PER_FILE,
-        row_group_size: int | None = DEFAULT_ROW_GROUP_SIZE,
-        compression: str = DEFAULT_COMPRESSION,
+        max_rows_per_file: int | None = 2_500_000,
+        row_group_size: int | None = 250_000,
+        compression: str = "zstd",
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
         unique: bool | str | list[str] = False,
-        ts_unit: str = DEFAULT_TS_UNIT,
+        ts_unit: str = "us",
         tz: str | None = None,
         remove_tz: bool = False,
         delta_subset: str | list[str] | None = None,
@@ -792,10 +705,17 @@ class BaseDataset:
         if timestamp_column is not None:
             self._timestamp_column = timestamp_column
 
-        # Prepare data for writing
-        data = self._prepare_write_data(data)
+        if (
+            not isinstance(data, list)
+            and not isinstance(data, tuple)
+            and not isinstance(data, pa.RecordBatchReader)
+        ):
+            data = [data]
         metadata = []
-        schema = self._get_write_schema(partition_by, alter_schema)
+        if not partition_by:
+            schema = self.metadata.schema.to_arrow_schema() if self.metadata else None
+        else:
+            schema = self.schema if self.schema else None
 
         for data_ in data:
             writer = Writer(
@@ -807,23 +727,34 @@ class BaseDataset:
             if writer.shape[0] == 0:
                 continue
 
-            # Configure writer with all settings
-            self._configure_writer(
-                writer=writer,
-                sort_by=sort_by,
-                unique=unique,
+            writer.sort_data(by=sort_by)
+
+            if unique:
+                writer.unique(columns=unique)
+
+            writer.cast_schema(
+                # use_large_string=use_large_string,
                 ts_unit=ts_unit,
                 tz=tz,
                 remove_tz=remove_tz,
                 alter_schema=alter_schema,
-                partition_by=partition_by,
             )
 
-            # Handle delta mode if needed
-            if mode == "delta":
-                self._handle_delta_mode(writer, delta_subset)
+            if partition_by:
+                writer.add_datepart_columns(
+                    columns=partition_by,
+                    timestamp_column=self._timestamp_column,
+                )
 
-            # Write the data
+            if mode == "delta" and self.is_loaded:
+                writer._to_polars()
+                other_df = self._get_delta_other_df(
+                    writer.data,
+                    filter_columns=delta_subset,
+                )
+                if other_df is not None:
+                    writer.delta(other=other_df, subset=delta_subset)
+
             metadata_ = writer.write_to_dataset(
                 row_group_size=row_group_size,
                 compression=compression,
@@ -837,9 +768,9 @@ class BaseDataset:
             if metadata_ is not None:
                 metadata.extend(metadata_)
 
-        # Handle overwrite mode
         if mode == "overwrite":
-            self._handle_overwrite_mode()
+            del_files = [posixpath.join(self._path, fn) for fn in self.files]
+            self.delete_files(del_files)
 
         self.clear_cache()
 
@@ -847,7 +778,7 @@ class BaseDataset:
             return metadata
 
 
-class ParquetDataset(PydalaDatasetMetadata, BaseDataset, OptimizeMixin):
+class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
     def __init__(
         self,
         path: str,
@@ -967,7 +898,22 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset, OptimizeMixin):
 
         self.table = PydalaTable(result=self._arrow_dataset, ddb_con=self.ddb_con)
 
-        self._setup_timestamp_column()
+        if self._timestamp_column is None:
+            self._timestamp_columns = get_timestamp_column(self.table.pl.head(10))
+            if len(self._timestamp_columns) > 0:
+                self._timestamp_column = self._timestamp_columns[0]
+        if self._timestamp_column is not None:
+            ts_type = self.schema.field(self._timestamp_column).type
+            if hasattr(ts_type, "tz"):
+                tz = ts_type.tz
+            else:
+                tz = None
+            self._tz = tz
+            if tz is not None:
+                # Use parameterized query to prevent SQL injection
+                self.ddb_con.execute("SET TimeZone=?", [str(tz)])
+        else:
+            self._tz = None
 
         self.ddb_con.register(f"{self.name}", self._arrow_dataset)
 
@@ -1244,19 +1190,97 @@ class JsonDataset(BaseDataset):
                 self._timestamp_column = self._timestamp_columns[0]
 
 
-class OptimizeMixin:
-    """Mixin class providing optimization methods for Parquet datasets."""
+class Optimize(ParquetDataset):
+    def __init__(
+        self,
+        path: str,
+        name: str | None = None,
+        filesystem: AbstractFileSystem | None = None,
+        bucket: str | None = None,
+        partitioning: str | list[str] | None = None,
+        cached: bool = False,
+        timestamp_column: str | None = None,
+        ddb_con: _duckdb.DuckDBPyConnection | None = None,
+        **caching_options,
+    ):
+        super().__init__(
+            path=path,
+            filesystem=filesystem,
+            name=name,
+            bucket=bucket,
+            partitioning=partitioning,
+            cached=cached,
+            timestamp_column=timestamp_column,
+            ddb_con=ddb_con,
+            **caching_options,
+        )
+        self.load()
+
+    def _compact_partition(
+        self,
+        partition: dict[str : t.Any],
+        max_rows_per_file: int | None = 2_500_000,
+        sort_by: str | list[str] | list[tuple[str, str]] | None = None,
+        compression: str = "zstd",
+        row_group_size: int | None = 250_000,
+        unique: bool = True,
+        **kwargs,
+    ):
+        # if isinstance(partition, str):
+        #    partition = [partition]
+
+        # Securely build filter expression to prevent SQL injection
+        filter_parts = []
+        for name, value in partition.items():
+            if not validate_partition_name(name):
+                raise ValueError(f"Invalid partition name: {name}")
+            if not validate_partition_value(value):
+                raise ValueError(f"Invalid partition value: {value}")
+            
+            escaped_name = escape_sql_identifier(name)
+            escaped_value = escape_sql_literal(value)
+            filter_parts.append(f"{escaped_name}={escaped_value}")
+        
+        filter_ = " AND ".join(filter_parts)
+
+        scan = self.scan(filter_)
+        # if len(self.scan_files) == 1:
+        #     num_rows = (
+        #         self.metadata_table.filter(
+        #             f"file_path='{self.scan_files[0].replace(self._path,'').lstrip('/')}'"
+        #         )
+        #         .aggregate("sum(num_rows)")
+        #         .fetchone()[0]
+        #     )
+        # else:
+        #     num_rows = 0
+
+        batches = scan.to_batch_reader(sort_by=sort_by, batch_size=max_rows_per_file)
+        for batch in batches:
+            self.write_to_dataset(
+                pa.table(batch),
+                mode="append",
+                max_rows_per_file=max_rows_per_file,
+                row_group_size=row_group_size,
+                compression=compression,
+                update_metadata=False,
+                unique=unique,
+                **kwargs,
+            )
+
+            self.delete_files(self.scan_files)
+
+        self.reset_scan()
 
     def compact_partitions(
         self,
-        max_rows_per_file: int | None = DEFAULT_MAX_ROWS_PER_FILE,
+        max_rows_per_file: int | None = 2_500_000,
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
-        compression: str = DEFAULT_COMPRESSION,
-        row_group_size: int | None = DEFAULT_ROW_GROUP_SIZE,
+        compression: str = "zstd",
+        row_group_size: int | None = 250_000,
         unique: bool = True,
         **kwargs,
     ) -> None:
-        """Compact partitions to reduce file fragmentation."""
         partitions_to_compact = (
             self.metadata_table.pl()
             .group_by(list(self.partition_names), maintain_order=True)
@@ -1284,62 +1308,90 @@ class OptimizeMixin:
         self.load(update_metadata=True)
         self.update_metadata_table()
 
-    def _compact_partition(
+    def compact_small_files(self):
+        pass
+
+    def _compact_by_timeperiod(
         self,
-        partition: Dict[str, Any],
-        max_rows_per_file: int | None = DEFAULT_MAX_ROWS_PER_FILE,
+        start_date: dt.datetime,
+        end_date: dt.datetime,
+        timestamp_column: str | None = None,
+        max_rows_per_file: int | None = 2_500_000,
+        row_group_size: int | None = 250_000,
+        compression: str = "zstd",
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
-        compression: str = DEFAULT_COMPRESSION,
-        row_group_size: int | None = DEFAULT_ROW_GROUP_SIZE,
-        unique: bool = True,
+        unique: bool = False,
         **kwargs,
-    ) -> None:
-        """Compact a single partition."""
-        # Securely build filter expression to prevent SQL injection
-        filter_parts = []
-        for name, value in partition.items():
-            if not validate_partition_name(name):
-                raise ValueError(f"Invalid partition name: {name}")
-            if not validate_partition_value(value):
-                raise ValueError(f"Invalid partition value: {value}")
-
-            escaped_name = escape_sql_identifier(name)
-            escaped_value = escape_sql_literal(value)
-            filter_parts.append(f"{escaped_name}={escaped_value}")
-
-        filter_ = " AND ".join(filter_parts)
-
+    ):
+        # Securely build timestamp filter to prevent SQL injection
+        if timestamp_column is None:
+            timestamp_column = self._timestamp_column
+            
+        if timestamp_column is None:
+            raise ValueError("No timestamp column specified or found")
+            
+        # Validate timestamp column name
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', timestamp_column):
+            raise ValueError(f"Invalid timestamp column name: {timestamp_column}")
+            
+        # Format dates safely as ISO strings and build filter with proper escaping
+        start_date_str = start_date.isoformat()
+        end_date_str = end_date.isoformat()
+        filter_ = f"{timestamp_column} >= '{start_date_str}' AND {timestamp_column} < '{end_date_str}'"
+        
+        # Sanitize the filter expression
+        filter_ = sanitize_filter_expression(filter_)
+        
         scan = self.scan(filter_)
+        
+        if len(self.scan_files) == 1:
+            # Safely escape file path for metadata query
+            file_path = self.scan_files[0].replace(self._path, '').lstrip('/')
+            escaped_file_path = file_path.replace("'", "''")
+            date_diff = (
+                self.metadata_table.filter(
+                    f"file_path='{escaped_file_path}'"
+                )
+                .aggregate("max(AE_DATUM.max) - min(AE_DATUM.min)")
+                .fetchone()[0]
+            )
+        else:
+            date_diff = dt.timedelta(0)
 
-        batches = scan.to_batch_reader(sort_by=sort_by, batch_size=max_rows_per_file)
-        for batch in batches:
-            self.write_to_dataset(
-                pa.table(batch),
-                mode="append",
-                max_rows_per_file=max_rows_per_file,
-                row_group_size=row_group_size,
-                compression=compression,
-                update_metadata=False,
-                unique=unique,
-                **kwargs,
+        files_to_delete = []
+        if (len(self.scan_files) > 1) or (date_diff > end_date - start_date):
+            files_to_delete += self.scan_files
+            batches = (
+                scan.to_duckdb(sort_by=sort_by, distinct=unique)
+                .filter(filter_)
+                .fetch_arrow_reader(batch_size=max_rows_per_file)
             )
 
-            self.delete_files(self.scan_files)
-
+            for batch in batches:
+                self.write_to_dataset(
+                    pa.table(batch),
+                    mode="append",
+                    max_rows_per_file=max_rows_per_file,
+                    row_group_size=row_group_size,
+                    compression=compression,
+                    update_metadata=False,
+                    unique=unique,
+                    **kwargs,
+                )
         self.reset_scan()
+        return files_to_delete
 
     def compact_by_timeperiod(
         self,
         interval: str | dt.timedelta,
         timestamp_column: str | None = None,
-        max_rows_per_file: int | None = DEFAULT_MAX_ROWS_PER_FILE,
+        max_rows_per_file: int | None = 2_500_000,
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
         unique: bool = False,
-        compression: str = DEFAULT_COMPRESSION,
-        row_group_size: int | None = DEFAULT_ROW_GROUP_SIZE,
+        compression="zstd",
+        row_group_size: int | None = 250_000,
         **kwargs,
-    ) -> None:
-        """Compact data by time periods."""
+    ):
         timestamp_column = timestamp_column or self._timestamp_column
 
         min_max_ts = self.t.sql(
@@ -1389,87 +1441,15 @@ class OptimizeMixin:
         self.load(update_metadata=True)
         self.update_metadata_table()
 
-    def _compact_by_timeperiod(
-        self,
-        start_date: dt.datetime,
-        end_date: dt.datetime,
-        timestamp_column: str | None = None,
-        max_rows_per_file: int | None = DEFAULT_MAX_ROWS_PER_FILE,
-        row_group_size: int | None = DEFAULT_ROW_GROUP_SIZE,
-        compression: str = DEFAULT_COMPRESSION,
-        sort_by: str | list[str] | list[tuple[str, str]] | None = None,
-        unique: bool = False,
-        **kwargs,
-    ) -> List[str]:
-        """Compact data for a specific time period."""
-        # Securely build timestamp filter to prevent SQL injection
-        if timestamp_column is None:
-            timestamp_column = self._timestamp_column
-
-        if timestamp_column is None:
-            raise ValueError("No timestamp column specified or found")
-
-        # Validate timestamp column name
-        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', timestamp_column):
-            raise ValueError(f"Invalid timestamp column name: {timestamp_column}")
-
-        # Format dates safely as ISO strings and build filter with proper escaping
-        start_date_str = start_date.isoformat()
-        end_date_str = end_date.isoformat()
-        filter_ = f"{timestamp_column} >= '{start_date_str}' AND {timestamp_column} < '{end_date_str}'"
-
-        # Sanitize the filter expression
-        filter_ = sanitize_filter_expression(filter_)
-
-        scan = self.scan(filter_)
-
-        if len(self.scan_files) == 1:
-            # Safely escape file path for metadata query
-            file_path = self.scan_files[0].replace(self._path, '').lstrip('/')
-            escaped_file_path = file_path.replace("'", "''")
-            date_diff = (
-                self.metadata_table.filter(
-                    f"file_path='{escaped_file_path}'"
-                )
-                .aggregate("max(AE_DATUM.max) - min(AE_DATUM.min)")
-                .fetchone()[0]
-            )
-        else:
-            date_diff = dt.timedelta(0)
-
-        files_to_delete = []
-        if (len(self.scan_files) > 1) or (date_diff > end_date - start_date):
-            files_to_delete += self.scan_files
-            batches = (
-                scan.to_duckdb(sort_by=sort_by, distinct=unique)
-                .filter(filter_)
-                .fetch_arrow_reader(batch_size=max_rows_per_file)
-            )
-
-            for batch in batches:
-                self.write_to_dataset(
-                    pa.table(batch),
-                    mode="append",
-                    max_rows_per_file=max_rows_per_file,
-                    row_group_size=row_group_size,
-                    compression=compression,
-                    update_metadata=False,
-                    unique=unique,
-                    **kwargs,
-                )
-        self.reset_scan()
-        return files_to_delete
-
     def compact_by_rows(
         self,
-        max_rows_per_file: int | None = DEFAULT_MAX_ROWS_PER_FILE,
+        max_rows_per_file: int | None = 2_500_000,
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
         unique: bool = False,
-        compression: str = DEFAULT_COMPRESSION,
-        row_group_size: int | None = DEFAULT_ROW_GROUP_SIZE,
+        compression: str = "zstd",
+        row_group_size: int | None = 250_000,
         **kwargs,
-    ) -> None:
-        """Compact files based on row count."""
+    ):
         if self._partitioning:
             self.compact_partitions(
                 max_rows_per_file=max_rows_per_file,
@@ -1506,14 +1486,13 @@ class OptimizeMixin:
         self,
         partitioning_columns: str | list[str] | None = None,
         partitioning_falvor: str = "hive",
-        max_rows_per_file: int | None = DEFAULT_MAX_ROWS_PER_FILE,
+        max_rows_per_file: int | None = 2_500_000,
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
         unique: bool = False,
-        compression: str = DEFAULT_COMPRESSION,
-        row_group_size: int | None = DEFAULT_ROW_GROUP_SIZE,
+        compression="zstd",
+        row_group_size: int | None = 250_000,
         **kwargs,
-    ) -> None:
-        """Repartition the dataset."""
+    ):
         batches = self.table.to_batch_reader(
             sort_by=sort_by, distinct=unique, batch_size=max_rows_per_file
         )
@@ -1522,6 +1501,7 @@ class OptimizeMixin:
             self.write_to_dataset(
                 pa.table(batch),
                 partition_by=partitioning_columns,
+                # partitioning_falvor=partitioning_falvor,
                 mode="append",
                 max_rows_per_file=max_rows_per_file,
                 row_group_size=min(max_rows_per_file, row_group_size),
@@ -1542,11 +1522,10 @@ class OptimizeMixin:
         exclude: str | list[str] | None = None,
         strict: bool = True,
         include: str | list[str] | None = None,
-        ts_unit: str | None = None,
+        ts_unit: str | None = None,  # "us",
         tz: str | None = None,
         **kwargs,
-    ) -> None:
-        """Optimize data types for a specific file."""
+    ):
         # Safely escape file path to prevent SQL injection
         escaped_file_path = file_path.replace("'", "''")
         scan = self.scan(f"file_path='{escaped_file_path}'")
@@ -1573,7 +1552,7 @@ class OptimizeMixin:
                 table,
                 mode="append",
                 update_metadata=False,
-                ts_unit=ts_unit,
+                ts_unit=ts_unit,  # "us",
                 tz=tz,
                 alter_schema=True,
                 **kwargs,
@@ -1589,12 +1568,11 @@ class OptimizeMixin:
         exclude: str | list[str] | None = None,
         strict: bool = True,
         include: str | list[str] | None = None,
-        ts_unit: str | None = None,
-        infer_schema_size: int = 10_000,
+        ts_unit: str | None = None,  # "us",
         tz: str | None = None,
+        infer_schema_size: int = 10_000,
         **kwargs,
-    ) -> None:
-        """Optimize data types across all files."""
+    ):
         optimized_schema = (
             self.table.pl.drop(self.partition_names)
             .head(infer_schema_size)
@@ -1615,43 +1593,21 @@ class OptimizeMixin:
                 include=include,
                 ts_unit=ts_unit,
                 tz=tz,
+                # use_large_string=use_large_string,
                 **kwargs,
             )
 
         self.clear_cache()
+
         self._update_metadata()
         self.update_metadata_table()
 
 
-class Optimize(ParquetDataset):
-    """Convenience class for optimizing Parquet datasets with auto-loading."""
-
-    def __init__(
-        self,
-        path: str,
-        name: str | None = None,
-        filesystem: AbstractFileSystem | None = None,
-        bucket: str | None = None,
-        partitioning: str | list[str] | None = None,
-        cached: bool = False,
-        timestamp_column: str | None = None,
-        ddb_con: _duckdb.DuckDBPyConnection | None = None,
-        **caching_options,
-    ):
-        """Initialize Optimize dataset with auto-loading."""
-        super().__init__(
-            path=path,
-            filesystem=filesystem,
-            name=name,
-            bucket=bucket,
-            partitioning=partitioning,
-            cached=cached,
-            timestamp_column=timestamp_column,
-            ddb_con=ddb_con,
-            **caching_options,
-        )
-        self.load()  # Auto-load on initialization
-
-    # All optimization methods are inherited from OptimizeMixin via ParquetDataset
-
-# Optimize methods are now inherited from OptimizeMixin
+ParquetDataset.compact_partitions = Optimize.compact_partitions
+ParquetDataset._compact_partition = Optimize._compact_partition
+ParquetDataset.compact_by_timeperiod = Optimize.compact_by_timeperiod
+ParquetDataset._compact_by_timeperiod = Optimize._compact_by_timeperiod
+ParquetDataset.compact_by_rows = Optimize.compact_by_rows
+ParquetDataset.repartition = Optimize.repartition
+ParquetDataset._optimize_dtypes = Optimize._optimize_dtypes
+ParquetDataset.optimize_dtypes = Optimize.optimize_dtypes
