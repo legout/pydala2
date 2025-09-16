@@ -1,3 +1,5 @@
+from typing import Any
+
 from fsspec_utils.utils.misc import run_parallel
 import posixpath
 import re
@@ -7,366 +9,7 @@ import pyarrow.parquet as pq
 import tqdm
 from fsspec import filesystem as fsspec_filesystem, AbstractFileSystem
 from joblib import Parallel, delayed
-
-# # from ..schema import convert_large_types_to_normal
-# from .datetime import timestamp_from_string
 from .polars import pl
-
-# # Compile regex patterns once for efficiency
-# SPLIT_PATTERN = re.compile(
-#     r"<=|<|>=|>|=|!=|\s+[n,N][o,O][t,T]\s+[i,I][n,N]\s+|\s+[i,I][n,N]\s+|\s+[i,I][s,S]\s+[n,N][o,O][t,T]\s+"
-#     r"[n,N][u,U][l,L]{2}\s+|\s+[i,I][s,S]\s+[n,N][u,U][l,L]{2}\s+"
-# )
-# LOGICAL_OPERATORS_PATTERN = re.compile(
-#     r"\s+[a,A][n,N][d,D] [n,N][o,O][t,T]\s+|\s+[a,A][n,N][d,D]\s+|\s+[o,O][r,R] [n,N][o,O][t,T]\s+|\s+[o,O][r,R]\s+"
-# )
-
-
-# # def sql2pyarrow_filter(string: str, schema: pa.Schema):
-# #     """
-# #     Generates a filter expression for PyArrow based on a given string and schema.
-
-# #     Parameters:
-# #         string (str): The string containing the filter expression.
-# #         schema (pa.Schema): The PyArrow schema used to validate the filter expression.
-
-# #     Returns:
-# #         PyArrow.Expression: The generated filter expression.
-
-# #     """
-
-# #     def _parse_part(part):
-# #         split_pattern = (
-# #             r"<=|"
-# #             r"<|"
-# #             r">=|"
-# #             r">|"
-# #             r"=|"
-# #             r"!=|"
-# #             r"\s+[n,N][o,O][t,T]\s+[i,I][n,N]\s+|"
-# #             r"\s+[i,I][n,N]\s+|"
-# #             r"\s+[i,I][s,S]\s+[n,N][o,O][t,T]\s+[n,N][u,U][l,L]{2}\s+|"
-# #             r"\s+[i,I][s,S]\s+[n,N][u,U][l,L]{2}\s+"
-# #         )
-# #         sign = re.findall(split_pattern, part)[0]
-# #         # print(sign)
-# #         # if "<" in sign or ">" in sign or "=" in sign or "!" in sign:
-# #         field, val = [p.strip() for p in re.split(f"\\s*{sign}\\s*", part)]
-# #         # else:
-# #         #    field, val = [p.strip() for p in re.split(f"\s+{sign}\s+", part)]
-
-# #         # print(field, val)
-# #         type_ = schema.field(field).type
-# #         if "(" in val:
-# #             val = eval(val)
-
-# #         if pa.types.is_time(type_):
-# #             val = timestamp_from_string(val, exact=True)
-# #             if isinstance(val, pdl.DateTime):
-# #                 val = val.time()
-
-# #         elif pa.types.is_date(type_):
-# #             val = timestamp_from_string(val, exact=True)
-# #             if isinstance(val, pdl.DateTime):
-# #                 val = val.date()
-
-# #         elif pa.types.is_timestamp(type_):
-# #             val = timestamp_from_string(val, exact=True)
-
-# #         elif pa.types.is_integer_value(type_) or pa.types.is_integer(type_):
-# #             if isinstance(val, str):
-# #                 val = int(float(val.strip("'").replace(",", ".")))
-# #             elif isinstance(val, tuple):
-# #                 val = tuple(
-# #                     [
-# #                         (
-# #                             int(float(val_.strip(",").replace(",", ".")))
-# #                             if isinstance(val_, str)
-# #                             else val_
-# #                         )
-# #                         for val_ in val
-# #                     ]
-# #                 )
-# #             elif isinstance(val, list):
-# #                 val = [
-# #                     (
-# #                         int(float(val_.strip("'").replace(",", ".")))
-# #                         if isinstance(val_, str)
-# #                         else val_
-# #                     )
-# #                     for val_ in val
-# #                 ]
-
-# #         elif pa.types.is_float_value(type_) or pa.types.is_floating(type_):
-# #             if isinstance(val, str):
-# #                 val = float(val.strip("'").replace(",", "."))
-# #             elif isinstance(val, tuple):
-# #                 val = tuple(
-# #                     [
-# #                         (
-# #                             float(val_.strip(",").replace(",", "."))
-# #                             if isinstance(val_, str)
-# #                             else val_
-# #                         )
-# #                         for val_ in val
-# #                     ]
-# #                 )
-# #             elif isinstance(val, list):
-# #                 val = [
-# #                     (
-# #                         float(val_.strip("'").replace(",", "."))
-# #                         if isinstance(val_, str)
-# #                         else val_
-# #                     )
-# #                     for val_ in val
-# #                 ]
-
-# #         elif pa.types.is_boolean(type_):
-# #             val = bool(val.strip("'").replace(",", "."))
-
-# #         if isinstance(val, str):
-# #             val = val.strip("'")
-
-# #         if sign == ">=":
-# #             return pc.field(field) >= val
-# #         elif sign == ">":
-# #             return pc.field(field) > val
-# #         elif sign == "<=":
-# #             return pc.field(field) <= val
-# #         elif sign == "<":
-# #             return pc.field(field) < val
-# #         elif sign == "=":
-# #             return pc.field(field) == val
-# #         elif sign == "!=":
-# #             return pc.field(field) != val
-# #         elif sign.lower() == "in":
-# #             return pc.field(field).isin(val)
-# #         elif sign.lower() == "not in":
-# #             return ~pc.field(field).isin(val)
-# #         elif sign.lower() == "is null":
-# #             return pc.field(field).is_null(nan_is_null=True)
-# #         elif sign.lower() == "is not null":
-# #             return ~pc.field(field).is_null(nan_is_null=True)
-
-# #     parts = re.split(
-# #         (
-# #             r"\s+[a,A][n,N][d,D] [n,N][o,O][t,T]\s+|"
-# #             r"\s+[a,A][n,N][d,D]\s+|"
-# #             r"\s+[o,O][r,R] [n,N][o,O][t,T]\s+|"
-# #             r"\s+[o,O][r,R]\s+"
-# #         ),
-# #         string,
-# #     )
-# #     operators = [
-# #         op.strip()
-# #         for op in re.findall(
-# #             (
-# #                 r"\s+[a,A][n,N][d,D]\s+[n,N][o,O][t,T]\s+|"
-# #                 r"\s+[a,A][n,N][d,D]\s+|"
-# #                 r"[o,O][r,R]\s+[n,N][o,O][t,T]\s+|"
-# #                 r"\s+[o,O][r,R]\s+"
-# #             ),
-# #             string,
-# #         )
-# #     ]
-
-# #     # print(parts, operators)
-
-# #     if len(parts) == 1:
-# #         return _parse_part(parts[0])
-
-# #     expr = _parse_part(parts[0])
-
-# #     for part, operator in zip(parts[1:], operators):
-# #         if operator.lower() == "and":
-# #             expr = expr & _parse_part(part)
-# #         elif operator.lower() == "and not":
-# #             expr = expr & ~_parse_part(part)
-# #         elif operator.lower() == "or":
-# #             expr = expr | _parse_part(part)
-# #         elif operator.lower() == "or not":
-# #             expr = expr | ~_parse_part(part)
-
-# #     return expr
-
-
-# def sql2pyarrow_filter(string: str, schema: pa.Schema) -> pc.Expression:
-#     """
-#     Generates a filter expression for PyArrow based on a given string and schema.
-
-#     Parameters:
-#         string (str): The string containing the filter expression.
-#         schema (pa.Schema): The PyArrow schema used to validate the filter expression.
-
-#     Returns:
-#         pc.Expression: The generated filter expression.
-
-#     Raises:
-#         ValueError: If the input string is invalid or contains unsupported operations.
-#     """
-
-#     def parse_value(val: str, type_: pa.DataType) -> Any:
-#         """Parse and convert value based on the field type."""
-#         if isinstance(val, (tuple, list)):
-#             return type(val)(parse_value(v, type_) for v in val)
-
-#         if pa.types.is_timestamp(type_):
-#             return timestamp_from_string(val, exact=False, tz=type_.tz)
-#         elif pa.types.is_date(type_):
-#             return timestamp_from_string(val, exact=True).date()
-#         elif pa.types.is_time(type_):
-#             return timestamp_from_string(val, exact=True).time()
-
-#         elif pa.types.is_integer(type_):
-#             return int(float(val.strip("'").replace(",", ".")))
-#         elif pa.types.is_floating(type_):
-#             return float(val.strip("'").replace(",", "."))
-#         elif pa.types.is_boolean(type_):
-#             return val.lower().strip("'") in ("true", "1", "yes")
-#         else:
-#             return val.strip("'")
-
-#     def _parse_part(part: str) -> pc.Expression:
-#         match = SPLIT_PATTERN.search(part)
-#         if not match:
-#             raise ValueError(f"Invalid condition: {part}")
-
-#         sign = match.group().lower().strip()
-#         field, val = [p.strip() for p in SPLIT_PATTERN.split(part)]
-
-#         if field not in schema.names:
-#             raise ValueError(f"Unknown field: {field}")
-
-#         type_ = schema.field(field).type
-#         val = parse_value(val, type_)
-
-#         operations = {
-#             ">=": lambda f, v: pc.field(f) >= v,
-#             ">": lambda f, v: pc.field(f) > v,
-#             "<=": lambda f, v: pc.field(f) <= v,
-#             "<": lambda f, v: pc.field(f) < v,
-#             "=": lambda f, v: pc.field(f) == v,
-#             "!=": lambda f, v: pc.field(f) != v,
-#             "in": lambda f, v: pc.field(f).isin(v),
-#             "not in": lambda f, v: ~pc.field(f).isin(v),
-#             "is null": lambda f, v: pc.field(f).is_null(nan_is_null=True),
-#             "is not null": lambda f, v: ~pc.field(f).is_null(nan_is_null=True),
-#         }
-
-#         if sign not in operations:
-#             raise ValueError(f"Unsupported operation: {sign}")
-
-#         return operations[sign](field, val)
-
-#     parts = LOGICAL_OPERATORS_PATTERN.split(string)
-#     operators = [op.lower().strip() for op in LOGICAL_OPERATORS_PATTERN.findall(string)]
-
-#     if len(parts) == 1:
-#         return _parse_part(parts[0])
-
-#     expr = _parse_part(parts[0])
-#     for part, operator in zip(parts[1:], operators):
-#         if operator == "and":
-#             expr = expr & _parse_part(part)
-#         elif operator == "and not":
-#             expr = expr & ~_parse_part(part)
-#         elif operator == "or":
-#             expr = expr | _parse_part(part)
-#         elif operator == "or not":
-#             expr = expr | ~_parse_part(part)
-#         else:
-#             raise ValueError(f"Unsupported logical operator: {operator}")
-
-#     return expr
-
-
-# def sql2polars_filter(string: str, schema: pl.Schema) -> pl.Expr:
-#     """
-#     Generates a filter expression for Polars based on a given string and schema.
-
-#     Parameters:
-#         string (str): The string containing the filter expression.
-#         schema (pl.Schema): The Polars schema used to validate the filter expression.
-
-#     Returns:
-#         pl.Expr: The generated filter expression.
-
-#     Raises:
-#         ValueError: If the input string is invalid or contains unsupported operations.
-#     """
-
-#     def parse_value(val: str, dtype: pl.DataType) -> Any:
-#         """Parse and convert value based on the field type."""
-#         if isinstance(val, (tuple, list)):
-#             return type(val)(parse_value(v, dtype) for v in val)
-
-#         if dtype == pl.Datetime:
-#             return timestamp_from_string(val, exact=False, tz=dtype.time_zone)
-#         elif dtype == pl.Date:
-#             return timestamp_from_string(val, exact=True).date()
-#         elif dtype == pl.Time:
-#             return timestamp_from_string(val, exact=True).time()
-#         elif dtype in (pl.Int8, pl.Int16, pl.Int32, pl.Int64):
-#             return int(float(val.strip("'").replace(",", ".")))
-#         elif dtype in (pl.Float32, pl.Float64):
-#             return float(val.strip("'").replace(",", "."))
-#         elif dtype == pl.Boolean:
-#             return val.lower().strip("'") in ("true", "1", "yes")
-#         else:
-#             return val.strip("'")
-
-#     def _parse_part(part: str) -> pl.Expr:
-#         match = SPLIT_PATTERN.search(part)
-#         if not match:
-#             raise ValueError(f"Invalid condition: {part}")
-
-#         sign = match.group().lower().strip()
-#         field, val = [p.strip() for p in SPLIT_PATTERN.split(part)]
-
-#         if field not in schema.names():
-#             raise ValueError(f"Unknown field: {field}")
-
-#         dtype = schema[field]
-#         val = parse_value(val, dtype)
-
-#         operations = {
-#             ">=": lambda f, v: pl.col(f) >= v,
-#             ">": lambda f, v: pl.col(f) > v,
-#             "<=": lambda f, v: pl.col(f) <= v,
-#             "<": lambda f, v: pl.col(f) < v,
-#             "=": lambda f, v: pl.col(f) == v,
-#             "!=": lambda f, v: pl.col(f) != v,
-#             "in": lambda f, v: pl.col(f).is_in(v),
-#             "not in": lambda f, v: ~pl.col(f).is_in(v),
-#             "is null": lambda f, v: pl.col(f).is_null(),
-#             "is not null": lambda f, v: pl.col(f).is_not_null(),
-#         }
-
-#         if sign not in operations:
-#             raise ValueError(f"Unsupported operation: {sign}")
-
-#         return operations[sign](field, val)
-
-#     parts = LOGICAL_OPERATORS_PATTERN.split(string)
-#     operators = [op.lower().strip() for op in LOGICAL_OPERATORS_PATTERN.findall(string)]
-
-#     if len(parts) == 1:
-#         return _parse_part(parts[0])
-
-#     expr = _parse_part(parts[0])
-#     for part, operator in zip(parts[1:], operators):
-#         if operator == "and":
-#             expr = expr & _parse_part(part)
-#         elif operator == "and not":
-#             expr = expr & ~_parse_part(part)
-#         elif operator == "or":
-#             expr = expr | _parse_part(part)
-#         elif operator == "or not":
-#             expr = expr | ~_parse_part(part)
-#         else:
-#             raise ValueError(f"Unsupported logical operator: {operator}")
-
-#     return expr
 
 
 def read_table(
@@ -412,13 +55,13 @@ def read_table(
 
 def run_parallel(
     func: callable,
-    func_params: list[any],
+    func_params: list[Any],
     *args,
     n_jobs: int = -1,
     backend: str = "threading",
     verbose: bool = True,
     **kwargs,
-) -> list[any]:
+) -> list[Any]:
     """Runs a function for a list of parameters in parallel.
 
     Args:
@@ -444,7 +87,7 @@ def run_parallel(
 
 def get_partitions_from_path(
     path: str, partitioning: str | list[str] | None = None
-) -> list[tuple]:
+) -> list[tuple[str, str]]:
     """Get the dataset partitions from the file path.
 
     Args:
@@ -471,41 +114,98 @@ def get_partitions_from_path(
         return list(zip(partitioning, parts[-len(partitioning) :]))
 
 
-def humanize_size(size: int, unit="MB") -> float:
-    "Human-readable size"
-    if unit.lower() == "b":
+def humanize_size(size: int, unit: str = "MB") -> float:
+    """Convert bytes to human-readable size in specified unit.
+
+    Args:
+        size: Size in bytes.
+        unit: Target unit for conversion ('B', 'KB', 'MB', 'GB', 'TB', 'PB').
+
+    Returns:
+        Size converted to the specified unit, rounded to 1 decimal place.
+
+    Raises:
+        ValueError: If size is negative or unit is invalid.
+    """
+    if size < 0:
+        raise ValueError("size must be a non-negative integer")
+
+    unit = unit.lower()
+    valid_units = ["b", "kb", "mb", "gb", "tb", "pb"]
+    if unit not in valid_units:
+        raise ValueError(f"unit must be one of {valid_units}")
+
+    if unit == "b":
         return round(size, 1)
-    elif unit.lower() == "kb":
+    elif unit == "kb":
         return round(size / 1024, 1)
-    elif unit.lower() == "mb":
+    elif unit == "mb":
         return round(size / 1024**2, 1)
-    elif unit.lower() == "gb":
+    elif unit == "gb":
         return round(size / 1024**3, 1)
-    elif unit.lower() == "tb":
+    elif unit == "tb":
         return round(size / 1024**4, 1)
-    elif unit.lower() == "pb":
+    elif unit == "pb":
         return round(size / 1024**5, 1)
 
 
-def humanized_size_to_bytes(size: str) -> float:
-    "Human-readable size t bytes"
+def humanized_size_to_bytes(size: str) -> int:
+    """Convert human-readable size string to bytes.
+
+    Args:
+        size: Human-readable size string (e.g., '100 MB', '1.5 GB').
+
+    Returns:
+        Size in bytes.
+
+    Raises:
+        ValueError: If size format is invalid or contains negative values.
+    """
+    if not isinstance(size, str):
+        raise ValueError("size must be a string")
+
     unit = re.sub("[0-9 ]", "", size).lower()
-    size = float(re.sub("[a-zA-Z ]", "", size))
+    size_str = re.sub("[a-zA-Z ]", "", size)
+
+    if not size_str:
+        raise ValueError("size must contain a numeric value")
+
+    try:
+        size_val = float(size_str)
+    except ValueError:
+        raise ValueError("size must contain a valid numeric value")
+
+    if size_val < 0:
+        raise ValueError("size must be a non-negative number")
+
+    valid_units = ["b", "kb", "mb", "gb", "tb", "pb"]
+    if unit not in valid_units:
+        raise ValueError(f"unit must be one of {valid_units}")
+
     if unit == "b":
-        return int(size)
+        return int(size_val)
     elif unit == "kb":
-        return int(size * 1024)
+        return int(size_val * 1024)
     elif unit == "mb":
-        return int(size * 1024**2)
+        return int(size_val * 1024**2)
     elif unit == "gb":
-        return int(size * 1024**3)
+        return int(size_val * 1024**3)
     elif unit == "tb":
-        return int(size * 1024**4)
+        return int(size_val * 1024**4)
     elif unit == "pb":
-        return int(size * 1024**5)
+        return int(size_val * 1024**5)
 
 
-def getattr_rec(obj, attr_str):
+def getattr_rec(obj: Any, attr_str: str) -> Any:
+    """Recursively get a nested attribute from an object.
+
+    Args:
+        obj: Object to get attribute from.
+        attr_str: Dot-separated attribute path (e.g., 'a.b.c').
+
+    Returns:
+        The value of the nested attribute.
+    """
     """
     Recursively retrieves an attribute from an object based on a dot-separated string.
 
@@ -518,14 +218,33 @@ def getattr_rec(obj, attr_str):
 
     Raises:
         AttributeError: If the attribute does not exist.
+        ValueError: If attr_str is not a string or is empty.
     """
+    if not isinstance(attr_str, str):
+        raise ValueError("attr_str must be a string")
+
+    if not attr_str.strip():
+        raise ValueError("attr_str cannot be empty")
+
     attrs = attr_str.split(".")
     for attr in attrs:
+        if not attr.strip():
+            raise ValueError("attribute name cannot be empty")
         obj = getattr(obj, attr)
     return obj
 
 
-def setattr_rec(obj, attr_str, value):
+def setattr_rec(obj: Any, attr_str: str, value: Any) -> None:
+    """Recursively set a nested attribute on an object.
+
+    Args:
+        obj: Object to set attribute on.
+        attr_str: Dot-separated attribute path (e.g., 'a.b.c').
+        value: Value to set the attribute to.
+
+    Returns:
+        None
+    """
     """
     Recursively sets the value of an attribute in an object.
 
@@ -536,14 +255,37 @@ def setattr_rec(obj, attr_str, value):
 
     Returns:
         None
+
+    Raises:
+        ValueError: If attr_str is not a string or is empty.
     """
+    if not isinstance(attr_str, str):
+        raise ValueError("attr_str must be a string")
+
+    if not attr_str.strip():
+        raise ValueError("attr_str cannot be empty")
+
     attrs = attr_str.split(".")
     for attr in attrs[:-1]:
+        if not attr.strip():
+            raise ValueError("attribute name cannot be empty")
         obj = getattr(obj, attr)
+
+    if not attrs[-1].strip():
+        raise ValueError("attribute name cannot be empty")
     setattr(obj, attrs[-1], value)
 
 
-def delattr_rec(obj, attr_str):
+def delattr_rec(obj: Any, attr_str: str) -> None:
+    """Recursively delete a nested attribute from an object.
+
+    Args:
+        obj: Object to delete attribute from.
+        attr_str: Dot-separated attribute path (e.g., 'a.b.c').
+
+    Returns:
+        None
+    """
     """
     Recursively deletes an attribute from an object.
 
@@ -554,19 +296,40 @@ def delattr_rec(obj, attr_str):
 
     Raises:
         AttributeError: If the attribute does not exist.
+        ValueError: If attr_str is not a string or is empty.
 
     Example:
         obj = SomeObject()
         attr_str = 'attr1.attr2.attr3'
         delattr_rec(obj, attr_str)
     """
+    if not isinstance(attr_str, str):
+        raise ValueError("attr_str must be a string")
+
+    if not attr_str.strip():
+        raise ValueError("attr_str cannot be empty")
+
     attrs = attr_str.split(".")
     for attr in attrs[:-1]:
+        if not attr.strip():
+            raise ValueError("attribute name cannot be empty")
         obj = getattr(obj, attr)
+
+    if not attrs[-1].strip():
+        raise ValueError("attribute name cannot be empty")
     delattr(obj, attrs[-1])
 
 
-def get_nested_keys(d, parent_key=""):
+def get_nested_keys(d: dict, parent_key: str = "") -> list[str]:
+    """Get all nested keys from a dictionary as dot-separated paths.
+
+    Args:
+        d: Dictionary to extract keys from.
+        parent_key: Parent key prefix for nested keys.
+
+    Returns:
+        List of all keys as dot-separated paths.
+    """
     """
     Recursively retrieves all the nested keys from a dictionary.
 
@@ -587,11 +350,22 @@ def get_nested_keys(d, parent_key=""):
 
 
 def unify_schemas_pl(schemas: list[pa.Schema]) -> pl.Schema:
+    """Unify multiple PyArrow schemas into a single Polars schema.
+
+    This function takes multiple schemas and creates a unified schema
+    that can accommodate all fields from all input schemas.
+
+    Args:
+        schemas: List of PyArrow schemas to unify.
+
+    Returns:
+        Unified Polars schema.
+    """
     """
     Unifies a list of Pyarrow schemas into a single schema.
 
     Args:
-        schemas (list[pl.Schema]): List of Polars schemas.
+        schemas (list[pa.Schema]): List of PyArrow schemas.
 
     Returns:
         pa.Schema: Unified schema.

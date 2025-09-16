@@ -1,0 +1,148 @@
+site_name: PyDala2 Documentation
+site_description: High-performance Python library for managing Parquet datasets with advanced metadata capabilities
+site_author: PyDala2 Team
+site_url: https://pydala2.readthedocs.io
+
+repo_name: pydala2
+repo_url: https://github.com/yourusername/pydala2
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started.md
+    - Quick Start: quick-start.md
+  - User Guide:
+    - Basic Usage: user-guide/basic-usage.md
+    - Data Operations: user-guide/data-operations.md
+    - Performance Optimization: user-guide/performance.md
+    - Catalog Management: user-guide/catalog-management.md
+    - Schema Management: user-guide/schema-management.md
+  - API Reference:
+    - Overview: api/overview.md
+    - Core Classes: api/core.md
+    - Dataset Classes: api/datasets.md
+    - Table Operations: api/table.md
+    - Catalog System: api/catalog.md
+    - Filesystem: api/filesystem.md
+    - Utilities: api/utilities.md
+  - Advanced Topics:
+    - Deployment: advanced/deployment.md
+    - Performance Tuning: advanced/performance-tuning.md
+    - Troubleshooting: advanced/troubleshooting.md
+    - Integration Patterns: advanced/integration.md
+  - Contributing: contributing.md
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            merge_init_into_class: true
+            docstring_section_style: list
+            members_order: source
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            filters: ["!^_"]
+  - mermaid2:
+      version: 10.6.1
+  - git-revision-date-localized:
+      type: date
+      timezone: UTC
+      locale: en
+      fallback_to_build_date: true
+  - mkdocs-material-extensions
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - codehilite:
+      guess_lang: false
+  - def_list
+  - footnotes
+  - meta
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.arithmatex
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.critic
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:mermaid2.fence_mermaid
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/yourusername/pydala2
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/pydala2/
+  analytics:
+    provider: google
+    property: G-XXXXXXXXXX
+  version:
+    provider: mike
+    default: latest
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/extra.js
+
+watch:
+  - pydala2
+  - docs

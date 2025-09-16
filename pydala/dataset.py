@@ -1,3 +1,4 @@
+# Standard library imports
 import datetime as dt
 import logging
 import posixpath
@@ -5,6 +6,7 @@ import re
 import tempfile
 import typing as t
 
+# Third-party imports
 import duckdb as _duckdb
 import pandas as pd
 import polars.selectors as cs
@@ -17,6 +19,7 @@ from fsspec import AbstractFileSystem
 # Initialize logger
 logger = logging.getLogger(__name__)
 
+# Local imports
 from .filesystem import FileSystem, clear_cache
 from .helpers.datetime import get_timestamp_column
 from .helpers.sql import sql2pyarrow_filter
@@ -38,6 +41,23 @@ from .table import PydalaTable
 
 
 class BaseDataset:
+    """A base class for dataset operations supporting multiple file formats.
+
+    This class provides a unified interface for working with datasets in various formats
+    (Parquet, CSV, JSON) with support for partitioning, caching, and advanced filtering.
+    It integrates with DuckDB for SQL operations and PyArrow for efficient data handling.
+
+    Attributes:
+        path (str): The path to the dataset.
+        name (str): The name of the dataset.
+        schema (pa.Schema): The schema of the dataset.
+        filesystem (FileSystem): The filesystem used for data access.
+        table (PydalaTable): The table interface for the dataset.
+        ddb_con (duckdb.DuckDBPyConnection): DuckDB connection for SQL operations.
+        _timestamp_column (str): The timestamp column for time-based operations.
+        _partitioning (str | list[str]): The partitioning scheme.
+        _format (str): The file format of the dataset.
+    """
     def __init__(
         self,
         path: str,
@@ -51,7 +71,35 @@ class BaseDataset:
         timestamp_column: str | None = None,
         ddb_con: _duckdb.DuckDBPyConnection | None = None,
         **fs_kwargs,
-    ):
+    ) -> None:
+        """Initialize a BaseDataset instance.
+
+        Args:
+            path: The path to the dataset.
+            name: The name of the dataset. If None, uses basename of path.
+            schema: The schema for the dataset. If None, inferred from data.
+            filesystem: The filesystem to use for data access.
+            bucket: The bucket name for cloud storage.
+            partitioning: The partitioning scheme ('hive', 'ignore', or list of columns).
+            format: The file format ('parquet', 'csv', 'json').
+            cached: Whether to use caching for filesystem operations.
+            timestamp_column: The column to use as timestamp for time operations.
+            ddb_con: Existing DuckDB connection. If None, creates a new one.
+            **fs_kwargs: Additional arguments for filesystem configuration.
+
+        Raises:
+            ValueError: If path, format, partitioning, or timestamp_column are invalid types.
+        """
+        # Input validation
+        if not isinstance(path, str) or not path:
+            raise ValueError("path must be a non-empty string")
+        if format is not None and not isinstance(format, str):
+            raise ValueError("format must be a string or None")
+        if partitioning is not None and not isinstance(partitioning, (str, list)):
+            raise ValueError("partitioning must be a string, list, or None")
+        if timestamp_column is not None and not isinstance(timestamp_column, str):
+            raise ValueError("timestamp_column must be a string or None")
+
         self._path = path
         self._schema = schema
         self._bucket = bucket
@@ -91,9 +139,6 @@ class BaseDataset:
         )
         self._timestamp_column = timestamp_column
 
-        # self.load_files()
-
-        # NOTE: Set partitioning manually, if not set, try to infer it
         if partitioning is None:
             # try to infer partitioning
             try:
@@ -107,16 +152,7 @@ class BaseDataset:
                 partitioning = None
         self._partitioning = partitioning
 
-        # if self.has_files:
-        #     if partitioning == "ignore":
-        #         self._partitioning = None
-        #     elif partitioning is None and "=" in self._files[0]:
-        #         self._partitioning = "hive"
-        #     else:
-        #         self._partitioning = partitioning
-        # else:
-        #     self._partitioning = partitioning
-
+        
         try:
             self.load()
         except FileNotFoundError as e:
@@ -125,7 +161,6 @@ class BaseDataset:
             logger.warning(f"Failed to load dataset {self._path}: {e}")
             # Don't raise - allow dataset to be created without files
 
-    # @abstactmethod
     def load_files(self) -> None:
         """
         Loads the files from the specified path with the specified format.
@@ -144,7 +179,7 @@ class BaseDataset:
             for fn in sorted(self._filesystem.glob(glob_pattern))
         ]
 
-    def _makedirs(self):
+    def _makedirs(self) -> None:
         if self._filesystem.exists(self._path):
             return
         try:
@@ -175,22 +210,37 @@ class BaseDataset:
         return self._files
 
     @property
-    def path(self):
+    def path(self) -> str:
+        """Get the path of the dataset.
+
+        Returns:
+            The path to the dataset.
+        """
         return self._path
 
     @property
-    def has_files(self):
-        """
-        Returns True if the dataset has files, False otherwise.
+    def has_files(self) -> bool:
+        """Check if the dataset has any files.
+
+        Returns:
+            True if the dataset has files, False otherwise.
         """
         return len(self.files) > 0
 
-    def load(self):
-        """
-        Loads the dataset from the specified path and initializes the PydalaTable.
+    def load(self) -> None:
+        """Load the dataset from the specified path and initialize the PydalaTable.
+
+        This method creates a PyArrow dataset from the files at the specified path,
+        initializes a PydalaTable for data operations, and registers the dataset
+        with DuckDB for SQL queries. It also attempts to identify timestamp columns
+        and configure timezone settings if found.
 
         Returns:
             None
+
+        Note:
+            If the dataset has no files, this method will log a debug message
+            but not raise an exception.
         """
         if self.has_files:
             self._arrow_dataset = pds.dataset(
@@ -257,33 +307,31 @@ class BaseDataset:
         return hasattr(self, "_arrow_dataset")
 
     @property
-    def columns(self) -> list:
-        """
-        Returns a list of column names for the dataset, including both schema and partitioning columns.
+    def columns(self) -> list[str]:
+        """Get a list of column names for the dataset.
 
         Returns:
-            list: A list of column names.
+            A list of column names in the dataset, including both schema
+            and partitioning columns. Returns None if dataset is not loaded.
         """
         if self.is_loaded:
             return self.schema.names
 
     @property
-    def fs(self):
-        """
-        Returns the filesystem associated with the dataset.
+    def fs(self) -> FileSystem:
+        """Get the filesystem associated with the dataset.
 
         Returns:
-            The filesystem object associated with the dataset.
+            The filesystem object used by the dataset.
         """
         return self._filesystem
 
     @property
-    def t(self):
-        """
-        Returns the table associated with the dataset.
+    def t(self) -> PydalaTable | None:
+        """Get the table associated with the dataset.
 
         Returns:
-            The table associated with the dataset.
+            The PydalaTable object for the dataset, or None if not loaded.
         """
         return self.table
 
@@ -344,12 +392,15 @@ class BaseDataset:
         self._filesystem.rm(files, recursive=True)
         # self.load(reload=True)
 
-    def vacuum(self):
+    def vacuum(self) -> None:
+        """Delete all files in the dataset.
+
+        This method removes all data files and metadata files from the dataset,
+        effectively emptying it while preserving the directory structure.
+
+        Returns:
+            None
         """
-        Deletes all files in the dataset.
-        """
-        self.delete_files(self._files)
-        self.delete_metadata_files()
 
     @property
     def partitioning_schema(self) -> pa.Schema:
@@ -542,11 +593,15 @@ class BaseDataset:
         """
         return self.ddb_con.sql("SHOW TABLES").arrow().column("name").to_pylist()
 
-    def interrupt_duckdb(self):
+    def interrupt_duckdb(self) -> None:
+        """Interrupt any ongoing DuckDB operations.
+
+        This method sends an interrupt signal to the DuckDB connection,
+        which can be useful for cancelling long-running queries.
+
+        Returns:
+            None
         """
-        Interrupts the DuckDB connection.
-        """
-        self.ddb_con.interrupt()
 
     def reset_duckdb(self):
         """
@@ -779,6 +834,14 @@ class BaseDataset:
 
 
 class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
+    """A dataset implementation for Parquet files with metadata support.
+
+    This class extends BaseDataset with Parquet-specific features including
+    metadata management, optimization operations, and efficient querying.
+    It leverages Parquet dataset metadata for improved performance and
+    provides advanced features like partitioning and compression optimization.
+    """
+
     def __init__(
         self,
         path: str,
@@ -790,7 +853,24 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         timestamp_column: str | None = None,
         ddb_con: _duckdb.DuckDBPyConnection | None = None,
         **fs_kwargs,
-    ):
+    ) -> None:
+        """Initialize a ParquetDataset instance.
+
+        Args:
+            path: The path to the Parquet dataset.
+            name: The name of the dataset. If None, uses basename of path.
+            filesystem: The filesystem to use for data access.
+            bucket: The bucket name for cloud storage.
+            partitioning: The partitioning scheme ('hive', 'ignore', or list of columns).
+            cached: Whether to use caching for filesystem operations.
+            timestamp_column: The column to use as timestamp for time operations.
+            ddb_con: Existing DuckDB connection. If None, creates a new one.
+            **fs_kwargs: Additional arguments for filesystem configuration.
+
+        Note:
+            This class inherits from both PydalaDatasetMetadata for metadata
+            management and BaseDataset for core dataset functionality.
+        """
         """
         Initialize a Dataset object.
 
@@ -1091,6 +1171,13 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
 
 
 class PyarrowDataset(BaseDataset):
+    """A dataset implementation using PyArrow's native dataset format.
+
+    This class provides a generic PyArrow dataset implementation that can
+    work with various formats supported by PyArrow. It serves as a base
+    class for format-specific implementations like CsvDataset.
+    """
+
     def __init__(
         self,
         path: str,
@@ -1103,7 +1190,21 @@ class PyarrowDataset(BaseDataset):
         timestamp_column: str | None = None,
         ddb_con: _duckdb.DuckDBPyConnection | None = None,
         **fs_kwargs,
-    ):
+    ) -> None:
+        """Initialize a PyarrowDataset instance.
+
+        Args:
+            path: The path to the dataset.
+            name: The name of the dataset. If None, uses basename of path.
+            filesystem: The filesystem to use for data access.
+            bucket: The bucket name for cloud storage.
+            partitioning: The partitioning scheme.
+            format: The file format (default: 'parquet').
+            cached: Whether to use caching for filesystem operations.
+            timestamp_column: The column to use as timestamp for time operations.
+            ddb_con: Existing DuckDB connection. If None, creates a new one.
+            **fs_kwargs: Additional arguments for filesystem configuration.
+        """
         super().__init__(
             path=path,
             name=name,
@@ -1119,6 +1220,14 @@ class PyarrowDataset(BaseDataset):
 
 
 class CSVDataset(PyarrowDataset):
+
+    """A dataset implementation for CSV files.
+
+    This class provides specialized handling for CSV datasets using
+    PyArrow's CSV reading capabilities. It inherits from PyarrowDataset
+    and configures it specifically for CSV format.
+    """
+
     def __init__(
         self,
         path: str,
@@ -1130,7 +1239,20 @@ class CSVDataset(PyarrowDataset):
         timestamp_column: str | None = None,
         ddb_con: _duckdb.DuckDBPyConnection | None = None,
         **fs_kwargs,
-    ):
+    ) -> None:
+        """Initialize a CsvDataset instance.
+
+        Args:
+            path: The path to the CSV dataset.
+            name: The name of the dataset. If None, uses basename of path.
+            filesystem: The filesystem to use for data access.
+            bucket: The bucket name for cloud storage.
+            partitioning: The partitioning scheme for the CSV files.
+            cached: Whether to use caching for filesystem operations.
+            timestamp_column: The column to use as timestamp for time operations.
+            ddb_con: Existing DuckDB connection. If None, creates a new one.
+            **fs_kwargs: Additional arguments for filesystem configuration.
+        """
         super().__init__(
             path=path,
             name=name,
@@ -1146,6 +1268,13 @@ class CSVDataset(PyarrowDataset):
 
 
 class JSONDataset(BaseDataset):
+    """A dataset implementation for JSON files.
+
+    This class provides specialized handling for JSON datasets using
+    PyArrow's JSON reading capabilities. It supports reading JSON files
+    with automatic schema inference and type optimization.
+    """
+
     def __init__(
         self,
         path: str,
@@ -1157,7 +1286,20 @@ class JSONDataset(BaseDataset):
         timestamp_column: str | None = None,
         ddb_con: _duckdb.DuckDBPyConnection | None = None,
         **fs_kwargs,
-    ):
+    ) -> None:
+        """Initialize a JsonDataset instance.
+
+        Args:
+            path: The path to the JSON dataset.
+            name: The name of the dataset. If None, uses basename of path.
+            filesystem: The filesystem to use for data access.
+            bucket: The bucket name for cloud storage.
+            partitioning: The partitioning scheme for the JSON files.
+            cached: Whether to use caching for filesystem operations.
+            timestamp_column: The column to use as timestamp for time operations.
+            ddb_con: Existing DuckDB connection. If None, creates a new one.
+            **fs_kwargs: Additional arguments for filesystem configuration.
+        """
         super().__init__(
             path=path,
             name=name,
@@ -1171,7 +1313,17 @@ class JSONDataset(BaseDataset):
             **fs_kwargs,
         )
 
-    def load(self):
+    def load(self) -> None:
+        """Load the JSON dataset.
+
+        This method reads JSON files from the dataset path using PyArrow's
+        JSON reader with automatic type inference. It creates an Arrow dataset
+        and registers it with DuckDB for SQL operations. It also attempts
+        to identify timestamp columns automatically.
+
+        Returns:
+            None
+        """
         self._arrow_dataset = pds.dataset(
             self._filesystem.read_json_dataset(
                 self._path,
@@ -1191,6 +1343,13 @@ class JSONDataset(BaseDataset):
 
 
 class Optimize(ParquetDataset):
+    """A specialized dataset class for optimizing Parquet datasets.
+
+    This class extends ParquetDataset with methods for optimizing storage,
+    including compaction, repartitioning, and type optimization. It provides
+    tools to improve query performance and reduce storage costs.
+    """
+
     def __init__(
         self,
         path: str,
@@ -1202,7 +1361,20 @@ class Optimize(ParquetDataset):
         timestamp_column: str | None = None,
         ddb_con: _duckdb.DuckDBPyConnection | None = None,
         **caching_options,
-    ):
+    ) -> None:
+        """Initialize an Optimize instance.
+
+        Args:
+            path: The path to the Parquet dataset to optimize.
+            name: The name of the dataset. If None, uses basename of path.
+            filesystem: The filesystem to use for data access.
+            bucket: The bucket name for cloud storage.
+            partitioning: The partitioning scheme.
+            cached: Whether to use caching for filesystem operations.
+            timestamp_column: The column to use as timestamp for time operations.
+            ddb_con: Existing DuckDB connection. If None, creates a new one.
+            **caching_options: Additional caching configuration options.
+        """
         super().__init__(
             path=path,
             filesystem=filesystem,
@@ -1218,14 +1390,35 @@ class Optimize(ParquetDataset):
 
     def _compact_partition(
         self,
-        partition: dict[str : t.Any],
+        partition: dict[str, t.Any],
         max_rows_per_file: int | None = 2_500_000,
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
         compression: str = "zstd",
         row_group_size: int | None = 250_000,
         unique: bool = True,
         **kwargs,
-    ):
+    ) -> None:
+        """Compact files within a specific partition.
+
+        This method reads all files within a partition, combines them,
+        and writes them back as optimized files with better compression
+        and row group sizing.
+
+        Args:
+            partition: Dictionary specifying the partition to compact.
+            max_rows_per_file: Maximum number of rows per output file.
+            sort_by: Column(s) to sort by before writing.
+            compression: Compression algorithm to use.
+            row_group_size: Target size for row groups.
+            unique: Whether to remove duplicate rows.
+            **kwargs: Additional arguments passed to write_to_dataset.
+
+        Returns:
+            None
+
+        Raises:
+            ValueError: If partition name or value is invalid.
+        """
         # if isinstance(partition, str):
         #    partition = [partition]
 
@@ -1281,6 +1474,22 @@ class Optimize(ParquetDataset):
         unique: bool = True,
         **kwargs,
     ) -> None:
+        """Compact partitions with multiple small files.
+
+        This method identifies partitions that contain multiple small files
+        and compacts them into fewer, larger files for better performance.
+
+        Args:
+            max_rows_per_file: Maximum number of rows per output file.
+            sort_by: Column(s) to sort by before writing.
+            compression: Compression algorithm to use.
+            row_group_size: Target size for row groups.
+            unique: Whether to remove duplicate rows.
+            **kwargs: Additional arguments passed to _compact_partition.
+
+        Returns:
+            None
+        """
         partitions_to_compact = (
             self.metadata_table.pl()
             .group_by(list(self.partition_names), maintain_order=True)
@@ -1308,7 +1517,15 @@ class Optimize(ParquetDataset):
         self.load(update_metadata=True)
         self.update_metadata_table()
 
-    def compact_small_files(self):
+    def compact_small_files(self) -> None:
+        """Compact small files in the dataset.
+
+        This method is a placeholder for compacting small files that are
+        not necessarily within the same partition. Implementation is pending.
+
+        Returns:
+            None
+        """
         pass
 
     def _compact_by_timeperiod(
@@ -1322,7 +1539,30 @@ class Optimize(ParquetDataset):
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
         unique: bool = False,
         **kwargs,
-    ):
+    ) -> list[str]:
+        """Compact files within a specific time period.
+
+        This method reads files containing data within the specified time range,
+        combines them, and writes optimized files. It returns a list of files
+        that were processed and can be deleted.
+
+        Args:
+            start_date: Start of the time period to compact.
+            end_date: End of the time period to compact.
+            timestamp_column: Column to use for time filtering. Uses dataset default if None.
+            max_rows_per_file: Maximum number of rows per output file.
+            row_group_size: Target size for row groups.
+            compression: Compression algorithm to use.
+            sort_by: Column(s) to sort by before writing.
+            unique: Whether to remove duplicate rows.
+            **kwargs: Additional arguments passed to write_to_dataset.
+
+        Returns:
+            List of file paths that were compacted and can be deleted.
+
+        Raises:
+            ValueError: If no timestamp column is specified or found.
+        """
         # Securely build timestamp filter to prevent SQL injection
         if timestamp_column is None:
             timestamp_column = self._timestamp_column
@@ -1391,7 +1631,26 @@ class Optimize(ParquetDataset):
         compression="zstd",
         row_group_size: int | None = 250_000,
         **kwargs,
-    ):
+    ) -> None:
+        """Compact files by time periods.
+
+        This method divides the dataset's time range into intervals and
+        compacts files within each interval. This is useful for time-series
+        data to optimize query performance for time-based queries.
+
+        Args:
+            interval: Time interval for compaction (string like '1 month' or timedelta).
+            timestamp_column: Column to use for time filtering. Uses dataset default if None.
+            max_rows_per_file: Maximum number of rows per output file.
+            sort_by: Column(s) to sort by before writing.
+            unique: Whether to remove duplicate rows.
+            compression: Compression algorithm to use.
+            row_group_size: Target size for row groups.
+            **kwargs: Additional arguments passed to _compact_by_timeperiod.
+
+        Returns:
+            None
+        """
         timestamp_column = timestamp_column or self._timestamp_column
 
         min_max_ts = self.t.sql(
@@ -1449,7 +1708,25 @@ class Optimize(ParquetDataset):
         compression: str = "zstd",
         row_group_size: int | None = 250_000,
         **kwargs,
-    ):
+    ) -> None:
+        """Compact files based on row count.
+
+        This method identifies files that don't match the target row count
+        and reorganizes them to have more uniform file sizes. For partitioned
+        datasets, it calls compact_partitions. For non-partitioned datasets,
+        it directly compacts files based on row count.
+
+        Args:
+            max_rows_per_file: Target number of rows per file.
+            sort_by: Column(s) to sort by before writing.
+            unique: Whether to remove duplicate rows.
+            compression: Compression algorithm to use.
+            row_group_size: Target size for row groups.
+            **kwargs: Additional arguments passed to underlying methods.
+
+        Returns:
+            None
+        """
         if self._partitioning:
             self.compact_partitions(
                 max_rows_per_file=max_rows_per_file,
@@ -1492,7 +1769,26 @@ class Optimize(ParquetDataset):
         compression="zstd",
         row_group_size: int | None = 250_000,
         **kwargs,
-    ):
+    ) -> None:
+        """Repartition the dataset.
+
+        This method rewrites the entire dataset with a new partitioning scheme.
+        It reads all data, repartitions it according to the specified columns,
+        and writes it back with optimized file sizes.
+
+        Args:
+            partitioning_columns: Column(s) to partition by.
+            partitioning_falvor: Partitioning flavor ('hive' or other).
+            max_rows_per_file: Maximum number of rows per file.
+            sort_by: Column(s) to sort by before writing.
+            unique: Whether to remove duplicate rows.
+            compression: Compression algorithm to use.
+            row_group_size: Target size for row groups.
+            **kwargs: Additional arguments passed to write_to_dataset.
+
+        Returns:
+            None
+        """
         batches = self.table.to_batch_reader(
             sort_by=sort_by, distinct=unique, batch_size=max_rows_per_file
         )
@@ -1525,7 +1821,26 @@ class Optimize(ParquetDataset):
         ts_unit: str | None = None,  # "us",
         tz: str | None = None,
         **kwargs,
-    ):
+    ) -> None:
+        """Optimize data types for a specific file.
+
+        This method reads a file, optimizes its schema based on the actual
+        data types found, and rewrites it with the optimized schema. This
+        can reduce storage size and improve query performance.
+
+        Args:
+            file_path: Path to the file to optimize.
+            optimized_schema: Target schema with optimized types.
+            exclude: Columns to exclude from type optimization.
+            strict: Whether to use strict type inference.
+            include: Columns to include in type optimization.
+            ts_unit: Timestamp unit for conversion.
+            tz: Timezone for timestamp columns.
+            **kwargs: Additional arguments passed to write_to_dataset.
+
+        Returns:
+            None
+        """
         # Safely escape file path to prevent SQL injection
         escaped_file_path = file_path.replace("'", "''")
         scan = self.scan(f"file_path='{escaped_file_path}'")
@@ -1572,7 +1887,25 @@ class Optimize(ParquetDataset):
         tz: str | None = None,
         infer_schema_size: int = 10_000,
         **kwargs,
-    ):
+    ) -> None:
+        """Optimize data types across all files in the dataset.
+
+        This method analyzes a sample of data to infer optimal data types,
+        then applies these optimized types to all files in the dataset.
+        This can significantly reduce storage size and improve performance.
+
+        Args:
+            exclude: Columns to exclude from type optimization.
+            strict: Whether to use strict type inference.
+            include: Columns to include in type optimization.
+            ts_unit: Timestamp unit for conversion.
+            tz: Timezone for timestamp columns.
+            infer_schema_size: Number of rows to sample for type inference.
+            **kwargs: Additional arguments passed to _optimize_dtypes.
+
+        Returns:
+            None
+        """
         optimized_schema = (
             self.table.pl.drop(self.partition_names)
             .head(infer_schema_size)
