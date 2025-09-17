@@ -28,7 +28,7 @@ def escape_sql_identifier(identifier: str) -> str:
         raise ValueError(f"Invalid identifier: {identifier}")
     
     # Double quote identifiers for SQL standard compliance
-    return f'"{identifier.replace('"', '"")}"'
+    return f'"{identifier.replace('"', '""')}"'
 
 
 def escape_sql_literal(value: Any) -> str:

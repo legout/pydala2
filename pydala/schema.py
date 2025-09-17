@@ -6,7 +6,8 @@ import pyarrow.fs as pfs
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 
-from .helpers.misc import read_table, run_parallel, unify_schemas_pl
+from .helpers.misc import read_table, run_parallel
+from .helpers.polars import unify_schemas as unify_schemas_pl
 
 
 def sort_schema(schema: pa.Schema, names: list[str] | None = None) -> pa.Schema:

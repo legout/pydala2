@@ -1,1 +1,1 @@
-from .dataset import Optimize
+from .dataset.base import Optimize

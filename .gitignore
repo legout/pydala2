@@ -164,3 +164,7 @@ cython_debug/
 #.idea/
 data/**
 .worktree/
+#backup/dataset.py.backup
+#backup/io.py.backup
+#backup/metadata.py.backup
+#backup/filesystem.py.backup

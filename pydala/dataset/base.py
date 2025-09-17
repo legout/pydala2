@@ -15,31 +15,12 @@ import pyarrow.dataset as pds
 import tqdm
 from fsspec import AbstractFileSystem
 
-# Initialize logger
-logger = logging.getLogger(__name__)
 
-# Type aliases
-WriteDataTypes = Union[
-    _pl.DataFrame,
-    _pl.LazyFrame,
-    pa.Table,
-    pa.RecordBatch,
-    pa.RecordBatchReader,
-    pd.DataFrame,
-    _duckdb.DuckDBPyConnection,
-    List['WriteDataTypes']
-]
 
-# Constants
-DEFAULT_MAX_ROWS_PER_FILE = 2_500_000
-DEFAULT_ROW_GROUP_SIZE = 250_000
-DEFAULT_COMPRESSION = "zstd"
-DEFAULT_TS_UNIT = "us"
-
-from .filesystem import FileSystem, clear_cache
-from .helpers.datetime import get_timestamp_column
-from .helpers.misc import sql2pyarrow_filter
-from .helpers.security import (
+from ..filesystem import FileSystem, clear_cache
+from ..helpers.datetime import get_timestamp_column
+from ..helpers.sql import sql2pyarrow_filter
+from ..helpers.security import (
     escape_sql_identifier,
     escape_sql_literal,
     validate_partition_name,
@@ -48,13 +29,26 @@ from .helpers.security import (
     validate_path,
     safe_join,
 )
-from .helpers.polars import pl as _pl
-from .io import Writer
-from .metadata import ParquetDatasetMetadata, PydalaDatasetMetadata
-from .schema import replace_schema  # from .optimize import Optimize
-from .schema import convert_large_types_to_normal
-from .table import PydalaTable
+from ..helpers.polars import pl 
+from ..io import Writer
+from ..metadata import ParquetDatasetMetadata, PydalaDatasetMetadata, MetadataConfig
+from .reader import DatasetReader, ReadConfig
+from .writer import DatasetWriter, WriteConfig, DeltaConfig, WriteDataTypes
+from ..schema import replace_schema  # from .optimize import Optimize
+from ..schema import convert_large_types_to_normal
+from ..table import PydalaTable
 
+
+# Initialize logger
+logger = logging.getLogger(__name__)
+
+
+
+# Constants
+DEFAULT_MAX_ROWS_PER_FILE = 2_500_000
+DEFAULT_ROW_GROUP_SIZE = 250_000
+DEFAULT_COMPRESSION = "zstd"
+DEFAULT_TS_UNIT = "us"
 
 class BaseDataset:
     def __init__(
@@ -90,7 +84,7 @@ class BaseDataset:
             cached=cached,
             cache_storage=cache_storage,
             **fs_kwargs,
-        )
+        ).fs
         self.table = None
         self._makedirs()
 
@@ -229,6 +223,10 @@ class BaseDataset:
     @property
     def path(self):
         return self._path
+
+    @path.setter
+    def path(self, value):
+        self._path = value
 
     @property
     def has_files(self):
@@ -482,7 +480,7 @@ class BaseDataset:
                         }
                     )
                     self._partitions = (
-                        _pl.DataFrame(
+                        pl.DataFrame(
                             self._partitions,
                             schema=self._arrow_dataset.partitioning.schema.names,
                             orient="row",
@@ -493,7 +491,7 @@ class BaseDataset:
 
                 return self._partitions
 
-    def _filter_duckdb(self, filter_expr: str) -> _duckdb.DuckDBPyRelation:
+    def _filter_with_duckdb(self, filter_expr: str) -> _duckdb.DuckDBPyRelation:
         """
         Filters the DuckDBPyRelation table based on the given filter expression.
 
@@ -505,7 +503,7 @@ class BaseDataset:
         """
         return self.table.ddb.filter(filter_expr)
 
-    def _filter_arrow_dataset(
+    def _filter_with_arrow_dataset(
         self, filter_expr: str | pds.Expression
     ) -> pds.FileSystemDataset:
         """
@@ -552,18 +550,18 @@ class BaseDataset:
 
         if use == "auto":
             try:
-                res = self._filter_arrow_dataset(filter_expr)
+                res = self._filter_with_arrow_dataset(filter_expr)
 
             except Exception as e:
                 e.add_note("Note: Filtering with PyArrow failed. Using DuckDB.")
                 print(e)
-                res = self._filter_duckdb(filter_expr)
+                res = self._filter_with_duckdb(filter_expr)
 
         elif use == "pyarrow":
-            res = self._filter_arrow_dataset(filter_expr)
+            res = self._filter_with_arrow_dataset(filter_expr)
 
         elif use == "duckdb":
-            res = self._filter_duckdb(filter_expr)
+            res = self._filter_with_duckdb(filter_expr)
 
         return PydalaTable(result=res, ddb_con=self.ddb_con)
 
@@ -602,9 +600,9 @@ class BaseDataset:
 
     def _get_delta_other_df(
         self,
-        df: _pl.DataFrame | _pl.LazyFrame,
+        df: pl.DataFrame | pl.LazyFrame,
         filter_columns: str | list[str] | None = None,
-    ) -> _pl.DataFrame | _pl.LazyFrame:
+    ) -> pl.DataFrame | pl.LazyFrame:
         """
         Returns a filtered DataFrame or LazyFrame based on the given input DataFrame and filter columns.
 
@@ -618,26 +616,26 @@ class BaseDataset:
         """
         collect = False
         if len(self.files) == 0:
-            return _pl.DataFrame(schema=df.schema)
-        if isinstance(df, _pl.LazyFrame):
+            return pl.DataFrame(schema=df.schema)
+        if isinstance(df, pl.LazyFrame):
             collect = True
 
         columns = set(df.columns) & set(self.columns)
-        null_columns = df.select(cs.by_dtype(_pl.Null)).collect_schema().names()
+        null_columns = df.select(cs.by_dtype(pl.Null)).collect_schema().names()
         columns = columns - set(null_columns)
         if filter_columns is not None:
             columns = set(columns) & set(filter_columns)
         if len(columns) == 0:
-            return _pl.DataFrame(schema=df.schema)
+            return pl.DataFrame(schema=df.schema)
 
         filter_expr = []
         for col in columns:
-            # if df.collect_schema().get(col).is_(_pl.Null):
+            # if df.collect_schema().get(col).is_(pl.Null):
             #     max_min = df.select(
-            #         _pl.first(col).alias("max"), _pl.last(col).alias("min")
+            #         pl.first(col).alias("max"), pl.last(col).alias("min")
             #     )
             # else:
-            max_min = df.select(_pl.max(col).alias("max"), _pl.min(col).alias("min"))
+            max_min = df.select(pl.max(col).alias("max"), pl.min(col).alias("min"))
 
             if collect:
                 max_min = max_min.collect()
@@ -750,8 +748,8 @@ class BaseDataset:
 
         Parameters:
         - data: The data to be written to the dataset. It can be one of the following types:
-            - _pl.DataFrame
-            - _pl.LazyFrame
+            - pl.DataFrame
+            - pl.LazyFrame
             - pa.Table
             - pa.RecordBatch
             - pa.RecordBatchReader
@@ -846,404 +844,6 @@ class BaseDataset:
         if update_metadata:
             return metadata
 
-
-class ParquetDataset(PydalaDatasetMetadata, BaseDataset, OptimizeMixin):
-    def __init__(
-        self,
-        path: str,
-        name: str | None = None,
-        filesystem: AbstractFileSystem | None = None,
-        bucket: str | None = None,
-        partitioning: str | list[str] | None = None,
-        cached: bool = False,
-        timestamp_column: str | None = None,
-        ddb_con: _duckdb.DuckDBPyConnection | None = None,
-        **fs_kwargs,
-    ):
-        """
-        Initialize a Dataset object.
-
-        Args:
-            path (str): The path to the dataset.
-            filesystem (AbstractFileSystem, optional): The filesystem to use.
-                Defaults to None.
-            bucket (str, optional): The bucket to use. Defaults to None.
-            partitioning (str, list[str], optional): The partitioning scheme
-                to use. Defaults to None.
-            cached (bool, optional): Whether to use cached data. Defaults to
-                False.
-            **cached_options: Additional options for cached data.
-
-        Returns:
-            None
-        """
-
-        PydalaDatasetMetadata.__init__(
-            self,
-            path=path,
-            filesystem=filesystem,
-            bucket=bucket,
-            cached=cached,
-            partitioning=partitioning,
-            ddb_con=ddb_con,
-            **fs_kwargs,
-        )
-        BaseDataset.__init__(
-            self,
-            path=path,
-            name=name,
-            filesystem=filesystem,
-            bucket=bucket,
-            partitioning=partitioning,
-            cached=cached,
-            timestamp_column=timestamp_column,
-            ddb_con=self.ddb_con,
-            **fs_kwargs,
-        )
-
-        try:
-            self.load()
-        except Exception as e:
-            _ = e
-            pass
-
-    def load(
-        self,
-        update_metadata: bool = False,
-        reload_metadata: bool = False,
-        schema: pa.Schema | None = None,
-        ts_unit: str = "us",
-        tz: str | None = None,
-        # use_large_types: bool = False,
-        format_version: str = "2.6",
-        verbose: bool = False,
-        **kwargs,
-    ):
-        """
-        Loads the data from the dataset.
-
-        Args:
-            update_metadata (bool, optional): Whether to update the metadata. Defaults to False.
-            reload_metadata (bool, optional): Whether to reload the metadata. Defaults to False.
-            schema (pa.Schema | None, optional): The schema of the data. Defaults to None.
-            ts_unit (str, optional): The unit of the timestamp. Defaults to "us".
-            tz (str | None, optional): The timezone. Defaults to None.
-            format_version (str, optional): The version of the data format. Defaults to "2.6".
-            **kwargs: Additional keyword arguments.
-
-        Returns:
-            None
-        """
-        if not self.has_file_metadata_file:
-            if len(self.fs.lss(self.path)) == 0:
-                return
-            else:
-                update_metadata = True
-        if kwargs.pop("update", None):
-            update_metadata = True
-        if kwargs.pop("reload", None):
-            reload_metadata = True
-
-        if update_metadata or reload_metadata:
-            self.update(
-                reload=reload_metadata,
-                schema=schema,
-                ts_unit=ts_unit,
-                tz=tz,
-                format_version=format_version,
-                verbose=verbose,
-                **kwargs,
-            )
-            if not hasattr(self, "_schema"):
-                self._schema = self.metadata.schema.to_arrow_schema()
-            self.update_metadata_table()
-
-        self._arrow_dataset = pds.parquet_dataset(
-            self._metadata_file,
-            # schema=self._schema,
-            partitioning=self._partitioning,
-            filesystem=self._filesystem,
-        )
-
-        self.table = PydalaTable(result=self._arrow_dataset, ddb_con=self.ddb_con)
-
-        self._setup_timestamp_column()
-
-        self.ddb_con.register(f"{self.name}", self._arrow_dataset)
-
-    # def gen_metadata_table(self):
-    #     """
-    #     Generate the metadata table for the dataset.
-
-    #     This function calls the `gen_metadata_table` method of the `pydala_dataset_metadata` object
-    #     to generate the metadata table for the dataset. It takes two parameters:
-
-    #     - `metadata`: The metadata object containing information about the dataset.
-    #     - `_partitioning`: The partitioning object containing information about the dataset partitioning.
-
-    #     This function does not return anything.
-
-    #     Example usage:
-    #     ```
-    #     self.gen_metadata_table()
-    #     ```
-    #     """
-    #     self.pydala_dataset_metadata.gen_metadata_table(
-    #         self.metadata, self._partitioning
-    #     )
-
-    def scan(self, filter_expr: str | None = None) -> ParquetDatasetMetadata:
-        """
-        Scans the Parquet dataset metadata.
-
-        Args:
-            filter_expr (str, optional): An optional filter expression to apply to the metadata.
-
-        Returns:
-            ParquetDatasetMetadata: The ParquetDatasetMetadata object.
-        """
-        PydalaDatasetMetadata.scan(self, filter_expr=filter_expr)
-
-        if len(self.scan_files) == 0:
-            return PydalaTable(result=self.table.ddb.limit(0))
-
-        return PydalaTable(
-            result=pds.dataset(
-                [posixpath.join(self.path, fn) for fn in self.scan_files],
-                filesystem=self._filesystem,
-                format=self._format,
-                partitioning=self._partitioning,
-            ),
-            ddb_con=self.ddb_con,
-        )
-
-    def __repr__(self):
-        if self.table is not None:
-            return self.table.__repr__()
-        else:
-            return f"{self.path} is empty."
-
-    def write_to_dataset(
-        self,
-        data: (
-            _pl.DataFrame
-            | _pl.LazyFrame
-            | pa.Table
-            | pa.RecordBatch
-            | pa.RecordBatchReader
-            | pd.DataFrame
-            | _duckdb.DuckDBPyConnection
-            | list[
-                _pl.DataFrame
-                | _pl.LazyFrame
-                | pa.Table
-                | pa.RecordBatch
-                | pd.DataFrame
-                | _duckdb.DuckDBPyConnection
-            ]
-        ),
-        mode: str = "append",  # "delta", "overwrite"
-        basename: str | None = None,
-        partition_by: str | list[str] | None = None,
-        max_rows_per_file: int | None = 2_500_000,
-        row_group_size: int | None = 250_000,
-        compression: str = "zstd",
-        sort_by: str | list[str] | list[tuple[str, str]] | None = None,
-        unique: bool | str | list[str] = False,
-        ts_unit: str = "us",
-        tz: str | None = None,
-        remove_tz: bool = False,
-        delta_subset: str | list[str] | None = None,
-        update_metadata: bool = True,
-        alter_schema: bool = False,
-        timestamp_column: str | None = None,
-        verbose: bool = False,
-        **kwargs,
-    ):
-        """
-        Writes the given data to the dataset.
-
-        Parameters:
-        - data: The data to be written to the dataset. It can be one of the following types:
-            - _pl.DataFrame
-            - _pl.LazyFrame
-            - pa.Table
-            - pa.RecordBatch
-            - pa.RecordBatchReader
-            - pd.DataFrame
-            - _duckdb.DuckDBPyConnection
-            - list of any of the above types
-        - mode: The write mode. Possible values are "append", "delta", or "overwrite". Defaults to "append".
-        - basename: The template for the basename of the output files. Defaults to None.
-        - partition_by: The columns to be used for partitioning the dataset. Can be a string, a list of strings,
-            or None. Defaults to None.
-        - max_rows_per_file: The maximum number of rows per file. Defaults to 2,500,000.
-        - row_group_size: The size of each row group. Defaults to 250,000.
-        - compression: The compression algorithm to be used. Defaults to "zstd".
-        - sort_by: The column(s) to sort the data by. Can be a string, a list of strings, or a list of tuples (column,
-            order). Defaults to None.
-        - unique: Whether to keep only unique rows. Can be a bool, a string, or a list of strings. Defaults to False.
-        - ts_unit: The unit of the timestamp column. Defaults to "us".
-        - tz: The timezone to be used for the timestamp column. Defaults to None.
-        - remove_tz: Whether to remove the timezone information from the timestamp column. Defaults to False.
-        - delta_subset: The subset of columns to consider for delta updates. Can be a string, a list of strings, or
-            None. Defaults to None.
-        - update_metadata: Whether to update the metadata table after writing. Defaults to False.
-        - alter_schema: Whether to alter the schema of the dataset. Defaults to False.
-        - timestamp_column: The name of the timestamp column. Defaults to None.
-        - verbose: Whether to print verbose output. Defaults to False.
-        - **kwargs: Additional keyword arguments to be passed to the writer.
-
-        Returns:
-        None
-        """
-
-        metadata = BaseDataset.write_to_dataset(
-            self,
-            data=data,
-            mode=mode,
-            basename=basename,
-            partition_by=partition_by,
-            max_rows_per_file=max_rows_per_file,
-            row_group_size=row_group_size,
-            compression=compression,
-            sort_by=sort_by,
-            unique=unique,
-            ts_unit=ts_unit,
-            tz=tz,
-            remove_tz=remove_tz,
-            delta_subset=delta_subset,
-            alter_schema=alter_schema,
-            timestamp_column=timestamp_column,
-            update_metadata=update_metadata,
-            verbose=verbose,
-            **kwargs,
-        )
-
-        if update_metadata:
-            for md in metadata:
-                metadata_ = list(md.values())[0]
-                if self.metadata is not None:
-                    if metadata_.schema != self.metadata.schema:
-                        continue
-
-                f = list(md.keys())[0].replace(self._path, "").lstrip("/")
-                metadata_.set_file_path(f)
-                if self._file_metadata is None:
-                    self._file_metadata = {f: metadata_}
-                else:
-                    self._file_metadata[f] = metadata_
-            self._update_metadata(verbose=verbose)
-            # self._repair_file_schemas(alter_schema=alter_schema, verbose=verbose)
-            # self._update_metadata()
-            # try:
-            #     self.load(update_metadata=True, verbose=False)
-            # except Exception as e:
-            #     _ = e
-            #     self.load(reload_metadata=True, verbose=False)
-            # self.update_metadata_table()
-
-
-class PyarrowDataset(BaseDataset):
-    def __init__(
-        self,
-        path: str,
-        name: str | None = None,
-        filesystem: AbstractFileSystem | None = None,
-        bucket: str | None = None,
-        partitioning: str | list[str] | None = None,
-        format: str = "parquet",
-        cached: bool = False,
-        timestamp_column: str | None = None,
-        ddb_con: _duckdb.DuckDBPyConnection | None = None,
-        **fs_kwargs,
-    ):
-        super().__init__(
-            path=path,
-            name=name,
-            filesystem=filesystem,
-            bucket=bucket,
-            partitioning=partitioning,
-            format=format,
-            cached=cached,
-            timestamp_column=timestamp_column,
-            ddb_con=ddb_con,
-            **fs_kwargs,
-        )
-
-
-class CsvDataset(PyarrowDataset):
-    def __init__(
-        self,
-        path: str,
-        name: str | None = None,
-        filesystem: AbstractFileSystem | None = None,
-        bucket: str | None = None,
-        partitioning: str | list[str] | None = None,
-        cached: bool = False,
-        timestamp_column: str | None = None,
-        ddb_con: _duckdb.DuckDBPyConnection | None = None,
-        **fs_kwargs,
-    ):
-        super().__init__(
-            path=path,
-            name=name,
-            filesystem=filesystem,
-            bucket=bucket,
-            partitioning=partitioning,
-            format="csv",
-            cached=cached,
-            timestamp_column=timestamp_column,
-            ddb_con=ddb_con,
-            **fs_kwargs,
-        )
-
-
-class JsonDataset(BaseDataset):
-    def __init__(
-        self,
-        path: str,
-        name: str | None = None,
-        filesystem: AbstractFileSystem | None = None,
-        bucket: str | None = None,
-        partitioning: str | list[str] | None = None,
-        cached: bool = False,
-        timestamp_column: str | None = None,
-        ddb_con: _duckdb.DuckDBPyConnection | None = None,
-        **fs_kwargs,
-    ):
-        super().__init__(
-            path=path,
-            name=name,
-            filesystem=filesystem,
-            bucket=bucket,
-            partitioning=partitioning,
-            format="json",
-            cached=cached,
-            timestamp_column=timestamp_column,
-            ddb_con=ddb_con,
-            **fs_kwargs,
-        )
-
-    def load(self):
-        self._arrow_dataset = pds.dataset(
-            self._filesystem.read_json_dataset(
-                self._path,
-            )
-            .opt_dtype(strict=False)
-            .to_arrow()
-        )
-        self.table = PydalaTable(result=self._arrow_dataset, ddb_con=self.ddb_con)
-
-        self.ddb_con.register(f"{self.name}", self._arrow_dataset)
-        # self.ddb_con.register("arrow__dataset", self._arrow_parquet_dataset)
-
-        if self._timestamp_column is None:
-            self._timestamp_columns = get_timestamp_column(self.table.pl.head(10))
-            if len(self._timestamp_columns) > 1:
-                self._timestamp_column = self._timestamp_columns[0]
-
-
 class OptimizeMixin:
     """Mixin class providing optimization methods for Parquet datasets."""
 
@@ -1261,11 +861,11 @@ class OptimizeMixin:
             self.metadata_table.pl()
             .group_by(list(self.partition_names), maintain_order=True)
             .agg(
-                _pl.n_unique("file_path").alias("num_partition_files"),
-                _pl.sum("num_rows"),
+                pl.n_unique("file_path").alias("num_partition_files"),
+                pl.sum("num_rows"),
             )
-            .filter(_pl.col("num_partition_files") > 1)
-            .filter(_pl.col("num_rows") < max_rows_per_file)
+            .filter(pl.col("num_partition_files") > 1)
+            .filter(pl.col("num_rows") < max_rows_per_file)
             .select(self.partition_names)
             .to_dicts()
         )
@@ -1350,7 +950,7 @@ class OptimizeMixin:
         max_ts = min_max_ts["max"][0]
 
         if isinstance(interval, str):
-            dates = _pl.datetime_range(
+            dates = pl.datetime_range(
                 min_ts, max_ts, interval=interval, eager=True
             ).to_list()
 
@@ -1431,7 +1031,7 @@ class OptimizeMixin:
                 self.metadata_table.filter(
                     f"file_path='{escaped_file_path}'"
                 )
-                .aggregate("max(AE_DATUM.max) - min(AE_DATUM.min)")
+                .aggregate(f"max({timestamp_column}.max) - min({timestamp_column}.min)")
                 .fetchone()[0]
             )
         else:
@@ -1505,7 +1105,7 @@ class OptimizeMixin:
     def repartition(
         self,
         partitioning_columns: str | list[str] | None = None,
-        partitioning_falvor: str = "hive",
+        partitioning_flavor: str = "hive",
         max_rows_per_file: int | None = DEFAULT_MAX_ROWS_PER_FILE,
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
         unique: bool = False,
@@ -1621,6 +1221,445 @@ class OptimizeMixin:
         self.clear_cache()
         self._update_metadata()
         self.update_metadata_table()
+
+
+class ParquetDataset(PydalaDatasetMetadata, BaseDataset, OptimizeMixin):
+    def __init__(
+        self,
+        path: str,
+        name: str | None = None,
+        filesystem: AbstractFileSystem | None = None,
+        bucket: str | None = None,
+        partitioning: str | list[str] | None = None,
+        cached: bool = False,
+        timestamp_column: str | None = None,
+        ddb_con: _duckdb.DuckDBPyConnection | None = None,
+        **fs_kwargs,
+    ):
+        """
+        Initialize a Dataset object.
+
+        Args:
+            path (str): The path to the dataset.
+            filesystem (AbstractFileSystem, optional): The filesystem to use.
+                Defaults to None.
+            bucket (str, optional): The bucket to use. Defaults to None.
+            partitioning (str, list[str], optional): The partitioning scheme
+                to use. Defaults to None.
+            cached (bool, optional): Whether to use cached data. Defaults to
+                False.
+            **cached_options: Additional options for cached data.
+
+        Returns:
+            None
+        """
+
+        PydalaDatasetMetadata.__init__(
+            self,
+            path=path,
+            filesystem=filesystem,
+            bucket=bucket,
+            cached=cached,
+            partitioning=partitioning,
+            ddb_con=ddb_con,
+            **fs_kwargs,
+        )
+        BaseDataset.__init__(
+            self,
+            path=path,
+            name=name,
+            filesystem=filesystem,
+            bucket=bucket,
+            partitioning=partitioning,
+            cached=cached,
+            timestamp_column=timestamp_column,
+            ddb_con=self.ddb_con,
+            **fs_kwargs,
+        )
+
+        # Initialize reader and writer components
+        self._reader = DatasetReader(
+            path=path,
+            filesystem=self._filesystem,
+            metadata=self,
+            format="parquet",
+            partitioning=partitioning,
+            ddb_con=self.ddb_con
+        )
+
+        self._writer = DatasetWriter(
+            path=path,
+            filesystem=self._filesystem,
+            metadata=self,
+            default_config=WriteConfig(
+                max_rows_per_file=2_500_000,
+                row_group_size=250_000,
+                compression="zstd",
+                ts_unit="us",
+                update_metadata=True
+            )
+        )
+
+        try:
+            self.load()
+        except Exception as e:
+            _ = e
+            pass
+
+    def load(
+        self,
+        update_metadata: bool = False,
+        reload_metadata: bool = False,
+        schema: pa.Schema | None = None,
+        ts_unit: str = "us",
+        tz: str | None = None,
+        # use_large_types: bool = False,
+        format_version: str = "2.6",
+        verbose: bool = False,
+        **kwargs,
+    ):
+        """
+        Loads the data from the dataset.
+
+        Args:
+            update_metadata (bool, optional): Whether to update the metadata. Defaults to False.
+            reload_metadata (bool, optional): Whether to reload the metadata. Defaults to False.
+            schema (pa.Schema | None, optional): The schema of the data. Defaults to None.
+            ts_unit (str, optional): The unit of the timestamp. Defaults to "us".
+            tz (str | None, optional): The timezone. Defaults to None.
+            format_version (str, optional): The version of the data format. Defaults to "2.6".
+            **kwargs: Additional keyword arguments.
+
+        Returns:
+            None
+        """
+        if not self.has_file_metadata_file:
+            if len(self.fs.lss(self.path)) == 0:
+                return
+            else:
+                update_metadata = True
+        if kwargs.pop("update", None):
+            update_metadata = True
+        if kwargs.pop("reload", None):
+            reload_metadata = True
+
+        if update_metadata or reload_metadata:
+            self.update(
+                reload=reload_metadata,
+                schema=schema,
+                ts_unit=ts_unit,
+                tz=tz,
+                format_version=format_version,
+                verbose=verbose,
+                **kwargs,
+            )
+            if not hasattr(self, "_schema"):
+                self._schema = self.metadata.schema.to_arrow_schema()
+            self.update_metadata_table()
+
+        self._arrow_dataset = pds.parquet_dataset(
+            self._metadata_file,
+            # schema=self._schema,
+            partitioning=self._partitioning,
+            filesystem=self._filesystem,
+        )
+
+        self.table = PydalaTable(result=self._arrow_dataset, ddb_con=self.ddb_con)
+
+        self._setup_timestamp_column()
+
+        self.ddb_con.register(f"{self.name}", self._arrow_dataset)
+
+
+    def scan(self, filter_expr: str | None = None) -> pds.Dataset:
+        """
+        Scans the Parquet dataset.
+
+        Args:
+            filter_expr (str, optional): An optional filter expression to apply.
+
+        Returns:
+            pds.Dataset: The scanned dataset.
+        """
+        return self._reader.scan(filter_expr)
+
+    def __repr__(self):
+        if self.table is not None:
+            return self.table.__repr__()
+        else:
+            return f"{self.path} is empty."
+
+    def write_to_dataset(
+        self,
+        data: (
+            pl.DataFrame
+            | pl.LazyFrame
+            | pa.Table
+            | pa.RecordBatch
+            | pa.RecordBatchReader
+            | pd.DataFrame
+            | _duckdb.DuckDBPyConnection
+            | list[
+                pl.DataFrame
+                | pl.LazyFrame
+                | pa.Table
+                | pa.RecordBatch
+                | pd.DataFrame
+                | _duckdb.DuckDBPyConnection
+            ]
+        ),
+        mode: str = "append",  # "delta", "overwrite"
+        basename: str | None = None,
+        partition_by: str | list[str] | None = None,
+        max_rows_per_file: int | None = 2_500_000,
+        row_group_size: int | None = 250_000,
+        compression: str = "zstd",
+        sort_by: str | list[str] | list[tuple[str, str]] | None = None,
+        unique: bool | str | list[str] = False,
+        ts_unit: str = "us",
+        tz: str | None = None,
+        remove_tz: bool = False,
+        delta_subset: str | list[str] | None = None,
+        update_metadata: bool = True,
+        alter_schema: bool = False,
+        timestamp_column: str | None = None,
+        verbose: bool = False,
+        **kwargs,
+    ):
+        """
+        Writes the given data to the dataset.
+
+        Parameters:
+        - data: The data to be written to the dataset. It can be one of the following types:
+            - pl.DataFrame
+            - pl.LazyFrame
+            - pa.Table
+            - pa.RecordBatch
+            - pa.RecordBatchReader
+            - pd.DataFrame
+            - _duckdb.DuckDBPyConnection
+            - list of any of the above types
+        - mode: The write mode. Possible values are "append", "delta", or "overwrite". Defaults to "append".
+        - basename: The template for the basename of the output files. Defaults to None.
+        - partition_by: The columns to be used for partitioning the dataset. Can be a string, a list of strings,
+            or None. Defaults to None.
+        - max_rows_per_file: The maximum number of rows per file. Defaults to 2,500,000.
+        - row_group_size: The size of each row group. Defaults to 250,000.
+        - compression: The compression algorithm to be used. Defaults to "zstd".
+        - sort_by: The column(s) to sort the data by. Can be a string, a list of strings, or a list of tuples (column,
+            order). Defaults to None.
+        - unique: Whether to keep only unique rows. Can be a bool, a string, or a list of strings. Defaults to False.
+        - ts_unit: The unit of the timestamp column. Defaults to "us".
+        - tz: The timezone to be used for the timestamp column. Defaults to None.
+        - remove_tz: Whether to remove the timezone information from the timestamp column. Defaults to False.
+        - delta_subset: The subset of columns to consider for delta updates. Can be a string, a list of strings, or
+            None. Defaults to None.
+        - update_metadata: Whether to update the metadata table after writing. Defaults to False.
+        - alter_schema: Whether to alter the schema of the dataset. Defaults to False.
+        - timestamp_column: The name of the timestamp column. Defaults to None.
+        - verbose: Whether to print verbose output. Defaults to False.
+        - **kwargs: Additional keyword arguments to be passed to the writer.
+
+        Returns:
+        None
+        """
+
+        # Create write configuration
+        write_config = WriteConfig(
+            max_rows_per_file=max_rows_per_file,
+            row_group_size=row_group_size,
+            compression=compression,
+            sort_by=sort_by,
+            unique=unique,
+            ts_unit=ts_unit,
+            tz=tz,
+            remove_tz=remove_tz,
+            partition_by=partition_by,
+            alter_schema=alter_schema,
+            update_metadata=update_metadata,
+        )
+
+        # Create delta configuration if needed
+        delta_config = None
+        if mode == "delta" and delta_subset:
+            delta_config = DeltaConfig(subset=delta_subset)
+
+        # Write data using the core writer
+        return self._writer.write(
+            data=data,
+            mode=mode,
+            config=write_config,
+            delta_config=delta_config,
+            verbose=verbose,
+        )
+
+    # Convenience methods that delegate to reader
+    def read(
+        self,
+        columns: list[str] | None = None,
+        filter_expr: str | None = None,
+        use_engine: str = "auto",
+        batch_size: int | None = None,
+        sort_by: str | list[str] | list[tuple[str, str]] | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        output_format: str = "table",
+    ) -> PydalaTable:
+        """Read data from the dataset."""
+        config = ReadConfig(
+            columns=columns,
+            filter_expr=filter_expr,
+            use_engine=use_engine,
+            batch_size=batch_size,
+            sort_by=sort_by,
+            limit=limit,
+            offset=offset,
+            output_format=output_format,
+        )
+        return self._reader.read(config)
+
+    def head(self, n: int = 10, columns: list[str] | None = None) -> pa.Table:
+        """Get first n rows from the dataset."""
+        return self._reader.head(n, columns)
+
+    def to_polars(self, **kwargs) -> pl.DataFrame:
+        """Convert dataset to Polars DataFrame."""
+        return self.read(output_format="polars", **kwargs)
+
+    def to_pandas(self, **kwargs) -> pd.DataFrame:
+        """Convert dataset to Pandas DataFrame."""
+        return self.read(output_format="pandas", **kwargs)
+
+    def to_arrow(self, **kwargs) -> pa.Table:
+        """Convert dataset to PyArrow Table."""
+        return self.read(output_format="arrow", **kwargs)
+
+    def count_rows(self, filter_expr: str | None = None) -> int:
+        """Count rows in the dataset."""
+        return self._reader.count_rows(filter_expr)
+
+    def get_schema(self) -> pa.Schema:
+        """Get the dataset schema."""
+        return self._reader.get_schema()
+
+    def get_columns(self) -> list[str]:
+        """Get list of column names."""
+        return self._reader.get_columns()
+
+    # Convenience write methods
+    def append(self, data, **kwargs):
+        """Append data to the dataset."""
+        return self._writer.append(data, **kwargs)
+
+    def overwrite(self, data, **kwargs):
+        """Overwrite the dataset with new data."""
+        return self._writer.overwrite(data, **kwargs)
+
+    def write_delta(self, data, **kwargs):
+        """Write only new/changed data to the dataset."""
+        return self._writer.write_delta(data, **kwargs)
+
+
+class PyarrowDataset(BaseDataset):
+    def __init__(
+        self,
+        path: str,
+        name: str | None = None,
+        filesystem: AbstractFileSystem | None = None,
+        bucket: str | None = None,
+        partitioning: str | list[str] | None = None,
+        format: str = "parquet",
+        cached: bool = False,
+        timestamp_column: str | None = None,
+        ddb_con: _duckdb.DuckDBPyConnection | None = None,
+        **fs_kwargs,
+    ):
+        super().__init__(
+            path=path,
+            name=name,
+            filesystem=filesystem,
+            bucket=bucket,
+            partitioning=partitioning,
+            format=format,
+            cached=cached,
+            timestamp_column=timestamp_column,
+            ddb_con=ddb_con,
+            **fs_kwargs,
+        )
+
+
+class CsvDataset(PyarrowDataset):
+    def __init__(
+        self,
+        path: str,
+        name: str | None = None,
+        filesystem: AbstractFileSystem | None = None,
+        bucket: str | None = None,
+        partitioning: str | list[str] | None = None,
+        cached: bool = False,
+        timestamp_column: str | None = None,
+        ddb_con: _duckdb.DuckDBPyConnection | None = None,
+        **fs_kwargs,
+    ):
+        super().__init__(
+            path=path,
+            name=name,
+            filesystem=filesystem,
+            bucket=bucket,
+            partitioning=partitioning,
+            format="csv",
+            cached=cached,
+            timestamp_column=timestamp_column,
+            ddb_con=ddb_con,
+            **fs_kwargs,
+        )
+
+
+class JsonDataset(BaseDataset):
+    def __init__(
+        self,
+        path: str,
+        name: str | None = None,
+        filesystem: AbstractFileSystem | None = None,
+        bucket: str | None = None,
+        partitioning: str | list[str] | None = None,
+        cached: bool = False,
+        timestamp_column: str | None = None,
+        ddb_con: _duckdb.DuckDBPyConnection | None = None,
+        **fs_kwargs,
+    ):
+        super().__init__(
+            path=path,
+            name=name,
+            filesystem=filesystem,
+            bucket=bucket,
+            partitioning=partitioning,
+            format="json",
+            cached=cached,
+            timestamp_column=timestamp_column,
+            ddb_con=ddb_con,
+            **fs_kwargs,
+        )
+
+    def load(self):
+        self._arrow_dataset = pds.dataset(
+            self._filesystem.read_json_dataset(
+                self._path,
+            )
+            .opt_dtype(strict=False)
+            .to_arrow()
+        )
+        self.table = PydalaTable(result=self._arrow_dataset, ddb_con=self.ddb_con)
+
+        self.ddb_con.register(f"{self.name}", self._arrow_dataset)
+        # self.ddb_con.register("arrow__dataset", self._arrow_parquet_dataset)
+
+        if self._timestamp_column is None:
+            self._timestamp_columns = get_timestamp_column(self.table.pl.head(10))
+            if len(self._timestamp_columns) > 1:
+                self._timestamp_column = self._timestamp_columns[0]
+
+
 
 
 class Optimize(ParquetDataset):

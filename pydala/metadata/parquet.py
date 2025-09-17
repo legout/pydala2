@@ -15,13 +15,15 @@ import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 from loguru import logger
 
-from .filesystem import FileSystem, clear_cache
+from ..filesystem import FileSystem, clear_cache
 
-from .helpers.misc import get_partitions_from_path, run_parallel, unify_schemas_pl
-from .schema import (
+from ..helpers.misc import get_partitions_from_path, run_parallel
+from ..helpers.polars import unify_schemas as unify_schemas_pl
+from ..schema import (
     convert_large_types_to_normal,  # unify_schemas
     repair_schema,
 )
+from .core import DatasetMetadata, MetadataConfig, FileMetadata, PartitionInfo
 
 
 def serialize_metadata(metadata: dict[str, pq.FileMetaData]) -> dict[str, Any]:
@@ -75,7 +77,18 @@ def collect_parquet_metadata(
             path = posixpath.join(base_path, f)
         else:
             path = f
-        return {f: pq.read_metadata(path, filesystem=filesystem)}
+
+        # Wrap the fsspec filesystem with PyArrow's PyFileSystem
+        fs = filesystem.fs
+        try:
+            # Try using fsspec's ArrowWrapper if available
+            from fsspec.implementations.arrow import ArrowFSWrapper
+            arrow_fs = ArrowFSWrapper(fs)
+            return {f: pq.read_metadata(path, filesystem=arrow_fs)}
+        except (ImportError, AttributeError):
+            # Fall back to using PyFileSystem with FSSpecHandler
+            py_fs = pfs.PyFileSystem(pfs.FSSpecHandler(fs))
+            return {f: pq.read_metadata(path, filesystem=py_fs)}
 
     metadata = run_parallel(
         get_metadata,
@@ -245,7 +258,7 @@ def get_file_paths(
     )
 
 
-class ParquetDatasetMetadata:
+class ParquetDatasetMetadata(DatasetMetadata):
     def __init__(
         self,
         path: str,
@@ -268,7 +281,7 @@ class ParquetDatasetMetadata:
         Returns:
             None
         """
-        self._path = path
+        # Initialize ParquetDatasetMetadata specific attributes
         self._bucket = bucket
         self._cached = cached
         self._base_filesystem = filesystem
@@ -276,10 +289,11 @@ class ParquetDatasetMetadata:
             cache_storage = fs_kwargs.pop(
                 "cache_storage", tempfile.mkdtemp(prefix="pydala2_")
             )
-            # cache_storage = posixpath.join(cache_storage, path)
         else:
             cache_storage = None
-        self._filesystem = FileSystem(
+
+        # Create filesystem wrapper
+        fs_wrapper = FileSystem(
             bucket=bucket,
             fs=filesystem,
             cached=cached,
@@ -287,12 +301,31 @@ class ParquetDatasetMetadata:
             **fs_kwargs,
         )
 
+        # Initialize parent DatasetMetadata
+        config = MetadataConfig(
+            update_on_write=update_metadata,
+            format_version="2.6",
+            ts_unit="us",
+            cache_metadata=cached
+        )
+        DatasetMetadata.__init__(
+            self,
+            path=path,
+            filesystem=fs_wrapper,
+            config=config
+        )
+
+        # Store the filesystem wrapper for internal use
+        self._filesystem = fs_wrapper
+
         self._makedirs()
 
         self._fs_kwargs = fs_kwargs
 
-        self._metadata_file = posixpath.join(path, "_metadata")
+        # Override metadata file paths from parent
         self._file_metadata_file = posixpath.join(path, "_file_metadata")
+
+        # Read existing metadata
         self._metadata = self._read_metadata()
         self._file_metadata = None
         if update_metadata:
@@ -300,19 +333,34 @@ class ParquetDatasetMetadata:
 
     def _read_metadata(self) -> pq.FileMetaData | None:
         if self.has_metadata_file:
-            return pq.read_metadata(self._metadata_file, filesystem=self._filesystem)
+            # Wrap the fsspec filesystem with PyArrow's PyFileSystem
+            import pyarrow.fs as pfs
+            from fsspec.implementations.arrow import ArrowFSWrapper
+
+            # Get the underlying fsspec filesystem
+            fs = self.filesystem.fs
+
+            # Create a PyArrow-compatible filesystem wrapper
+            try:
+                # Try using fsspec's ArrowWrapper if available
+                arrow_fs = ArrowFSWrapper(fs)
+                return pq.read_metadata(self._metadata_file, filesystem=arrow_fs)
+            except (ImportError, AttributeError):
+                # Fall back to using PyFileSystem with FSSpecHandler
+                py_fs = pfs.PyFileSystem(pfs.FSSpecHandler(fs))
+                return pq.read_metadata(self._metadata_file, filesystem=py_fs)
 
     def _read_file_metadata(self) -> dict[str, pq.FileMetaData] | None:
         if self.has_file_metadata_file:
             # First try to open as text (JSON)
             try:
-                with self._filesystem.open(self._file_metadata_file, "r") as f:
+                with self.filesystem.open(self._file_metadata_file, "r") as f:
                     data = json.load(f)
                     return deserialize_metadata(data)
             except (json.JSONDecodeError, UnicodeDecodeError):
                 # Fall back to binary pickle format for backward compatibility
                 try:
-                    with self._filesystem.open(self._file_metadata_file, "rb") as f:
+                    with self.filesystem.open(self._file_metadata_file, "rb") as f:
                         logger.warning(
                             f"Using deprecated pickle format for {self._file_metadata_file}. "
                             "Please consider migrating to JSON format."
@@ -327,14 +375,14 @@ class ParquetDatasetMetadata:
                 return None
 
     def _makedirs(self):
-        if self._filesystem.exists(self._path):
+        if self.filesystem.exists(self.path):
             return
         try:
-            self._filesystem.mkdir(self._path)
+            self.filesystem.mkdir(self.path)
         except (OSError, PermissionError) as e:
             # If directory creation fails, try to create a temporary file to ensure the path exists
-            self._filesystem.touch(posixpath.join(self._path, "tmp.delete"))
-            self._filesystem.rm(posixpath.join(self._path, "tmp.delete"))
+            self.filesystem.touch(posixpath.join(self.path, "tmp.delete"))
+            self.filesystem.rm(posixpath.join(self.path, "tmp.delete"))
 
     def load_files(self) -> None:
         if self.has_metadata:
@@ -342,10 +390,10 @@ class ParquetDatasetMetadata:
         else:
             self.clear_cache()
             self._files = [
-                fn.replace(self._path, "").lstrip("/")
+                fn.replace(self.path, "").lstrip("/")
                 for fn in sorted(
                     self._filesystem.glob(
-                        posixpath.join(self._path, "**/*.parquet")  # {self._format}")
+                        posixpath.join(self.path, "**/*.parquet")  # {self._format}")
                     )
                 )
             ]
@@ -361,9 +409,9 @@ class ParquetDatasetMetadata:
         """
         self.clear_cache()
         return [
-            fn.replace(self._path, "").lstrip("/")
+            fn.replace(self.path, "").lstrip("/")
             for fn in sorted(
-                self._filesystem.glob(posixpath.join(self._path, "**/*.parquet"))
+                self.filesystem.glob(posixpath.join(self.path, "**/*.parquet"))
             )
         ]
 
@@ -388,8 +436,8 @@ class ParquetDatasetMetadata:
 
         file_metadata = collect_parquet_metadata(
             files=files,
-            base_path=self._path,
-            filesystem=self._filesystem,
+            base_path=self.path,
+            filesystem=self.filesystem,
             verbose=verbose,
             **kwargs,
         )
@@ -426,10 +474,10 @@ class ParquetDatasetMetadata:
         Save file metadata to a specified file.
         """
         # Use JSON format instead of pickle for security
-        with self._filesystem.open(self._file_metadata_file, "w") as f:
+        with self.filesystem.open(self._file_metadata_file, "w") as f:
             json.dump(serialize_metadata(self._file_metadata), f, indent=2)
 
-    def update_file_metadata(
+    def update_files_metadata(
         self, files: list[str] | None = None, verbose: bool = False, **kwargs
     ) -> None:
         """
@@ -594,7 +642,7 @@ class ParquetDatasetMetadata:
                 files=files_to_repair,
                 file_schemas=file_schemas_to_repair,
                 schema=schema,
-                base_path=self._path,
+                base_path=self.path,
                 filesystem=self._filesystem,
                 version=format_version,
                 ts_unit=ts_unit,
@@ -629,7 +677,7 @@ class ParquetDatasetMetadata:
             None
         """
         if not self.has_file_metadata:
-            self.update_file_metadata(**kwargs)
+            self.update_files_metadata(**kwargs)
 
         if not self.has_file_metadata:
             return
@@ -702,7 +750,7 @@ class ParquetDatasetMetadata:
             self.reset()
 
         # update file metadata
-        self.update_file_metadata(verbose=verbose, **kwargs)
+        self.update_files_metadata(verbose=verbose, **kwargs)
 
         if len(self.files_in_file_metadata) == 0:
             return
@@ -744,7 +792,7 @@ class ParquetDatasetMetadata:
         Returns:
             None
         """
-        with self._filesystem.open(posixpath.join(self._path, "_metadata"), "wb") as f:
+        with self.filesystem.open(posixpath.join(self.path, "_metadata"), "wb") as f:
             self._metadata.write_metadata_file(f)
 
     def delete_metadata_files(self) -> None:
@@ -754,10 +802,12 @@ class ParquetDatasetMetadata:
         Raises:
             None
         """
-        if self.has_metadata_file:
-            self._filesystem.rm(self._metadata_file)
+        # Call parent method first
+        super().delete_metadata_files()
+
+        # Delete additional file metadata file
         if self.has_file_metadata_file:
-            self._filesystem.rm(self._file_metadata_file)
+            self.filesystem.rm(self._file_metadata_file)
 
     def clear_cache(self) -> None:
         """
