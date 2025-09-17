@@ -78,10 +78,11 @@ def collect_parquet_metadata(
         else:
             path = f
 
-        # Wrap the fsspec filesystem with PyArrow's PyFileSystem
-        fs = filesystem.fs
+        # Get the underlying fsspec filesystem
+        fs = filesystem.fs if hasattr(filesystem, 'fs') else filesystem
+
         try:
-            # Try using fsspec's ArrowWrapper if available
+            # Try using fsspec's ArrowFSWrapper if available
             from fsspec.implementations.arrow import ArrowFSWrapper
             arrow_fs = ArrowFSWrapper(fs)
             return {f: pq.read_metadata(path, filesystem=arrow_fs)}
@@ -333,20 +334,18 @@ class ParquetDatasetMetadata(DatasetMetadata):
 
     def _read_metadata(self) -> pq.FileMetaData | None:
         if self.has_metadata_file:
-            # Wrap the fsspec filesystem with PyArrow's PyFileSystem
-            import pyarrow.fs as pfs
-            from fsspec.implementations.arrow import ArrowFSWrapper
-
             # Get the underlying fsspec filesystem
-            fs = self.filesystem.fs
+            fs = self.filesystem.fs if hasattr(self.filesystem, 'fs') else self.filesystem
 
             # Create a PyArrow-compatible filesystem wrapper
             try:
-                # Try using fsspec's ArrowWrapper if available
+                # Try using fsspec's ArrowFSWrapper if available
+                from fsspec.implementations.arrow import ArrowFSWrapper
                 arrow_fs = ArrowFSWrapper(fs)
                 return pq.read_metadata(self._metadata_file, filesystem=arrow_fs)
             except (ImportError, AttributeError):
                 # Fall back to using PyFileSystem with FSSpecHandler
+                import pyarrow.fs as pfs
                 py_fs = pfs.PyFileSystem(pfs.FSSpecHandler(fs))
                 return pq.read_metadata(self._metadata_file, filesystem=py_fs)
 
