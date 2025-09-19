@@ -115,21 +115,35 @@ class DatasetMetadata:
     def __init__(
         self,
         path: str,
-        filesystem: AbstractFileSystem | None = None,
+        fs: AbstractFileSystem | None = None,
         config: MetadataConfig | None = None,
         ddb_con: duckdb.DuckDBPyConnection | None = None,
+        *,
+        filesystem: AbstractFileSystem | None = None,
     ):
         """
         Initialize DatasetMetadata.
 
         Args:
             path: Path to the dataset
-            filesystem: Filesystem to use for I/O operations
+            fs: Filesystem to use for I/O operations (preferred)
             config: Metadata configuration
             ddb_con: DuckDB connection for metadata queries
+            filesystem: Filesystem to use for I/O operations (deprecated, use fs instead)
         """
+        # Backward compatibility: if filesystem is provided, use it
+        if filesystem is not None:
+            import warnings
+            warnings.warn(
+                "The 'filesystem' parameter is deprecated and will be removed in a future version. "
+                "Please use 'fs' instead.",
+                DeprecationWarning,
+                stacklevel=2
+            )
+            fs = filesystem
+
         self.path = path
-        self.filesystem = filesystem or FileSystem()
+        self.filesystem = FileSystem(fs=fs).fs
         self.config = config or MetadataConfig()
         self.ddb_con = ddb_con
 
@@ -141,8 +155,8 @@ class DatasetMetadata:
         self._timestamp_column: str | None = None
 
         # Metadata file paths
-        self._metadata_file = posixpath.join(path, self.config.metadata_file_name)
-        self._common_metadata_file = posixpath.join(path, self.config.common_metadata_file_name)
+        self._metadata_file = self.config.metadata_file_name #posixpath.join(path, self.config.metadata_file_name)
+        self._common_metadata_file = self.config.common_metadata_file_name #posixpath.join(path, self.config.common_metadata_file_name)
 
     @property
     def schema(self) -> pa.Schema | None:

@@ -7,20 +7,20 @@ import time
 T = TypeVar('T')
 
 
-def read_table(path: str, filesystem=None, **kwargs) -> "pyarrow.Table":
+def read_table(path: str, fs=None, **kwargs) -> "pyarrow.Table":
     """
     Read a parquet file using pyarrow.
 
     Args:
         path: Path to the parquet file
-        filesystem: Optional fsspec filesystem instance
+        fs: Optional fsspec filesystem instance
         **kwargs: Additional arguments for pq.read_table
 
     Returns:
         pyarrow.Table
     """
-    if filesystem is not None:
-        return pq.read_table(path, filesystem=filesystem, **kwargs)
+    if fs is not None:
+        return pq.read_table(path, filesystem=fs, **kwargs)
     else:
         return pq.read_table(path, **kwargs)
 

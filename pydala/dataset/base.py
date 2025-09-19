@@ -56,21 +56,33 @@ class BaseDataset:
         path: str,
         name: str | None = None,
         schema: pa.Schema | None = None,
-        filesystem: AbstractFileSystem | None = None,
-        bucket: str | None = None,
+        fs: AbstractFileSystem | None = None,
         partitioning: str | list[str] | None = None,
         format: str | None = "parquet",
         cached: bool = False,
         timestamp_column: str | None = None,
         ddb_con: _duckdb.DuckDBPyConnection | None = None,
+        *,
+        filesystem: AbstractFileSystem | None = None,
         **fs_kwargs,
     ):
+        # Backward compatibility: if filesystem is provided, use it
+        if filesystem is not None:
+            import warnings
+            warnings.warn(
+                "The 'filesystem' parameter is deprecated and will be removed in a future version. "
+                "Please use 'fs' instead.",
+                DeprecationWarning,
+                stacklevel=2
+            )
+            fs = filesystem
+
         self._path = path
         self._schema = schema
-        self._bucket = bucket
+        self._bucket = None  # Legacy attribute, kept for backward compatibility
         self._cached = cached
         self._format = format
-        self._base_filesystem = filesystem
+        self._base_filesystem = fs  # Legacy attribute, kept for backward compatibility
         if cached:
             cache_storage = fs_kwargs.pop(
                 "cache_storage", tempfile.mkdtemp(prefix="pydala2_")
@@ -79,8 +91,7 @@ class BaseDataset:
         else:
             cache_storage = None
         self._filesystem = FileSystem(
-            bucket=bucket,
-            fs=filesystem,
+            fs=fs,
             cached=cached,
             cache_storage=cache_storage,
             **fs_kwargs,
@@ -189,7 +200,7 @@ class BaseDataset:
     def _infer_partitioning(self) -> Optional[Union[str, List[str]]]:
         """Infer partitioning scheme from file paths."""
         try:
-            if any(["=" in obj for obj in self.fs.lss(self._path)]):
+            if any(["=" in obj for obj in self.fs.ls(self._path)]):
                 return "hive"
         except FileNotFoundError:
             pass
@@ -1228,12 +1239,14 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset, OptimizeMixin):
         self,
         path: str,
         name: str | None = None,
-        filesystem: AbstractFileSystem | None = None,
+        fs: AbstractFileSystem | None = None,
         bucket: str | None = None,
         partitioning: str | list[str] | None = None,
         cached: bool = False,
         timestamp_column: str | None = None,
         ddb_con: _duckdb.DuckDBPyConnection | None = None,
+        *,
+        filesystem: AbstractFileSystem | None = None,
         **fs_kwargs,
     ):
         """
@@ -1241,23 +1254,34 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset, OptimizeMixin):
 
         Args:
             path (str): The path to the dataset.
-            filesystem (AbstractFileSystem, optional): The filesystem to use.
+            fs (AbstractFileSystem, optional): The filesystem to use (preferred).
                 Defaults to None.
             bucket (str, optional): The bucket to use. Defaults to None.
             partitioning (str, list[str], optional): The partitioning scheme
                 to use. Defaults to None.
             cached (bool, optional): Whether to use cached data. Defaults to
                 False.
+            filesystem (AbstractFileSystem, optional): The filesystem to use (deprecated, use fs instead).
             **cached_options: Additional options for cached data.
 
         Returns:
             None
         """
+        # Backward compatibility: if filesystem is provided, use it
+        if filesystem is not None:
+            import warnings
+            warnings.warn(
+                "The 'filesystem' parameter is deprecated and will be removed in a future version. "
+                "Please use 'fs' instead.",
+                DeprecationWarning,
+                stacklevel=2
+            )
+            fs = filesystem
 
         PydalaDatasetMetadata.__init__(
             self,
             path=path,
-            filesystem=filesystem,
+            fs=fs,
             bucket=bucket,
             cached=cached,
             partitioning=partitioning,
@@ -1268,8 +1292,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset, OptimizeMixin):
             self,
             path=path,
             name=name,
-            filesystem=filesystem,
-            bucket=bucket,
+            fs=fs,
             partitioning=partitioning,
             cached=cached,
             timestamp_column=timestamp_column,
@@ -1334,7 +1357,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset, OptimizeMixin):
             None
         """
         if not self.has_file_metadata_file:
-            if len(self.fs.lss(self.path)) == 0:
+            if len(self.fs.ls(self.path)) == 0:
                 return
             else:
                 update_metadata = True

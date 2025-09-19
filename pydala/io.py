@@ -25,7 +25,7 @@ from .table import PydalaTable
 def write_table(
     table: pa.Table,
     path: str,
-    filesystem: AbstractFileSystem | None = None,
+    fs: AbstractFileSystem | None = None,
     row_group_size: int | None = None,
     compression: str = "zstd",
     **kwargs,
@@ -36,7 +36,7 @@ def write_table(
     Args:
         table (pa.Table): The PyArrow table to write.
         path (str): The path to write the Parquet file to.
-        filesystem (AbstractFileSystem | None, optional): The filesystem to use for writing the file. Defaults to None.
+        fs (AbstractFileSystem | None, optional): The filesystem to use for writing the file. Defaults to None.
         row_group_size (int | None, optional): The size of each row group in the Parquet file. Defaults to None.
         compression (str, optional): The compression algorithm to use. Defaults to "zstd".
         **kwargs: Additional keyword arguments to pass to `pq.write_table`.
@@ -44,22 +44,22 @@ def write_table(
     Returns:
         tuple[str, pq.FileMetaData]: A tuple containing the file path and the metadata of the written Parquet file.
     """
-    if not filesystem.exists(posixpath.dirname(path)):
+    if not fs.exists(posixpath.dirname(path)):
         try:
-            filesystem.makedirs(posixpath.dirname(path), exist_ok=True)
+            fs.makedirs(posixpath.dirname(path), exist_ok=True)
         except Exception:
             pass
 
-    if filesystem is None:
-        filesystem = fsspec_filesystem("file")
+    if fs is None:
+        fs = fsspec_filesystem("file")
 
-    filesystem.invalidate_cache()
+    fs.invalidate_cache()
 
     metadata = []
     pq.write_table(
         table,
         path,
-        filesystem=filesystem,
+        filesystem=fs,
         row_group_size=row_group_size,
         compression=compression,
         metadata_collector=metadata,
@@ -84,7 +84,7 @@ class Writer:
         ),
         path: str,
         schema: pa.Schema | None,
-        filesystem: AbstractFileSystem | None = None,
+        fs: AbstractFileSystem | None = None,
     ):
         """
         Initialize the object with the given data, path, schema, and filesystem.
@@ -95,7 +95,7 @@ class Writer:
                 pd.DataFrame, duckdb.DuckDBPyRelation.
             path (str): The path of the data.
             schema (pa.Schema | None): The schema of the data, if available.
-            filesystem (AbstractFileSystem | None, optional): The filesystem to use, defaults to None.
+            fs (AbstractFileSystem | None, optional): The filesystem to use, defaults to None.
 
         Returns:
             None
@@ -108,7 +108,7 @@ class Writer:
         )
         self.base_path = path
         self.path = None
-        self._filesystem = filesystem
+        self._filesystem = fs  # Legacy attribute, kept for backward compatibility
 
     def _to_polars(self):
         """

@@ -12,10 +12,9 @@ import duckdb
 import pyarrow as pa
 import pyarrow.fs as pfs
 import pyarrow.parquet as pq
-from fsspec import AbstractFileSystem
 from loguru import logger
 
-from ..filesystem import FileSystem, clear_cache
+from ..filesystem import FileSystem, clear_cache, AbstractFileSystem, DirFileSystem
 
 from ..helpers.misc import get_partitions_from_path, run_parallel
 from ..helpers.polars import unify_schemas as unify_schemas_pl
@@ -23,7 +22,7 @@ from ..schema import (
     convert_large_types_to_normal,  # unify_schemas
     repair_schema,
 )
-from .core import DatasetMetadata, MetadataConfig, FileMetadata, PartitionInfo
+from .core import DatasetMetadata, MetadataConfig #, FileMetadata, PartitionInfo
 
 
 def serialize_metadata(metadata: dict[str, pq.FileMetaData]) -> dict[str, Any]:
@@ -31,8 +30,10 @@ def serialize_metadata(metadata: dict[str, pq.FileMetaData]) -> dict[str, Any]:
     result = {}
     for path, meta in metadata.items():
         # Convert FileMetaData to serializable format
+        buffer = pa.BufferOutputStream()
+        meta.write_metadata_file(buffer)
         result[path] = {
-            "serialized_metadata": meta.serialize(),
+            "serialized_metadata": buffer.getvalue().to_pybytes().decode('latin-1'),
             "num_rows": meta.num_rows,
             "num_columns": len(meta.schema),
             "created_by": meta.created_by,
@@ -46,7 +47,7 @@ def deserialize_metadata(data: dict[str, Any]) -> dict[str, pq.FileMetaData]:
     result = {}
     for path, meta_data in data.items():
         # Reconstruct FileMetaData from serialized data
-        buf = pa.py_buffer(meta_data["serialized_metadata"])
+        buf = pa.py_buffer(meta_data["serialized_metadata"].encode('latin-1'))
         result[path] = pq.read_metadata(buf)
     return result
 
@@ -71,31 +72,23 @@ def collect_parquet_metadata(
     Returns:
         dict[str, pq.FileMetaData]: Parquet metadata of the given files.
     """
+    if isinstance(filesystem, DirFileSystem):
+        filesystem = filesystem.fs
 
-    def get_metadata(f, base_path, filesystem):
+    def get_metadata(f, base_path, fs):
         if base_path is not None:
             path = posixpath.join(base_path, f)
         else:
             path = f
 
-        # Get the underlying fsspec filesystem
-        fs = filesystem.fs if hasattr(filesystem, 'fs') else filesystem
 
-        try:
-            # Try using fsspec's ArrowFSWrapper if available
-            from fsspec.implementations.arrow import ArrowFSWrapper
-            arrow_fs = ArrowFSWrapper(fs)
-            return {f: pq.read_metadata(path, filesystem=arrow_fs)}
-        except (ImportError, AttributeError):
-            # Fall back to using PyFileSystem with FSSpecHandler
-            py_fs = pfs.PyFileSystem(pfs.FSSpecHandler(fs))
-            return {f: pq.read_metadata(path, filesystem=py_fs)}
-
+        return {f: pq.read_metadata(path, filesystem=fs)}
+        
     metadata = run_parallel(
         get_metadata,
         files,
         base_path=base_path,
-        filesystem=filesystem,
+        fs=filesystem,
         backend=backend,
         n_jobs=n_jobs,
         verbose=verbose,
@@ -263,10 +256,11 @@ class ParquetDatasetMetadata(DatasetMetadata):
     def __init__(
         self,
         path: str,
-        filesystem: AbstractFileSystem | pfs.FileSystem | None = None,
-        bucket: str | None = None,
+        fs: AbstractFileSystem | pfs.FileSystem | None = None,
         cached: bool = False,
         update_metadata: bool = False,
+        *,
+        filesystem: AbstractFileSystem | pfs.FileSystem | None = None,
         **fs_kwargs,
     ) -> None:
         """
@@ -274,18 +268,29 @@ class ParquetDatasetMetadata(DatasetMetadata):
 
         Args:
             path (str): The path to the dataset.
-            filesystem (AbstractFileSystem | pfs.FileSystem | None, optional): The filesystem to use. Defaults to None.
-            bucket (str | None, optional): The name of the bucket to use. Defaults to None.
+            fs (AbstractFileSystem | pfs.FileSystem | None, optional): The filesystem to use (preferred). Defaults to None.
             cached (bool, optional): Whether to use a cached filesystem. Defaults to False.
+            filesystem (AbstractFileSystem | pfs.FileSystem | None, optional): The filesystem to use (deprecated, use fs instead).
             **cached_options: Additional options to pass to the cached filesystem.
 
         Returns:
             None
         """
+        # Backward compatibility: if filesystem is provided, use it
+        if filesystem is not None:
+            import warnings
+            warnings.warn(
+                "The 'filesystem' parameter is deprecated and will be removed in a future version. "
+                "Please use 'fs' instead.",
+                DeprecationWarning,
+                stacklevel=2
+            )
+            fs = filesystem
+
         # Initialize ParquetDatasetMetadata specific attributes
-        self._bucket = bucket
+        self._bucket = None  # Legacy attribute, kept for backward compatibility
         self._cached = cached
-        self._base_filesystem = filesystem
+        self._base_filesystem = fs.fs if isinstance(fs, DirFileSystem) else fs
         if cached:
             cache_storage = fs_kwargs.pop(
                 "cache_storage", tempfile.mkdtemp(prefix="pydala2_")
@@ -295,8 +300,7 @@ class ParquetDatasetMetadata(DatasetMetadata):
 
         # Create filesystem wrapper
         fs_wrapper = FileSystem(
-            bucket=bucket,
-            fs=filesystem,
+            fs=fs,
             cached=cached,
             cache_storage=cache_storage,
             **fs_kwargs,
@@ -312,7 +316,7 @@ class ParquetDatasetMetadata(DatasetMetadata):
         DatasetMetadata.__init__(
             self,
             path=path,
-            filesystem=fs_wrapper,
+            filesystem=self._base_filesystem,
             config=config
         )
 
@@ -337,17 +341,7 @@ class ParquetDatasetMetadata(DatasetMetadata):
             # Get the underlying fsspec filesystem
             fs = self.filesystem.fs if hasattr(self.filesystem, 'fs') else self.filesystem
 
-            # Create a PyArrow-compatible filesystem wrapper
-            try:
-                # Try using fsspec's ArrowFSWrapper if available
-                from fsspec.implementations.arrow import ArrowFSWrapper
-                arrow_fs = ArrowFSWrapper(fs)
-                return pq.read_metadata(self._metadata_file, filesystem=arrow_fs)
-            except (ImportError, AttributeError):
-                # Fall back to using PyFileSystem with FSSpecHandler
-                import pyarrow.fs as pfs
-                py_fs = pfs.PyFileSystem(pfs.FSSpecHandler(fs))
-                return pq.read_metadata(self._metadata_file, filesystem=py_fs)
+            return pq.read_metadata(self._metadata_file, filesystem=self._filesystem)
 
     def _read_file_metadata(self) -> dict[str, pq.FileMetaData] | None:
         if self.has_file_metadata_file:
@@ -965,12 +959,14 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
     def __init__(
         self,
         path: str,
-        filesystem: AbstractFileSystem | pfs.FileSystem | None = None,
+        fs: AbstractFileSystem | pfs.FileSystem | None = None,
         bucket: str | None = None,
         cached: bool = False,
         # metadata: pq.FileMetaData,
         partitioning: None | str | list[str] = None,
         ddb_con: duckdb.DuckDBPyConnection | None = None,
+        *,
+        filesystem: AbstractFileSystem | pfs.FileSystem | None = None,
         **fs_kwargs,
     ) -> None:
         """
@@ -978,20 +974,29 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
 
         Args:
             path (str): The path to the dataset.
-            filesystem (AbstractFileSystem | pfs.FileSystem | None, optional): The filesystem to use. Defaults to None.
+            fs (AbstractFileSystem | pfs.FileSystem | None, optional): The filesystem to use (preferred). Defaults to None.
             bucket (str | None, optional): The name of the bucket to use. Defaults to None.
             cached (bool, optional): Whether to use a cached filesystem. Defaults to False.
+            filesystem (AbstractFileSystem | pfs.FileSystem | None, optional): The filesystem to use (deprecated, use fs instead).
             **cached_options: Additional options to pass to the cached filesystem.
 
         Returns:
             None
         """
-
+        # Backward compatibility: if filesystem is provided, use it
+        if filesystem is not None:
+            import warnings
+            warnings.warn(
+                "The 'filesystem' parameter is deprecated and will be removed in a future version. "
+                "Please use 'fs' instead.",
+                DeprecationWarning,
+                stacklevel=2
+            )
+            fs = filesystem
 
         super().__init__(
             path=path,
-            filesystem=filesystem,
-            bucket=bucket,
+            fs=fs,
             cached=cached,
             **fs_kwargs,
         )

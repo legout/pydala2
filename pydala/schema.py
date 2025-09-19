@@ -536,9 +536,9 @@ def repair_schema(
     if not schemas_equal:
         files = [f for f in files if file_schemas[f] != schema]
 
-    def _repair_schema(f, schema, filesystem):
+    def _repair_schema(f, schema, fs):
         table = replace_schema(
-            read_table(f, filesystem=filesystem, partitioning=None),
+            read_table(f, fs=fs, partitioning=None),
             schema=schema,
             ts_unit=ts_unit,
             tz=tz,
@@ -547,7 +547,7 @@ def repair_schema(
         pq.write_table(
             table,
             f,
-            filesystem=filesystem,
+            filesystem=fs,
             coerce_timestamps=ts_unit,
             allow_truncated_timestamps=True,
             **kwargs,
@@ -588,8 +588,8 @@ def collect_file_schemas(
     if base_path is not None:
         files = [posixpath.join(base_path, f) for f in files]
 
-    def get_schema(f, filesystem):
-        return {f: pq.read_schema(f, filesystem=filesystem)}
+    def get_schema(f, fs):
+        return {f: pq.read_schema(f, filesystem=fs)}
 
     schemas = run_parallel(
         get_schema,

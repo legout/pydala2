@@ -77,8 +77,8 @@ class Catalog:
         with open(self._catalog_path, "w") as f:
             yaml.dump(data, f)
 
-    def create_filesystem(self, name: str, protocol: str, bucket: str, path: str):
-        self.filesystems[name] = Filesystem(protocol=protocol, bucket=bucket, path=path)
+    def create_filesystem(self, name: str, protocol: str, path: str):
+        self.filesystems[name] = Filesystem(protocol=protocol, path=path)
         self.save_catalog()
 
     def create_table(

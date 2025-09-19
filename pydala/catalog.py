@@ -23,11 +23,10 @@ class Catalog:
         path: str,
         namespace: str | None = None,
         ddb_con: duckdb.DuckDBPyConnection | None = None,
-        filesystem: AbstractFileSystem | None = None,
-        bucket: str | None = None,
+        fs: AbstractFileSystem | None = None,
         **fs_kwargs,
     ):
-        self._catalog_filesystem = FileSystem(bucket=bucket, fs=filesystem, **fs_kwargs)
+        self._catalog_filesystem = FileSystem(fs=fs, **fs_kwargs)
         self._catalog_path = self._catalog_filesystem.expand_path(path)[0]
         self._namespace = namespace
         self.load_catalog(namespace=namespace)
@@ -76,9 +75,9 @@ class Catalog:
 
             for name in self.params.filesystem:
                 if self.params.filesystem[name].protocol in ["file", "local"]:
-                    self.params.filesystem[name].bucket = posixpath.join(
+                    self.params.filesystem[name].path = posixpath.join(
                         posixpath.dirname(self._catalog_path),
-                        self.params.filesystem[name].bucket,
+                        self.params.filesystem[name].path,
                     )
                 fs = FileSystem(**self.params.filesystem[name])
                 type(fs).protocol = name
