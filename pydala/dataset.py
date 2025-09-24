@@ -760,6 +760,9 @@ class BaseDataset:
         if timestamp_column is not None:
             self._timestamp_column = timestamp_column
 
+        if isinstance(data, pa.RecordBatchReader):
+            data = data.read_all()
+
         if (
             not isinstance(data, list)
             and not isinstance(data, tuple)
