@@ -9,27 +9,27 @@ repo_url: https://github.com/yourusername/pydala2
 nav:
   - Home: index.md
   - Getting Started:
-    - Installation: getting-started.md
-    - Quick Start: quick-start.md
+      - Installation: getting-started.md
+      - Quick Start: quick-start.md
   - User Guide:
-    - Basic Usage: user-guide/basic-usage.md
-    - Data Operations: user-guide/data-operations.md
-    - Performance Optimization: user-guide/performance.md
-    - Catalog Management: user-guide/catalog-management.md
-    - Schema Management: user-guide/schema-management.md
+      - Basic Usage: user-guide/basic-usage.md
+      - Data Operations: user-guide/data-operations.md
+      - Performance Optimization: user-guide/performance.md
+      - Catalog Management: user-guide/catalog-management.md
+      - Schema Management: user-guide/schema-management.md
   - API Reference:
-    - Overview: api/overview.md
-    - Core Classes: api/core.md
-    - Dataset Classes: api/datasets.md
-    - Table Operations: api/table.md
-    - Catalog System: api/catalog.md
-    - Filesystem: api/filesystem.md
-    - Utilities: api/utilities.md
+      - Overview: api/overview.md
+      - Core Classes: api/core.md
+      - Dataset Classes: api/datasets.md
+      - Table Operations: api/table.md
+      - Catalog System: api/catalog.md
+      - Filesystem: api/filesystem.md
+      - Utilities: api/utilities.md
   - Advanced Topics:
-    - Deployment: advanced/deployment.md
-    - Performance Tuning: advanced/performance-tuning.md
-    - Troubleshooting: advanced/troubleshooting.md
-    - Integration Patterns: advanced/integration.md
+      - Deployment: advanced/deployment.md
+      - Performance Tuning: advanced/performance-tuning.md
+      - Troubleshooting: advanced/troubleshooting.md
+      - Integration Patterns: advanced/integration.md
   - Contributing: contributing.md
 
 theme:
@@ -85,7 +85,6 @@ plugins:
       timezone: UTC
       locale: en
       fallback_to_build_date: true
-  - mkdocs-material-extensions
 
 markdown_extensions:
   - admonition
@@ -144,5 +143,5 @@ extra_javascript:
   - javascripts/extra.js
 
 watch:
-  - pydala2
+  - pydala
   - docs

@@ -45,7 +45,8 @@ class PydalaTable:
             self._dataset = result
             self._ddb = self.ddb_con.from_arrow(result)
         else:
-            self._dataset = pds.dataset(result.arrow())
+            arrow_result = result.arrow()
+            self._dataset = pds.dataset(arrow_result, schema=arrow_result.schema)
             self._ddb = result
 
     @staticmethod

@@ -164,3 +164,4 @@ cython_debug/
 #.idea/
 data/**
 .worktree/
+.DS_Store

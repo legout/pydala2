@@ -563,8 +563,8 @@ class BaseDataset:
             the method will automatically use DuckDB for filtering.
 
         """
-        if any([s in filter_expr for s in ["%", "like", "similar to", "*", "(", ")"]]):
-            use = "duckdb"
+        #if any([s in filter_expr for s in ["%", "like", "similar to", "*"]]):
+        #    use = "duckdb"
 
         if use == "auto":
             try:
