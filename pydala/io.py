@@ -13,6 +13,7 @@ import pyarrow.dataset as pds
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 from fsspec import filesystem as fsspec_filesystem
+from fsspec.core import strip_protocol
 from loguru import logger
 
 # Local imports
@@ -45,6 +46,7 @@ def write_table(
     Returns:
         tuple[str, pq.FileMetaData]: A tuple containing the file path and the metadata of the written Parquet file.
     """
+    path = strip_protocol(path)
     if not filesystem.exists(posixpath.dirname(path)):
         try:
             filesystem.makedirs(posixpath.dirname(path), exist_ok=True)
@@ -107,7 +109,7 @@ class Writer:
             if not isinstance(data, pa.RecordBatch)
             else pa.Table.from_batches([data])
         )
-        self.base_path = path
+        self.base_path = strip_protocol(path)
         self.path = None
         self._filesystem = filesystem
 
@@ -164,7 +166,9 @@ class Writer:
             ]
         )
 
-    def sort_data(self, by: str | list[str] | list[tuple[str, str]] | None = None) -> None:
+    def sort_data(
+        self, by: str | list[str] | list[tuple[str, str]] | None = None
+    ) -> None:
         """
         Sorts the data in the PydalaTable object based on the specified column(s).
 
@@ -404,12 +408,14 @@ class Writer:
 
     def _create_file_visitor(self, verbose: bool, metadata: list):
         """Create a file visitor function for tracking written files."""
+
         def file_visitor(written_file):
             if verbose:
                 logger.info(f"path={written_file.path}")
                 logger.info(f"size={written_file.size} bytes")
                 logger.info(f"metadata={written_file.metadata}")
             metadata.append({written_file.path: written_file.metadata})
+
         return file_visitor
 
     def _write_dataset_with_retry(

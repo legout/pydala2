@@ -14,6 +14,7 @@ import pyarrow as pa
 import pyarrow.fs as pfs
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
+from fsspec.core import strip_protocol
 from loguru import logger
 
 from .filesystem import FileSystem, clear_cache
@@ -110,6 +111,9 @@ def collect_parquet_metadata(
             path = f
         return {f: pq.read_metadata(path, filesystem=filesystem)}
 
+    if base_path:
+        base_path = strip_protocol(base_path)
+
     metadata = run_parallel(
         get_metadata,
         files,
@@ -141,6 +145,8 @@ def remove_from_metadata(
     Returns:
         pq.FileMetaData: The updated metadata of the dataset.
     """
+    base_path = strip_protocol(base_path) if base_path else None
+
     row_groups = []
     if rm_files is not None:
         if base_path is not None:
@@ -209,7 +215,7 @@ class ParquetDatasetMetadata:
         Returns:
             None
         """
-        self._path = path
+        self._path = strip_protocol(path)
         self._bucket = bucket
         self._cached = cached
         self._base_filesystem = filesystem

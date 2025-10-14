@@ -15,6 +15,7 @@ import pyarrow as pa
 import pyarrow.dataset as pds
 import tqdm
 from fsspec import AbstractFileSystem
+from fsspec.core import strip_protocol
 
 # Initialize logger
 logger = logging.getLogger(__name__)
@@ -101,7 +102,6 @@ class BaseDataset:
         if timestamp_column is not None and not isinstance(timestamp_column, str):
             raise ValueError("timestamp_column must be a string or None")
 
-        self._path = path
         self._schema = schema
         self._bucket = bucket
         self._cached = cached
@@ -121,6 +121,7 @@ class BaseDataset:
             cache_storage=cache_storage,
             **fs_kwargs,
         )
+        self._path = strip_protocol(path) if path else ""
         self.table = None
         self._makedirs()
 

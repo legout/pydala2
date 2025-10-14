@@ -5,7 +5,7 @@ import pyarrow.compute as pc
 import pyarrow.fs as pfs
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
-
+from fsspec.core import strip_protocol
 from .helpers.misc import read_table, run_parallel, unify_schemas_pl
 
 
@@ -490,6 +490,7 @@ def repair_schema(
         tz (str|None): timezone for timestamp fields. Defaults to "UTC".
         **kwargs: Additional keyword arguments for pyarrow.parquet.write_table.
     """
+    base_path = strip_protocol(base_path) if base_path is not None else None
     if files is None:
         if file_schemas is not None:
             files = list(file_schemas.keys())
@@ -584,6 +585,7 @@ def collect_file_schemas(
     Returns:
         dict[str, pa.Schema]: Pyarrow schemas of the given files.
     """
+    base_path = strip_protocol(base_path) if base_path is not None else None
     if base_path is not None:
         files = [posixpath.join(base_path, f) for f in files]
 
