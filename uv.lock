@@ -823,6 +823,7 @@ dependencies = [
     { name = "rich" },
     { name = "sqlglot" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/19/ba/68fe665e7ced069a305287f5f197caf39cc92ebbdb3f9762d9db33653c69/fsspec_utils-0.2.4.2.tar.gz", hash = "sha256:ed3fe26c496ffcae0c93c49260a28c8f647219e22ccc6622619b1b024b8297f9", size = 44332390, upload-time = "2025-09-24T14:57:27.415Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a1/36/47dd815111cbd47efc60e515a7ff38f36afe7d47f0a7b7f7f33754d5c193/fsspec_utils-0.2.4.2-py3-none-any.whl", hash = "sha256:a1b83927e4f561c7f0431910d8a4a119c81c68d4e359d28a630354a2ff94e253", size = 58984, upload-time = "2025-09-24T14:57:24.777Z" },
 ]
@@ -2376,7 +2377,7 @@ wheels = [
 
 [[package]]
 name = "pydala2"
-version = "0.21.3"
+version = "0.21.5"
 source = { editable = "." }
 dependencies = [
     { name = "brotli" },

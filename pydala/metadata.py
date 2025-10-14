@@ -253,11 +253,11 @@ class ParquetDatasetMetadata:
                     try:
                         # Try to decompress with brotli first
                         decompressed_data = brotli.decompress(compressed_data)
-                        data = json.loads(decompressed_data.decode('utf-8'))
+                        data = json.loads(decompressed_data.decode("utf-8"))
                     except (brotli.error, UnicodeDecodeError):
                         # Fall back to uncompressed JSON
                         f.seek(0)
-                        data = json.loads(compressed_data.decode('utf-8'))
+                        data = json.loads(compressed_data.decode("utf-8"))
                     return deserialize_metadata(data)
             except (json.JSONDecodeError, UnicodeDecodeError):
                 # Fall back to binary pickle format for backward compatibility
@@ -304,7 +304,7 @@ class ParquetDatasetMetadata:
         """
         self.clear_cache()
         return [
-            fn.replace(self._path, "").lstrip("/")
+            fn.replace(self._path.split("://")[-1], "").lstrip("/")
             for fn in sorted(
                 self._filesystem.glob(posixpath.join(self._path, "**/*.parquet"))
             )
@@ -360,10 +360,10 @@ class ParquetDatasetMetadata:
         """
         # Use JSON format instead of pickle for security
         # Compress the serialized data using brotli
-        
+
         serialized_data = json.dumps(serialize_metadata(self._file_metadata), indent=2)
-        compressed_data = brotli.compress(serialized_data.encode('utf-8'), quality=5)
-        
+        compressed_data = brotli.compress(serialized_data.encode("utf-8"), quality=5)
+
         with self._filesystem.open(self._file_metadata_file, "wb") as f:
             f.write(compressed_data)
 

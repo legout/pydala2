@@ -17,7 +17,7 @@ import pyarrow.dataset as pds
 import pyarrow.fs as pfs
 import pyarrow.parquet as pq
 import s3fs
-from fsspec import AbstractFileSystem, filesystem
+from fsspec_utils import AbstractFileSystem, filesystem
 from fsspec.implementations.cache_mapper import AbstractCacheMapper
 from fsspec.implementations.cached import SimpleCacheFileSystem
 
@@ -30,26 +30,30 @@ from .helpers.security import safe_join, validate_path
 from .schema import convert_large_types_to_normal
 
 
-def get_credentials_from_fssspec(fs: AbstractFileSystem, redact_secrets: bool = True) -> dict[str, str]:
+def get_credentials_from_fssspec(
+    fs: AbstractFileSystem, redact_secrets: bool = True
+) -> dict[str, str]:
     """
     Safely extract credentials from fsspec filesystem.
-    
+
     Args:
         fs: The fsspec filesystem object
         redact_secrets: If True, redact sensitive values from returned dict
-        
+
     Returns:
         Dictionary with credential information (secrets redacted if redact_secrets=True)
     """
     if "s3" in fs.protocol:
         credentials = fs.s3._get_credentials()
-        
+
         if redact_secrets:
             # For logging and display purposes, redact actual secrets
             return {
                 "access_key": f"REDACTED({len(credentials.access_key) if credentials.access_key else 0} chars)",
                 "secret_key": f"REDACTED({len(credentials.secret_key) if credentials.secret_key else 0} chars)",
-                "session_token": f"REDACTED({len(credentials.token) if credentials.token else 0} chars)" if credentials.token else None,
+                "session_token": f"REDACTED({len(credentials.token) if credentials.token else 0} chars)"
+                if credentials.token
+                else None,
                 "endpoint_override": fs.s3._endpoint.host if fs.s3._endpoint else None,
             }
         else:
@@ -60,7 +64,7 @@ def get_credentials_from_fssspec(fs: AbstractFileSystem, redact_secrets: bool = 
                 "session_token": credentials.token,
                 "endpoint_override": fs.s3._endpoint.host if fs.s3._endpoint else None,
             }
-    
+
     return {}
 
 
@@ -172,7 +176,7 @@ class DiskUsageTracker:
         self._last_free = None
         self._first_free = None
         self._lock = threading.Lock()
-    
+
     def get_usage_message(self, storage: str) -> str:
         """Get friendly disk usage message with deltas.
 
@@ -187,18 +191,22 @@ class DiskUsageTracker:
             if self._first_free is None:
                 self._first_free = usage.free
             current_usage = get_total_directory_size(storage)
-            message = f"{sizeof_fmt(current_usage)} used {sizeof_fmt(usage.free)} available"
+            message = (
+                f"{sizeof_fmt(current_usage)} used {sizeof_fmt(usage.free)} available"
+            )
             if self._last_free is not None:
                 downloaded_recently = self._last_free - usage.free
                 if downloaded_recently > 10_000_000:
                     downloaded_since_start = self._first_free - usage.free
                     if downloaded_recently != downloaded_since_start:
                         message += f" delta: {sizeof_fmt(downloaded_recently)}"
-                    message += f" delta since start: {sizeof_fmt(downloaded_since_start)}"
+                    message += (
+                        f" delta since start: {sizeof_fmt(downloaded_since_start)}"
+                    )
 
             self._last_free = usage.free
             return message
-    
+
     def reset(self) -> None:
         """Reset tracking state.
 
@@ -420,493 +428,493 @@ def get_new_file_names(src: list[str], dst: list[str]) -> list[str]:
     ]
 
 
-def read_parquet(
-    self, path: str, filename: bool = False, **kwargs
-) -> dict[str, pl.DataFrame] | pl.DataFrame:
-    data = pl.from_arrow(read_table(path, filesystem=self, **kwargs))
+# def read_parquet(
+#     self, path: str, filename: bool = False, **kwargs
+# ) -> dict[str, pl.DataFrame] | pl.DataFrame:
+#     data = pl.from_arrow(read_table(path, filesystem=self, **kwargs))
 
-    if filename:
-        return {path: data}
-
-    return data
-
-
-def read_parquet_schema(self, path: str, **kwargs) -> pa.Schema:
-    return pq.read_schema(path, filesystem=self, **kwargs)
-
-
-def read_paruet_metadata(self, path: str, **kwargs) -> pq.FileMetaData:
-    return pq.read_metadata(path, filesystem=self, **kwargs)
-
+#     if filename:
+#         return {path: data}
+
+#     return data
+
+
+# def read_parquet_schema(self, path: str, **kwargs) -> pa.Schema:
+#     return pq.read_schema(path, filesystem=self, **kwargs)
+
+
+# def read_paruet_metadata(self, path: str, **kwargs) -> pq.FileMetaData:
+#     return pq.read_metadata(path, filesystem=self, **kwargs)
+
 
-def read_json(
-    self,
-    path: str,
-    filename: bool = False,
-    as_dataframe: bool = True,
-    flatten: bool = True,
-) -> dict | pl.DataFrame:
-    with self.open(path) as f:
-        # data = msgspec.json.decode(f.read())
-        data = orjson.loads(f.read())
-
-    if as_dataframe:
-        data = pl.from_dicts(data)
-        if flatten:
-            data = data.explode_all().unnest_all()
-
-    if filename:
-        return {path: data}
-
-    return data
-
-
-def read_csv(
-    self, path: str, filename: bool = False, **kwargs
-) -> dict[str, pl.DataFrame] | pl.DataFrame:
-    with self.open(path) as f:
-        data = pl.from_csv(f, **kwargs)
-
-    if filename:
-        return {path: data}
-
-    return data
-
-
-def read_parquet_dataset(
-    self, path: str | list[str], concat: bool = True, filename: bool = False, **kwargs
-) -> (
-    dict[str, pl.DataFrame]
-    | pl.DataFrame
-    | list[dict[str, pl.DataFrame]]
-    | list[pl.DataFrame]
-):
-    if filename:
-        concat = False
-
-    if isinstance(path, str):
-        files = self.glob(posixpath.join(path, "*.parquet"))
-    else:
-        files = path
-    if isinstance(files, str):
-        files = [files]
-
-    dfs = run_parallel(self.read_parquet, files, filename, **kwargs)
-
-    dfs = pl.concat(dfs, how="diagonal_relaxed") if concat else dfs
-
-    dfs = dfs[0] if len(dfs) == 1 else dfs
-
-    return dfs
-
-
-def read_json_dataset(
-    self,
-    path: str | list[str],
-    filename: bool = False,
-    as_dataframe: bool = True,
-    flatten: bool = True,
-    concat: bool = True,
-) -> (
-    dict[str, pl.DataFrame]
-    | pl.DataFrame
-    | list[dict[str, pl.DataFrame]]
-    | list[pl.DataFrame]
-):
-    if filename:
-        concat = False
-
-    if isinstance(path, str):
-        files = self.glob(posixpath.join(path, "*.json"))
-    else:
-        files = path
-    if isinstance(files, str):
-        files = [files]
-
-    data = run_parallel(
-        self.read_json,
-        files,
-        filename=filename,
-        as_dataframe=as_dataframe,
-        flatten=flatten,
-    )
-    if as_dataframe and concat:
-        data = pl.concat(data, how="diagonal_relaxed")
-
-    data = data[0] if len(data) == 1 else data
-
-    return data
-
-
-def read_csv_dataset(
-    self, path: str | list[str], concat: bool = True, filename: bool = False, **kwargs
-) -> (
-    dict[str, pl.DataFrame]
-    | pl.DataFrame
-    | list[dict[str, pl.DataFrame]]
-    | list[pl.DataFrame]
-):
-    if filename:
-        concat = False
-
-    if isinstance(path, str):
-        files = self.glob(posixpath.join(path, "*.csv"))
-    else:
-        files = path
-    if isinstance(files, str):
-        files = [files]
-    dfs = run_parallel(self.read_csv, files, self=self, **kwargs)
-
-    dfs = pl.concat(dfs, how="diagonal_relaxed") if concat else dfs
-    dfs = dfs[0] if len(dfs) == 1 else dfs
-
-    return dfs
-
-
-def pyarrow_dataset(
-    self,
-    path: str,
-    format="parquet",
-    schema: pa.Schema | None = None,
-    partitioning: str | list[str] | pds.Partitioning = None,
-    **kwargs,
-) -> pds.Dataset:
-    return pds.dataset(
-        self.glob(posixpath.join(path, f"*.{format}")),
-        filesystem=self,
-        partitioning=partitioning,
-        schema=schema,
-        **kwargs,
-    )
-
-
-def pyarrow_parquet_dataset(
-    self,
-    path: str,
-    schema: pa.Schema | None = None,
-    partitioning: str | list[str] | pds.Partitioning = None,
-    **kwargs,
-) -> pds.FileSystemDataset:
-    return pds.dataset(
-        posixpath.join(path, "_metadata"),
-        filesystem=self,
-        partitioning=partitioning,
-        schema=schema,
-        **kwargs,
-    )
-
-
-def write_parquet(
-    self,
-    data: pl.DataFrame | pa.Table | pd.DataFrame | ddb.DuckDBPyRelation,
-    path: str,
-    **kwargs,
-) -> None:
-    if isinstance(data, pl.DataFrame):
-        data = data.to_arrow()
-        data = data.cast(convert_large_types_to_normal(data.schema))
-    elif isinstance(data, pd.DataFrame):
-        data = pa.Table.from_pandas(data, preserve_index=False)
-    elif isinstance(data, ddb.DuckDBPyRelation):
-        data = data.arrow()
-
-    pq.write_table(data, path, filesystem=self, **kwargs)
-
-
-def write_json(
-    self,
-    data: dict | pl.DataFrame | pa.Table | pd.DataFrame | ddb.DuckDBPyRelation,
-    path: str,
-) -> None:
-    if isinstance(data, pl.DataFrame):
-        data = data.to_arrow()
-        data = data.cast(convert_large_types_to_normal(data.schema)).to_pydict()
-    elif isinstance(data, pd.DataFrame):
-        data = pa.Table.from_pandas(data, preserve_index=False).to_pydict()
-    elif isinstance(data, ddb.DuckDBPyRelation):
-        data = data.arrow().to_pydict()
-
-    with self.open(path, "w") as f:
-        # f.write(msgspec.json.encode(data))
-        f.write(orjson.dumps(data))
-
-
-def write_csv(
-    self,
-    data: pl.DataFrame | pa.Table | pd.DataFrame | ddb.DuckDBPyRelation,
-    path: str,
-    **kwargs,
-) -> None:
-    if isinstance(data, pa.Table):
-        data = pl.from_arrow(data)
-    elif isinstance(data, pd.DataFrame):
-        data = pl.from_pandas(data)
-    elif isinstance(data, ddb.DuckDBPyRelation):
-        data = data.pl()
-
-    with self.open(path, "w") as f:
-        data.write_csv(f, **kwargs)
-
-
-def write_to_pyarrow_dataset(
-    self,
-    data: (
-        pl.DataFrame
-        | pa.Table
-        | pd.DataFrame
-        | ddb.DuckDBPyRelation
-        | list[pl.DataFrame]
-        | list[pa.Table]
-        | list[pd.DataFrame]
-        | list[ddb.DuckDBPyRelation]
-    ),
-    path: str,
-    basename: str | None = None,
-    concat: bool = True,
-    schema: pa.Schema | None = None,
-    partitioning: str | list[str] | pds.Partitioning | None = None,
-    partitioning_flavor: str = "hive",
-    mode: str = "append",
-    format: str | None = "parquet",
-    **kwargs,
-) -> None:
-    if not isinstance(data, list):
-        data = [data]
-
-    if isinstance(data[0], pl.DataFrame):
-        data = [dd.to_arrow() for dd in data]
-        data = [dd.cast(convert_large_types_to_normal(dd.schema)) for dd in data]
-
-    elif isinstance(data[0], pd.DataFrame):
-        data = [pa.Table.from_pandas(dd, preserve_index=False) for dd in data]
-
-    elif isinstance(data, ddb.DuckDBPyRelation):
-        data = [dd.arrow() for dd in data]
-
-    if concat:
-        data = pa.concat_tables(data, promote=True)
-
-    if mode == "delete_matching":
-        existing_data_behavior = "delete_matching"
-    elif mode == "append":
-        existing_data_behavior = "overwrite_or_ignore"
-    elif mode == "overwrite":
-        self.rm(path, recursive=True)
-        existing_data_behavior = "overwrite_or_ignore"
-    else:
-        existing_data_behavior = mode
-
-    if basename is None:
-        basename = (
-            f"data-{dt.datetime.now().strftime('%Y%m%d%H%M%S%f')[:-3]}"
-            + "-{i}"
-            + f".{format}"
-        )
-
-    pds.write_dataset(
-        data=data,
-        base_dir=path,
-        basename_template=basename,
-        partitioning=partitioning,
-        partitioning_flavor=partitioning_flavor,
-        filesystem=self,
-        existing_data_behavior=existing_data_behavior,
-        schema=schema,
-        format=format,
-        **kwargs,
-    )
-
-
-def _json_to_parquet(
-    self,
-    src: str,
-    dst: str,
-    flatten: bool = True,
-    distinct: bool = True,
-    sort_by: str | list[str] | None = None,
-    auto_optimize_dtypes: bool = True,
-    **kwargs,
-):
-    data = self.read_json(src, as_dataframe=True, flatten=flatten)
-
-    if auto_optimize_dtypes:
-        data = data.opt_dtype()
-
-    if distinct:
-        data = data.unique(maintain_order=True)
-
-    if sort_by is not None:
-        data = data.sort(sort_by)
-
-    if ".parquet" not in dst:
-        dst = posixpath.join(
-            dst, f"{posixpath.basename(src).replace('.json', '.parquet')}"
-        )
-
-    self.write_parquet(data, dst, **kwargs)
-
-
-def _csv_to_parquet(
-    self,
-    src: str,
-    dst: str,
-    distinct: bool = True,
-    sort_by: str | list[str] | None = None,
-    auto_optimize_dtypes: bool = True,
-    **kwargs,
-):
-    data = self.read_csv(src, self, **kwargs)
-
-    if auto_optimize_dtypes:
-        data = data.opt_dtype()
-
-    if distinct:
-        data = data.unique(maintain_order=True)
-
-    if sort_by is not None:
-        data = data.sort(sort_by)
-
-    if ".parquet" not in dst:
-        dst = posixpath.join(
-            dst, f"{posixpath.basename(src).replace('.csv', '.parquet')})"
-        )
-
-    self.write_parquet(data, dst, **kwargs)
-
-
-def json_to_parquet(
-    self,
-    src: str,
-    dst: str,
-    flatten: bool = True,
-    sync: bool = True,
-    parallel: bool = True,
-    distinct: bool = True,
-    sort_by: str | list[str] | None = None,
-    auto_optimize_dtypes: bool = True,
-    **kwargs,
-):
-    if sync:
-        src_files = self.glob(posixpath.join(src, "*.json"))
-        dst_files = self.glob(posixpath.join(dst, "*.parquet"))
-        new_src_files = get_new_file_names(src_files, dst_files)
-
-    else:
-        new_src_files = self.glob(posixpath.join(src, "*.json"))
-
-    kwargs.pop("backend", None)
-    if len(new_src_files) == 1:
-        parallel = False
-
-    if len(new_src_files) > 0:
-        run_parallel(
-            self._json_to_parquet,
-            new_src_files,
-            dst=dst,
-            flatten=flatten,
-            backend="threading" if parallel else "sequential",
-            distinct=distinct,
-            sort_by=sort_by,
-            auto_optimize_dtypes=auto_optimize_dtypes,
-            **kwargs,
-        )
-
-
-def csv_to_parquet(
-    self,
-    src: str,
-    dst: str,
-    sync: bool = True,
-    parallel: bool = True,
-    distinct: bool = True,
-    sort_by: str | list[str] | None = None,
-    auto_optimize_dtypes: bool = True,
-    **kwargs,
-):
-    if sync:
-        src_files = self.glob(posixpath.join(src, "*.csv"))
-        dst_files = self.glob(posixpath.join(dst, "*.parquet"))
-        new_src_files = get_new_file_names(src_files, dst_files)
-
-    else:
-        new_src_files = self.glob(posixpath.join(src, "*.csv"))
-
-    kwargs.pop("backend", None)
-    if len(new_src_files) == 1:
-        parallel = False
-    if len(new_src_files) > 0:
-        run_parallel(
-            self._csv_to_parquet,
-            new_src_files,
-            dst=dst,
-            backend="threading" if parallel else "sequential",
-            distinct=distinct,
-            sort_by=sort_by,
-            auto_optimize_dtypes=auto_optimize_dtypes,
-            **kwargs,
-        )
-
-
-def ls(
-    self,
-    path,
-    recursive: bool = False,
-    maxdepth: int | None = None,
-    detail: bool = False,
-    files_only: bool = False,
-    dirs_only: bool = False,
-):
-    if detail:
-        return self.listdir(path)
-
-    if isinstance(path, str):
-        if self.isfile(path):
-            path = [path]
-        else:
-            path = path.rstrip("*").rstrip("/")
-            if self.exists(path):
-                if not recursive:
-                    path = self.glob(posixpath.join(path, "*"))
-                else:
-                    if maxdepth is not None:
-                        path = self.glob(posixpath.join(path, *(["*"] * maxdepth)))
-                    else:
-                        path = self.glob(posixpath.join(path, "**"))
-            else:
-                path = self.glob(path)
-
-    if files_only:
-        files = [f for f in path if "." in posixpath.basename(f)]
-        files += [f for f in sorted(set(path) - set(files)) if self.isfile(f)]
-        return files
-
-    if dirs_only:
-        dirs = [f for f in path if "." not in posixpath.basename(f)]
-        dirs += [f for f in sorted(set(path) - set(dirs)) if self.isdir(f)]
-        return dirs
-
-    return path
-
-
-def sync_folder(
-    self, src: str, dst: str, recursive: bool = False, maxdepth: int | None = None
-):
-    src_ = self.lss(src, recursive=recursive, maxdepth=maxdepth, files_only=True)
-    dst_ = self.lss(dst, recursive=recursive, maxdepth=maxdepth, files_only=True)
-
-    if len(src) == 0:
-        return
-
-    src_names = [posixpath.basename(f) for f in src_]
-    dst_names = [posixpath.basename(f) for f in dst_]
-
-    new_src = [
-        posixpath.join(posixpath.dirname(src[0]), f)
-        for f in sorted(set(src_names) - set(dst_names))
-    ]
-
-    if len(new_src):
-        self.cp(new_src, dst)
+# def read_json(
+#     self,
+#     path: str,
+#     filename: bool = False,
+#     as_dataframe: bool = True,
+#     flatten: bool = True,
+# ) -> dict | pl.DataFrame:
+#     with self.open(path) as f:
+#         # data = msgspec.json.decode(f.read())
+#         data = orjson.loads(f.read())
+
+#     if as_dataframe:
+#         data = pl.from_dicts(data)
+#         if flatten:
+#             data = data.explode_all().unnest_all()
+
+#     if filename:
+#         return {path: data}
+
+#     return data
+
+
+# def read_csv(
+#     self, path: str, filename: bool = False, **kwargs
+# ) -> dict[str, pl.DataFrame] | pl.DataFrame:
+#     with self.open(path) as f:
+#         data = pl.from_csv(f, **kwargs)
+
+#     if filename:
+#         return {path: data}
+
+#     return data
+
+
+# def read_parquet_dataset(
+#     self, path: str | list[str], concat: bool = True, filename: bool = False, **kwargs
+# ) -> (
+#     dict[str, pl.DataFrame]
+#     | pl.DataFrame
+#     | list[dict[str, pl.DataFrame]]
+#     | list[pl.DataFrame]
+# ):
+#     if filename:
+#         concat = False
+
+#     if isinstance(path, str):
+#         files = self.glob(posixpath.join(path, "*.parquet"))
+#     else:
+#         files = path
+#     if isinstance(files, str):
+#         files = [files]
+
+#     dfs = run_parallel(self.read_parquet, files, filename, **kwargs)
+
+#     dfs = pl.concat(dfs, how="diagonal_relaxed") if concat else dfs
+
+#     dfs = dfs[0] if len(dfs) == 1 else dfs
+
+#     return dfs
+
+
+# def read_json_dataset(
+#     self,
+#     path: str | list[str],
+#     filename: bool = False,
+#     as_dataframe: bool = True,
+#     flatten: bool = True,
+#     concat: bool = True,
+# ) -> (
+#     dict[str, pl.DataFrame]
+#     | pl.DataFrame
+#     | list[dict[str, pl.DataFrame]]
+#     | list[pl.DataFrame]
+# ):
+#     if filename:
+#         concat = False
+
+#     if isinstance(path, str):
+#         files = self.glob(posixpath.join(path, "*.json"))
+#     else:
+#         files = path
+#     if isinstance(files, str):
+#         files = [files]
+
+#     data = run_parallel(
+#         self.read_json,
+#         files,
+#         filename=filename,
+#         as_dataframe=as_dataframe,
+#         flatten=flatten,
+#     )
+#     if as_dataframe and concat:
+#         data = pl.concat(data, how="diagonal_relaxed")
+
+#     data = data[0] if len(data) == 1 else data
+
+#     return data
+
+
+# def read_csv_dataset(
+#     self, path: str | list[str], concat: bool = True, filename: bool = False, **kwargs
+# ) -> (
+#     dict[str, pl.DataFrame]
+#     | pl.DataFrame
+#     | list[dict[str, pl.DataFrame]]
+#     | list[pl.DataFrame]
+# ):
+#     if filename:
+#         concat = False
+
+#     if isinstance(path, str):
+#         files = self.glob(posixpath.join(path, "*.csv"))
+#     else:
+#         files = path
+#     if isinstance(files, str):
+#         files = [files]
+#     dfs = run_parallel(self.read_csv, files, self=self, **kwargs)
+
+#     dfs = pl.concat(dfs, how="diagonal_relaxed") if concat else dfs
+#     dfs = dfs[0] if len(dfs) == 1 else dfs
+
+#     return dfs
+
+
+# def pyarrow_dataset(
+#     self,
+#     path: str,
+#     format="parquet",
+#     schema: pa.Schema | None = None,
+#     partitioning: str | list[str] | pds.Partitioning = None,
+#     **kwargs,
+# ) -> pds.Dataset:
+#     return pds.dataset(
+#         self.glob(posixpath.join(path, f"*.{format}")),
+#         filesystem=self,
+#         partitioning=partitioning,
+#         schema=schema,
+#         **kwargs,
+#     )
+
+
+# def pyarrow_parquet_dataset(
+#     self,
+#     path: str,
+#     schema: pa.Schema | None = None,
+#     partitioning: str | list[str] | pds.Partitioning = None,
+#     **kwargs,
+# ) -> pds.FileSystemDataset:
+#     return pds.dataset(
+#         posixpath.join(path, "_metadata"),
+#         filesystem=self,
+#         partitioning=partitioning,
+#         schema=schema,
+#         **kwargs,
+#     )
+
+
+# def write_parquet(
+#     self,
+#     data: pl.DataFrame | pa.Table | pd.DataFrame | ddb.DuckDBPyRelation,
+#     path: str,
+#     **kwargs,
+# ) -> None:
+#     if isinstance(data, pl.DataFrame):
+#         data = data.to_arrow()
+#         data = data.cast(convert_large_types_to_normal(data.schema))
+#     elif isinstance(data, pd.DataFrame):
+#         data = pa.Table.from_pandas(data, preserve_index=False)
+#     elif isinstance(data, ddb.DuckDBPyRelation):
+#         data = data.arrow()
+
+#     pq.write_table(data, path, filesystem=self, **kwargs)
+
+
+# def write_json(
+#     self,
+#     data: dict | pl.DataFrame | pa.Table | pd.DataFrame | ddb.DuckDBPyRelation,
+#     path: str,
+# ) -> None:
+#     if isinstance(data, pl.DataFrame):
+#         data = data.to_arrow()
+#         data = data.cast(convert_large_types_to_normal(data.schema)).to_pydict()
+#     elif isinstance(data, pd.DataFrame):
+#         data = pa.Table.from_pandas(data, preserve_index=False).to_pydict()
+#     elif isinstance(data, ddb.DuckDBPyRelation):
+#         data = data.arrow().to_pydict()
+
+#     with self.open(path, "w") as f:
+#         # f.write(msgspec.json.encode(data))
+#         f.write(orjson.dumps(data))
+
+
+# def write_csv(
+#     self,
+#     data: pl.DataFrame | pa.Table | pd.DataFrame | ddb.DuckDBPyRelation,
+#     path: str,
+#     **kwargs,
+# ) -> None:
+#     if isinstance(data, pa.Table):
+#         data = pl.from_arrow(data)
+#     elif isinstance(data, pd.DataFrame):
+#         data = pl.from_pandas(data)
+#     elif isinstance(data, ddb.DuckDBPyRelation):
+#         data = data.pl()
+
+#     with self.open(path, "w") as f:
+#         data.write_csv(f, **kwargs)
+
+
+# def write_to_pyarrow_dataset(
+#     self,
+#     data: (
+#         pl.DataFrame
+#         | pa.Table
+#         | pd.DataFrame
+#         | ddb.DuckDBPyRelation
+#         | list[pl.DataFrame]
+#         | list[pa.Table]
+#         | list[pd.DataFrame]
+#         | list[ddb.DuckDBPyRelation]
+#     ),
+#     path: str,
+#     basename: str | None = None,
+#     concat: bool = True,
+#     schema: pa.Schema | None = None,
+#     partitioning: str | list[str] | pds.Partitioning | None = None,
+#     partitioning_flavor: str = "hive",
+#     mode: str = "append",
+#     format: str | None = "parquet",
+#     **kwargs,
+# ) -> None:
+#     if not isinstance(data, list):
+#         data = [data]
+
+#     if isinstance(data[0], pl.DataFrame):
+#         data = [dd.to_arrow() for dd in data]
+#         data = [dd.cast(convert_large_types_to_normal(dd.schema)) for dd in data]
+
+#     elif isinstance(data[0], pd.DataFrame):
+#         data = [pa.Table.from_pandas(dd, preserve_index=False) for dd in data]
+
+#     elif isinstance(data, ddb.DuckDBPyRelation):
+#         data = [dd.arrow() for dd in data]
+
+#     if concat:
+#         data = pa.concat_tables(data, promote=True)
+
+#     if mode == "delete_matching":
+#         existing_data_behavior = "delete_matching"
+#     elif mode == "append":
+#         existing_data_behavior = "overwrite_or_ignore"
+#     elif mode == "overwrite":
+#         self.rm(path, recursive=True)
+#         existing_data_behavior = "overwrite_or_ignore"
+#     else:
+#         existing_data_behavior = mode
+
+#     if basename is None:
+#         basename = (
+#             f"data-{dt.datetime.now().strftime('%Y%m%d%H%M%S%f')[:-3]}"
+#             + "-{i}"
+#             + f".{format}"
+#         )
+
+#     pds.write_dataset(
+#         data=data,
+#         base_dir=path,
+#         basename_template=basename,
+#         partitioning=partitioning,
+#         partitioning_flavor=partitioning_flavor,
+#         filesystem=self,
+#         existing_data_behavior=existing_data_behavior,
+#         schema=schema,
+#         format=format,
+#         **kwargs,
+#     )
+
+
+# def _json_to_parquet(
+#     self,
+#     src: str,
+#     dst: str,
+#     flatten: bool = True,
+#     distinct: bool = True,
+#     sort_by: str | list[str] | None = None,
+#     auto_optimize_dtypes: bool = True,
+#     **kwargs,
+# ):
+#     data = self.read_json(src, as_dataframe=True, flatten=flatten)
+
+#     if auto_optimize_dtypes:
+#         data = data.opt_dtype()
+
+#     if distinct:
+#         data = data.unique(maintain_order=True)
+
+#     if sort_by is not None:
+#         data = data.sort(sort_by)
+
+#     if ".parquet" not in dst:
+#         dst = posixpath.join(
+#             dst, f"{posixpath.basename(src).replace('.json', '.parquet')}"
+#         )
+
+#     self.write_parquet(data, dst, **kwargs)
+
+
+# def _csv_to_parquet(
+#     self,
+#     src: str,
+#     dst: str,
+#     distinct: bool = True,
+#     sort_by: str | list[str] | None = None,
+#     auto_optimize_dtypes: bool = True,
+#     **kwargs,
+# ):
+#     data = self.read_csv(src, self, **kwargs)
+
+#     if auto_optimize_dtypes:
+#         data = data.opt_dtype()
+
+#     if distinct:
+#         data = data.unique(maintain_order=True)
+
+#     if sort_by is not None:
+#         data = data.sort(sort_by)
+
+#     if ".parquet" not in dst:
+#         dst = posixpath.join(
+#             dst, f"{posixpath.basename(src).replace('.csv', '.parquet')})"
+#         )
+
+#     self.write_parquet(data, dst, **kwargs)
+
+
+# def json_to_parquet(
+#     self,
+#     src: str,
+#     dst: str,
+#     flatten: bool = True,
+#     sync: bool = True,
+#     parallel: bool = True,
+#     distinct: bool = True,
+#     sort_by: str | list[str] | None = None,
+#     auto_optimize_dtypes: bool = True,
+#     **kwargs,
+# ):
+#     if sync:
+#         src_files = self.glob(posixpath.join(src, "*.json"))
+#         dst_files = self.glob(posixpath.join(dst, "*.parquet"))
+#         new_src_files = get_new_file_names(src_files, dst_files)
+
+#     else:
+#         new_src_files = self.glob(posixpath.join(src, "*.json"))
+
+#     kwargs.pop("backend", None)
+#     if len(new_src_files) == 1:
+#         parallel = False
+
+#     if len(new_src_files) > 0:
+#         run_parallel(
+#             self._json_to_parquet,
+#             new_src_files,
+#             dst=dst,
+#             flatten=flatten,
+#             backend="threading" if parallel else "sequential",
+#             distinct=distinct,
+#             sort_by=sort_by,
+#             auto_optimize_dtypes=auto_optimize_dtypes,
+#             **kwargs,
+#         )
+
+
+# def csv_to_parquet(
+#     self,
+#     src: str,
+#     dst: str,
+#     sync: bool = True,
+#     parallel: bool = True,
+#     distinct: bool = True,
+#     sort_by: str | list[str] | None = None,
+#     auto_optimize_dtypes: bool = True,
+#     **kwargs,
+# ):
+#     if sync:
+#         src_files = self.glob(posixpath.join(src, "*.csv"))
+#         dst_files = self.glob(posixpath.join(dst, "*.parquet"))
+#         new_src_files = get_new_file_names(src_files, dst_files)
+
+#     else:
+#         new_src_files = self.glob(posixpath.join(src, "*.csv"))
+
+#     kwargs.pop("backend", None)
+#     if len(new_src_files) == 1:
+#         parallel = False
+#     if len(new_src_files) > 0:
+#         run_parallel(
+#             self._csv_to_parquet,
+#             new_src_files,
+#             dst=dst,
+#             backend="threading" if parallel else "sequential",
+#             distinct=distinct,
+#             sort_by=sort_by,
+#             auto_optimize_dtypes=auto_optimize_dtypes,
+#             **kwargs,
+#         )
+
+
+# def ls(
+#     self,
+#     path,
+#     recursive: bool = False,
+#     maxdepth: int | None = None,
+#     detail: bool = False,
+#     files_only: bool = False,
+#     dirs_only: bool = False,
+# ):
+#     if detail:
+#         return self.listdir(path)
+
+#     if isinstance(path, str):
+#         if self.isfile(path):
+#             path = [path]
+#         else:
+#             path = path.rstrip("*").rstrip("/")
+#             if self.exists(path):
+#                 if not recursive:
+#                     path = self.glob(posixpath.join(path, "*"))
+#                 else:
+#                     if maxdepth is not None:
+#                         path = self.glob(posixpath.join(path, *(["*"] * maxdepth)))
+#                     else:
+#                         path = self.glob(posixpath.join(path, "**"))
+#             else:
+#                 path = self.glob(path)
+
+#     if files_only:
+#         files = [f for f in path if "." in posixpath.basename(f)]
+#         files += [f for f in sorted(set(path) - set(files)) if self.isfile(f)]
+#         return files
+
+#     if dirs_only:
+#         dirs = [f for f in path if "." not in posixpath.basename(f)]
+#         dirs += [f for f in sorted(set(path) - set(dirs)) if self.isdir(f)]
+#         return dirs
+
+#     return path
+
+
+# def sync_folder(
+#     self, src: str, dst: str, recursive: bool = False, maxdepth: int | None = None
+# ):
+#     src_ = self.lss(src, recursive=recursive, maxdepth=maxdepth, files_only=True)
+#     dst_ = self.lss(dst, recursive=recursive, maxdepth=maxdepth, files_only=True)
+
+#     if len(src) == 0:
+#         return
+
+#     src_names = [posixpath.basename(f) for f in src_]
+#     dst_names = [posixpath.basename(f) for f in dst_]
+
+#     new_src = [
+#         posixpath.join(posixpath.dirname(src[0]), f)
+#         for f in sorted(set(src_names) - set(dst_names))
+#     ]
+
+#     if len(new_src):
+#         self.cp(new_src, dst)
 
 
 # NOTE: This is not working properly due to some event loop issues
@@ -963,36 +971,36 @@ def sync_folder(
 #     return loop.run_until_complete(_list_files_recursive(self, path, format, max_items))
 
 
-AbstractFileSystem.read_parquet = read_parquet
-AbstractFileSystem.read_parquet_dataset = read_parquet_dataset
-AbstractFileSystem.write_parquet = write_parquet
+# AbstractFileSystem.read_parquet = read_parquet
+# AbstractFileSystem.read_parquet_dataset = read_parquet_dataset
+# AbstractFileSystem.write_parquet = write_parquet
 # DirFileSystem.write_to_parquet_dataset = write_to_pydala_dataset
-DirFileSystem.write_to_dataset = write_to_pyarrow_dataset
-AbstractFileSystem.read_parquet_schema = read_parquet_schema
-AbstractFileSystem.read_parquet_metadata = read_paruet_metadata
+# DirFileSystem.write_to_dataset = write_to_pyarrow_dataset
+# AbstractFileSystem.read_parquet_schema = read_parquet_schema
+# AbstractFileSystem.read_parquet_metadata = read_paruet_metadata
 
-AbstractFileSystem.read_csv = read_csv
-AbstractFileSystem.read_csv_dataset = read_csv_dataset
-AbstractFileSystem.write_csv = write_csv
-AbstractFileSystem._csv_to_parquet = _csv_to_parquet
-AbstractFileSystem.csv_to_parquet = csv_to_parquet
+# AbstractFileSystem.read_csv = read_csv
+# AbstractFileSystem.read_csv_dataset = read_csv_dataset
+# AbstractFileSystem.write_csv = write_csv
+# AbstractFileSystem._csv_to_parquet = _csv_to_parquet
+# AbstractFileSystem.csv_to_parquet = csv_to_parquet
 
-AbstractFileSystem.read_json = read_json
-AbstractFileSystem.read_json_dataset = read_json_dataset
-AbstractFileSystem.write_json = write_json
-AbstractFileSystem._json_to_parquet = _json_to_parquet
-AbstractFileSystem.json_to_parquet = json_to_parquet
+# AbstractFileSystem.read_json = read_json
+# AbstractFileSystem.read_json_dataset = read_json_dataset
+# AbstractFileSystem.write_json = write_json
+# AbstractFileSystem._json_to_parquet = _json_to_parquet
+# AbstractFileSystem.json_to_parquet = json_to_parquet
 
-AbstractFileSystem.pyarrow_dataset = pyarrow_dataset
-AbstractFileSystem.pyarrow_parquet_dataset = pyarrow_parquet_dataset
+# AbstractFileSystem.pyarrow_dataset = pyarrow_dataset
+# AbstractFileSystem.pyarrow_parquet_dataset = pyarrow_parquet_dataset
 
-AbstractFileSystem.lss = ls
-AbstractFileSystem.ls2 = ls
+# AbstractFileSystem.lss = ls
+# AbstractFileSystem.ls2 = ls
 
 # AbstractFileSystem.parallel_cp = parallel_cp
 # AbstractFileSystem.parallel_mv = parallel_mv
 # AbstractFileSystem.parallel_rm = parallel_rm
-AbstractFileSystem.sync_folder = sync_folder
+##AbstractFileSystem.sync_folder = sync_folder
 # AbstractFileSystem.list_files_recursive = list_files_recursive
 
 
@@ -1008,108 +1016,129 @@ def FileSystem(
     cached: bool = False,
     cache_storage="~/.tmp",
     check_files: bool = False,
-    cache_check: int = 120,
-    expire_time: int = 24 * 60 * 60,
-    same_names: bool = False,
+    # cache_check: int = 120,
+    # expire_time: int = 24 * 60 * 60,
+    # same_names: bool = False,
     **kwargs,
 ) -> AbstractFileSystem:
-    if protocol is None and fs is None:
-        protocol = "file"
-        # if bucket is None:
-        #    bucket = "."
-
-    if all([fs, profile, key, endpoint_url, secret, token, protocol]):
-        fs = filesystem("file", use_listings_cache=False)
-
-    elif fs is None:
-        if "client_kwargs" in kwargs:
-            fs = s3fs.S3FileSystem(
-                profile=profile,
-                key=key,
-                endpoint_url=endpoint_url,
-                secret=secret,
-                token=token,
-                **kwargs,
-            )
-        else:
-            fs = filesystem(
-                protocol=protocol,
-                profile=profile,
-                key=key,
-                endpoint_url=endpoint_url,
-                secret=secret,
-                token=token,
-                use_listings_cache=False,
-            )
-
-    if bucket is not None:
-        if protocol in ["file", "local"]:
-            bucket = posixpath.abspath(bucket)
-
-        fs = DirFileSystem(path=bucket, fs=fs)
-
-    if cached:
-        if "~" in cache_storage:
-            cache_storage = posixpath.expanduser(cache_storage)
-
-        return MonitoredSimpleCacheFileSystem(
-            cache_storage=cache_storage,
-            check_files=check_files,
-            cache_check=cache_check,
-            expire_time=expire_time,
-            fs=fs,
-            same_names=same_names,
-            **kwargs,
-        )
-
-    return fs
-
-
-def PyArrowFileSystem(
-    bucket: str | None = None,
-    fs: AbstractFileSystem | None = None,
-    access_key: str | None = None,
-    secret_key: str | None = None,
-    session_token: str | None = None,
-    endpoint_override: str | None = None,
-    protocol: str | None = None,
-) -> pfs.FileSystem:
-    credentials = None
-    if fs is not None:
-        protocol = fs.protocol[0] if isinstance(fs.protocol, tuple) else fs.protocol
-
-        if protocol == "dir":
-            bucket = fs.path
-            fs = fs.fs
-            protocol = fs.protocol[0] if isinstance(fs.protocol, tuple) else fs.protocol
-
-        if protocol == "s3":
-            credentials = get_credentials_from_fssspec(fs, redact_secrets=False)
-
-    if credentials is None:
-        credentials = {
-            "access_key": access_key,
-            "secret_key": secret_key,
-            "session_token": session_token,
-            "endpoint_override": endpoint_override,
-        }
-    if protocol == "s3":
-        fs = pfs.S3FileSystem(
-            **credentials,
-        )
-    elif protocol in ("file", "local", None):
-        fs = pfs.LocalFileSystem()
-
+    protocol_or_path = protocol
+    if protocol is None:
+        protocol_or_path = bucket
     else:
-        fs = pfs.LocalFileSystem()
+        if bucket is None:
+            protocol_or_path = protocol
+        else:
+            protocol_or_path = f"{protocol}://{bucket}"
 
-    if bucket is not None:
-        if protocol in ["file", "local", "None"]:
-            bucket = posixpath.abspath(bucket)
+    return filesystem(
+        protocol_or_path=protocol_or_path,
+        base_fs=fs,
+        profile=profile,
+        key=key,
+        endpoint_url=endpoint_url,
+        secret=secret,
+        token=token,
+        cached=cached,
+        cache_storage=cache_storage,
+        **kwargs,
+    )
+    # if protocol is None and fs is None:
+    #     protocol = "file"
+    #     # if bucket is None:
+    #     #    bucket = "."
 
-        fs = pfs.SubTreeFileSystem(base_fs=fs, base_path=bucket)
+    # if all([fs, profile, key, endpoint_url, secret, token, protocol]):
+    #     fs = filesystem("file", use_listings_cache=False)
 
-    return fs
+    # elif fs is None:
+    #     if "client_kwargs" in kwargs:
+    #         fs = s3fs.S3FileSystem(
+    #             profile=profile,
+    #             key=key,
+    #             endpoint_url=endpoint_url,
+    #             secret=secret,
+    #             token=token,
+    #             **kwargs,
+    #         )
+    #     else:
+    #         fs = filesystem(
+    #             protocol=protocol,
+    #             profile=profile,
+    #             key=key,
+    #             endpoint_url=endpoint_url,
+    #             secret=secret,
+    #             token=token,
+    #             use_listings_cache=False,
+    #         )
+
+    # if bucket is not None:
+    #     if protocol in ["file", "local"]:
+    #         bucket = posixpath.abspath(bucket)
+
+    #     fs = DirFileSystem(path=bucket, fs=fs)
+
+    # if cached:
+    #     if "~" in cache_storage:
+    #         cache_storage = posixpath.expanduser(cache_storage)
+
+    #     return MonitoredSimpleCacheFileSystem(
+    #         cache_storage=cache_storage,
+    #         check_files=check_files,
+    #         cache_check=cache_check,
+    #         expire_time=expire_time,
+    #         fs=fs,
+    #         same_names=same_names,
+    #         **kwargs,
+    #     )
+
+    # return fs
+
+
+# def PyArrowFileSystem(
+#     bucket: str | None = None,
+#     fs: AbstractFileSystem | None = None,
+#     access_key: str | None = None,
+#     secret_key: str | None = None,
+#     session_token: str | None = None,
+#     endpoint_override: str | None = None,
+#     protocol: str | None = None,
+# ) -> pfs.FileSystem:
+#     credentials = None
+#     if fs is not None:
+#         protocol = fs.protocol[0] if isinstance(fs.protocol, tuple) else fs.protocol
+
+#         if protocol == "dir":
+#             bucket = fs.path
+#             fs = fs.fs
+#             protocol = fs.protocol[0] if isinstance(fs.protocol, tuple) else fs.protocol
+
+#         if protocol == "s3":
+#             credentials = get_credentials_from_fssspec(fs, redact_secrets=False)
+
+#     if credentials is None:
+#         credentials = {
+#             "access_key": access_key,
+#             "secret_key": secret_key,
+#             "session_token": session_token,
+#             "endpoint_override": endpoint_override,
+#         }
+#     if protocol == "s3":
+#         fs = pfs.S3FileSystem(
+#             **credentials,
+#         )
+#     elif protocol in ("file", "local", None):
+#         fs = pfs.LocalFileSystem()
+
+#     else:
+#         fs = pfs.LocalFileSystem()
+
+#     if bucket is not None:
+#         if protocol in ["file", "local", "None"]:
+#             bucket = posixpath.abspath(bucket)
+
+#         fs = pfs.SubTreeFileSystem(base_fs=fs, base_path=bucket)
+
+#     return fs
 
 
 # class FileSystem:

@@ -58,6 +58,7 @@ class BaseDataset:
         _partitioning (str | list[str]): The partitioning scheme.
         _format (str): The file format of the dataset.
     """
+
     def __init__(
         self,
         path: str,
@@ -142,7 +143,7 @@ class BaseDataset:
         if partitioning is None:
             # try to infer partitioning
             try:
-                if any(["=" in obj for obj in self.fs.lss(self._path)]):
+                if any(["=" in obj for obj in self.fs.ls(self._path)]):
                     partitioning = "hive"
             except FileNotFoundError as e:
                 _ = e
@@ -152,7 +153,6 @@ class BaseDataset:
                 partitioning = None
         self._partitioning = partitioning
 
-        
         try:
             self.load()
         except FileNotFoundError as e:
@@ -563,7 +563,7 @@ class BaseDataset:
             the method will automatically use DuckDB for filtering.
 
         """
-        #if any([s in filter_expr for s in ["%", "like", "similar to", "*"]]):
+        # if any([s in filter_expr for s in ["%", "like", "similar to", "*"]]):
         #    use = "duckdb"
 
         if use == "auto":
@@ -949,7 +949,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             None
         """
         if not self.has_file_metadata_file:
-            if len(self.fs.lss(self.path)) == 0:
+            if len(self.fs.ls(self.path)) == 0:
                 return
             else:
                 update_metadata = True
@@ -1223,7 +1223,6 @@ class PyarrowDataset(BaseDataset):
 
 
 class CSVDataset(PyarrowDataset):
-
     """A dataset implementation for CSV files.
 
     This class provides specialized handling for CSV datasets using
@@ -1432,11 +1431,11 @@ class Optimize(ParquetDataset):
                 raise ValueError(f"Invalid partition name: {name}")
             if not validate_partition_value(value):
                 raise ValueError(f"Invalid partition value: {value}")
-            
+
             escaped_name = escape_sql_identifier(name)
             escaped_value = escape_sql_literal(value)
             filter_parts.append(f"{escaped_name}={escaped_value}")
-        
+
         filter_ = " AND ".join(filter_parts)
 
         scan = self.scan(filter_)
@@ -1569,32 +1568,30 @@ class Optimize(ParquetDataset):
         # Securely build timestamp filter to prevent SQL injection
         if timestamp_column is None:
             timestamp_column = self._timestamp_column
-            
+
         if timestamp_column is None:
             raise ValueError("No timestamp column specified or found")
-            
+
         # Validate timestamp column name
-        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', timestamp_column):
+        if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", timestamp_column):
             raise ValueError(f"Invalid timestamp column name: {timestamp_column}")
-            
+
         # Format dates safely as ISO strings and build filter with proper escaping
         start_date_str = start_date.isoformat()
         end_date_str = end_date.isoformat()
         filter_ = f"{timestamp_column} >= '{start_date_str}' AND {timestamp_column} < '{end_date_str}'"
-        
+
         # Sanitize the filter expression
         filter_ = sanitize_filter_expression(filter_)
-        
+
         scan = self.scan(filter_)
-        
+
         if len(self.scan_files) == 1:
             # Safely escape file path for metadata query
-            file_path = self.scan_files[0].replace(self._path, '').lstrip('/')
+            file_path = self.scan_files[0].replace(self._path, "").lstrip("/")
             escaped_file_path = file_path.replace("'", "''")
             date_diff = (
-                self.metadata_table.filter(
-                    f"file_path='{escaped_file_path}'"
-                )
+                self.metadata_table.filter(f"file_path='{escaped_file_path}'")
                 .aggregate("max(AE_DATUM.max) - min(AE_DATUM.min)")
                 .fetchone()[0]
             )
