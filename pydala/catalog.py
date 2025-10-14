@@ -56,7 +56,9 @@ class Catalog:
             **fs_kwargs: Additional filesystem configuration.
         """
         self._catalog_filesystem = FileSystem(bucket=bucket, fs=filesystem, **fs_kwargs)
-        self._catalog_path = self._catalog_filesystem.expand_path(path)[0]
+        self._catalog_path = self._catalog_filesystem._strip_protocol(
+            self._catalog_filesystem.expand_path(path)[0]
+        )
         self._namespace = namespace
         self.load_catalog(namespace=namespace)
 
