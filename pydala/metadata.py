@@ -14,7 +14,7 @@ import pyarrow as pa
 import pyarrow.fs as pfs
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
-from fsspec.core import strip_protocol
+from fsspec.core import split_protocol
 from loguru import logger
 
 from .filesystem import FileSystem, clear_cache
@@ -26,6 +26,18 @@ from .schema import (
     convert_large_types_to_normal,  # unify_schemas
     repair_schema,
 )
+
+
+def strip_protocol(path: str) -> str:
+    """Strips the protocol from a given path.
+
+    Args:
+        path (str): The input path which may contain a protocol.
+    Returns:
+        str: The path without the protocol.
+    """
+    protocol, path = split_protocol(path)
+    return path
 
 
 def serialize_metadata(metadata: dict[str, pq.FileMetaData]) -> dict[str, Any]:

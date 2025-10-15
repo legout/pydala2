@@ -5,8 +5,20 @@ import pyarrow.compute as pc
 import pyarrow.fs as pfs
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
-from fsspec.core import strip_protocol
+from fsspec.core import split_protocol
 from .helpers.misc import read_table, run_parallel, unify_schemas_pl
+
+
+def strip_protocol(path: str) -> str:
+    """Strips the protocol from a given path.
+
+    Args:
+        path (str): The input path which may contain a protocol.
+    Returns:
+        str: The path without the protocol.
+    """
+    protocol, path = split_protocol(path)
+    return path
 
 
 def sort_schema(schema: pa.Schema, names: list[str] | None = None) -> pa.Schema:

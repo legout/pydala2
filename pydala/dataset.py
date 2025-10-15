@@ -15,7 +15,7 @@ import pyarrow as pa
 import pyarrow.dataset as pds
 import tqdm
 from fsspec import AbstractFileSystem
-from fsspec.core import strip_protocol
+from fsspec.core import split_protocol
 
 # Initialize logger
 logger = logging.getLogger(__name__)
@@ -39,6 +39,18 @@ from .metadata import ParquetDatasetMetadata, PydalaDatasetMetadata
 from .schema import replace_schema  # from .optimize import Optimize
 from .schema import convert_large_types_to_normal
 from .table import PydalaTable
+
+
+def strip_protocol(path: str) -> str:
+    """Strips the protocol from a given path.
+
+    Args:
+        path (str): The input path which may contain a protocol.
+    Returns:
+        str: The path without the protocol.
+    """
+    protocol, path = split_protocol(path)
+    return path
 
 
 class BaseDataset:
