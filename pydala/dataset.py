@@ -711,8 +711,8 @@ class BaseDataset:
         mode: str = "append",  # "delta", "overwrite"
         basename: str | None = None,
         partition_by: str | list[str] | None = None,
-        max_rows_per_file: int | None = 2_500_000,
-        row_group_size: int | None = 250_000,
+        max_rows_per_file: int | None = 10_000_000,
+        row_group_size: int | None = 256_000,
         compression: str = "zstd",
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
         unique: bool | str | list[str] = False,
@@ -1087,8 +1087,8 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         mode: str = "append",  # "delta", "overwrite"
         basename: str | None = None,
         partition_by: str | list[str] | None = None,
-        max_rows_per_file: int | None = 2_500_000,
-        row_group_size: int | None = 250_000,
+        max_rows_per_file: int | None = 10_000_000,
+        row_group_size: int | None = 256_000,
         compression: str = "zstd",
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
         unique: bool | str | list[str] = False,
@@ -1406,10 +1406,10 @@ class Optimize(ParquetDataset):
     def _compact_partition(
         self,
         partition: dict[str, t.Any],
-        max_rows_per_file: int | None = 2_500_000,
+        max_rows_per_file: int | None = 10_000_000,
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
         compression: str = "zstd",
-        row_group_size: int | None = 250_000,
+        row_group_size: int | None = 256_000,
         unique: bool = True,
         **kwargs,
     ) -> None:
@@ -1482,10 +1482,10 @@ class Optimize(ParquetDataset):
 
     def compact_partitions(
         self,
-        max_rows_per_file: int | None = 2_500_000,
+        max_rows_per_file: int | None = 10_000_000,
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
         compression: str = "zstd",
-        row_group_size: int | None = 250_000,
+        row_group_size: int | None = 256_000,
         unique: bool = True,
         **kwargs,
     ) -> None:
@@ -1548,8 +1548,8 @@ class Optimize(ParquetDataset):
         start_date: dt.datetime,
         end_date: dt.datetime,
         timestamp_column: str | None = None,
-        max_rows_per_file: int | None = 2_500_000,
-        row_group_size: int | None = 250_000,
+        max_rows_per_file: int | None = 10_000_000,
+        row_group_size: int | None = 256_000,
         compression: str = "zstd",
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
         unique: bool = False,
@@ -1638,11 +1638,11 @@ class Optimize(ParquetDataset):
         self,
         interval: str | dt.timedelta,
         timestamp_column: str | None = None,
-        max_rows_per_file: int | None = 2_500_000,
+        max_rows_per_file: int | None = 10_000_000,
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
         unique: bool = False,
         compression="zstd",
-        row_group_size: int | None = 250_000,
+        row_group_size: int | None = 256_000,
         **kwargs,
     ) -> None:
         """Compact files by time periods.
@@ -1715,11 +1715,11 @@ class Optimize(ParquetDataset):
 
     def compact_by_rows(
         self,
-        max_rows_per_file: int | None = 2_500_000,
+        max_rows_per_file: int | None = 10_000_000,
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
         unique: bool = False,
         compression: str = "zstd",
-        row_group_size: int | None = 250_000,
+        row_group_size: int | None = 256_000,
         **kwargs,
     ) -> None:
         """Compact files based on row count.
@@ -1776,11 +1776,11 @@ class Optimize(ParquetDataset):
         self,
         partitioning_columns: str | list[str] | None = None,
         partitioning_falvor: str = "hive",
-        max_rows_per_file: int | None = 2_500_000,
+        max_rows_per_file: int | None = 10_000_000,
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
         unique: bool = False,
         compression="zstd",
-        row_group_size: int | None = 250_000,
+        row_group_size: int | None = 256_000,
         **kwargs,
     ) -> None:
         """Repartition the dataset.
