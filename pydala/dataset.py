@@ -845,8 +845,8 @@ class BaseDataset:
 
         self.clear_cache()
 
-        if update_metadata:
-            return metadata
+        # if update_metadata:
+        return metadata
 
 
 class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
