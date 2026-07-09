@@ -1,6 +1,5 @@
 from typing import Any
 
-from fsspec_utils.utils.misc import run_parallel
 import posixpath
 import re
 
