@@ -17,7 +17,7 @@ import pyarrow.dataset as pds
 import pyarrow.fs as pfs
 import pyarrow.parquet as pq
 import s3fs
-from fsspec_utils import AbstractFileSystem, filesystem
+from fsspeckit import AbstractFileSystem, filesystem
 from fsspec.implementations.cache_mapper import AbstractCacheMapper
 from fsspec.implementations.cached import SimpleCacheFileSystem
 
@@ -1023,7 +1023,7 @@ def FileSystem(
 ) -> AbstractFileSystem:
     protocol_or_path = protocol
     if protocol is None:
-        protocol_or_path = bucket
+        protocol_or_path = bucket or "file"
     else:
         if bucket is None:
             protocol_or_path = protocol
