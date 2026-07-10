@@ -387,6 +387,7 @@ class TestCatalogDirectIO(unittest.TestCase):
             "reader crashes inside its loguru logging calls (KeyError on the "
             "message template). The intended replacement is a 3-row table."
         ),
+        raises=KeyError,
         strict=False,
     )
     def test_load_parquet_single_file_direct_io(self) -> None:
@@ -409,8 +410,9 @@ class TestManagedDatasetMetadataInvariants:
         assert_metadata_invariants(managed_dataset)
 
     def test_files_exist_on_disk(self, managed_dataset) -> None:
-        """Multiple parquet files should exist after writing two batches."""
-        assert len(managed_dataset.files_in_metadata) >= 1
+        """Both written batches must remain represented by physical data files."""
+        assert len(managed_dataset.files_in_metadata) == 2
+        assert set(managed_dataset.files_in_metadata) == set(managed_dataset.files)
 
 
 if __name__ == "__main__":

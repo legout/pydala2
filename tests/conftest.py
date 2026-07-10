@@ -120,6 +120,11 @@ def assert_metadata_invariants(dataset: ParquetDataset) -> None:
         "metadata schema column count mismatch"
     )
 
-    # File metadata, when present, must be consistent with the files on disk.
+    # File metadata must agree with the data files discovered through the
+    # public dataset interface; this verifies every referenced file exists.
     if dataset.has_file_metadata:
-        assert dataset.files_in_metadata, "no files listed in metadata"
+        metadata_files = set(dataset.files_in_metadata)
+        assert metadata_files, "no files listed in metadata"
+        assert metadata_files == set(dataset.files), (
+            "metadata files do not match files present in the dataset"
+        )

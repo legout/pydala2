@@ -17,6 +17,7 @@ import unittest
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from pydala.metadata import collect_parquet_metadata
 from pydala.schema import (
     collect_file_schemas,
     convert_large_types_to_normal,
@@ -218,13 +219,22 @@ class TestCollectFileSchemas(unittest.TestCase):
                 pq.write_table(table, path)
                 paths.append(path)
 
-            result = collect_file_schemas(
-                paths, n_jobs=1, backend="sequential", verbose=False
+            schema_result = collect_file_schemas(
+                paths, n_jobs=2, backend="threading", verbose=False
+            )
+            metadata_result = collect_parquet_metadata(
+                paths, n_jobs=2, backend="threading", verbose=False
             )
 
-        self.assertEqual(set(result), set(paths))
-        self.assertEqual(result[paths[0]], pa.schema([("value", pa.int32())]))
-        self.assertEqual(result[paths[1]], pa.schema([("value", pa.int64())]))
+        self.assertEqual(set(schema_result), set(paths))
+        self.assertEqual(
+            schema_result[paths[0]], pa.schema([("value", pa.int32())])
+        )
+        self.assertEqual(
+            schema_result[paths[1]], pa.schema([("value", pa.int64())])
+        )
+        self.assertEqual(set(metadata_result), set(paths))
+        self.assertTrue(all(metadata.num_rows == 1 for metadata in metadata_result.values()))
 
 
 class TestConvertTimestamp(unittest.TestCase):

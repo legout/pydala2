@@ -74,26 +74,24 @@ DATETIME_DELEGATES = [fn.__name__ for fn in DATETIME_HELPERS]
 
 
 # ---------------------------------------------------------------------------
-# 1. Exact delegation contract
+# 1. Delegate provenance contract
 # ---------------------------------------------------------------------------
-class TestExactDelegation:
-    """Every helper re-exported from pydala must be the very same object as the
-    one fsspeckit ships.
+class TestDelegateProvenance:
+    """Polars/datetime exports must remain direct external implementations.
 
-    These are *delegates*, not adapters: ``pydala.helpers.polars.delta`` and
-    ``fsspeckit.datasets.polars.delta`` must be identical (``is``). If a helper
-    ever becomes a pydala-specific adapter, this test will flag it so the
-    behavior contract can be revisited intentionally.
+    The contract suite intentionally avoids importing fsspeckit internals.
+    Instead, provenance distinguishes these direct exports from pydala's
+    adapters (for example ``run_parallel``) while the behavioral tests below
+    pin their public semantics.
     """
 
     @pytest.mark.parametrize("name", POLARS_DELEGATES)
-    def test_polars_helper_is_exact_delegate(self, name):
-        # The public seam exposes the fsspeckit implementation directly; a
-        # pydala wrapper would have this module's name instead.
+    def test_polars_helper_is_direct_external_export(self, name):
+        # A pydala wrapper would instead have a pydala module name.
         assert getattr(p_pl, name).__module__ == "fsspeckit.datasets.polars"
 
     @pytest.mark.parametrize("name", DATETIME_DELEGATES)
-    def test_datetime_helper_is_exact_delegate(self, name):
+    def test_datetime_helper_is_direct_external_export(self, name):
         assert getattr(p_dt, name).__module__ == "fsspeckit.common.datetime"
 
     def test_reexported_pl_is_polars_module(self):
@@ -320,6 +318,17 @@ class TestRunParallelContract:
         sequential_result = [self._square(p) for p in params]
 
         assert parallel_result == sequential_result
+
+    def test_run_parallel_uses_threading_workers(self):
+        result = run_parallel(
+            self._square,
+            [1, 2, 3, 4],
+            n_jobs=2,
+            backend="threading",
+            verbose=False,
+        )
+
+        assert result == [1, 4, 9, 16]
 
     def test_run_parallel_passes_extra_args_and_kwargs(self):
         def add(x, y, z=0):
