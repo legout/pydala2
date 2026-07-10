@@ -1,6 +1,5 @@
 from typing import Any
 
-import posixpath
 import re
 
 import pyarrow as pa
@@ -73,8 +72,14 @@ def run_parallel(
     Returns:
         list[any]: Function output.
     """
+    # Legacy pydala callers pass extra *args/**kwargs as fixed per-task parameters.
+    # fsspeckit's run_parallel treats any iterable positional argument as a
+    # per-task input, so we bind the extras in a closure before delegating.
+    def _task_wrapper(fp: Any) -> Any:
+        return func(fp, *args, **kwargs)
+
     return _run_parallel(
-        func, func_params, *args, n_jobs=n_jobs, backend=backend, verbose=verbose, **kwargs
+        _task_wrapper, func_params, n_jobs=n_jobs, backend=backend, verbose=verbose
     )
 
 

@@ -9,13 +9,27 @@ from sqlglot import exp, parse_one
 from fsspeckit.sql.filters import (
     get_table_names as get_table_names,
     sql2pyarrow_filter as sql2pyarrow_filter,
+    sql2polars_filter as _fsspeckit_sql2polars_filter,
 )
 
 from .datetime import timestamp_from_string
 
 
 def sql2polars_filter(string: str, schema: pl.Schema) -> pl.Expr:
-    """Convert a SQL boolean expression into a Polars expression."""
+    """Convert a SQL boolean expression into a Polars expression.
+
+    fsspeckit 0.22.0 ships a sql2polars_filter, but its IN-list handling
+    raises for ``col IN (1, 2, 3)`` because it accesses ``expr.expression``
+    which is None for In nodes. We delegate simple predicates to fsspeckit
+    and keep the local implementation only for expressions containing IN.
+    """
+    if parse_one(string).find(exp.In):
+        return _sql2polars_filter(string, schema)
+    return _fsspeckit_sql2polars_filter(string, schema)
+
+
+def _sql2polars_filter(string: str, schema: pl.Schema) -> pl.Expr:
+    """Local fallback for SQL-to-Polars filters (covers IN-list expressions)."""
 
     def parse_value(val: Any, dtype: Any) -> Any:
         if isinstance(val, (tuple, list)):
