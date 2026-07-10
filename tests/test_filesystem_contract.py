@@ -371,7 +371,7 @@ class TestCatalogDirectIO(unittest.TestCase):
             "is a 3-row table from the directory dataset."
         ),
         raises=AttributeError,
-        strict=False,
+        strict=True,
     )
     def test_load_parquet_directory_direct_io(self) -> None:
         catalog = self._catalog()
@@ -388,7 +388,7 @@ class TestCatalogDirectIO(unittest.TestCase):
             "message template). The intended replacement is a 3-row table."
         ),
         raises=KeyError,
-        strict=False,
+        strict=True,
     )
     def test_load_parquet_single_file_direct_io(self) -> None:
         catalog = self._catalog()
