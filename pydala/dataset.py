@@ -16,6 +16,12 @@ import pyarrow.dataset as pds
 import tqdm
 from fsspec import AbstractFileSystem
 from fsspec.core import split_protocol
+from fsspec.implementations.dirfs import DirFileSystem
+from fsspeckit.datasets.pyarrow import (
+    collect_dataset_stats_pyarrow,
+    compact_parquet_dataset_pyarrow,
+    optimize_parquet_dataset_pyarrow,
+)
 
 # Initialize logger
 logger = logging.getLogger(__name__)
@@ -36,6 +42,7 @@ from .helpers.security import (
 from .helpers.polars import pl as _pl
 from .io import Writer
 from .metadata import ParquetDatasetMetadata, PydalaDatasetMetadata
+from .adapters.fsspeckit import FsspeckitParquetAdapter
 from .schema import replace_schema  # from .optimize import Optimize
 from .schema import convert_large_types_to_normal
 from .table import PydalaTable
@@ -596,6 +603,17 @@ class BaseDataset:
 
         elif use == "duckdb":
             res = self._filter_duckdb(filter_expr)
+        elif use in {"fsspeckit", "fsspeckit-pyarrow", "fsspeckit-duckdb"}:
+            backend = "duckdb" if use == "fsspeckit-duckdb" else "pyarrow"
+            adapter = FsspeckitParquetAdapter(filesystem=self._filesystem)
+            try:
+                res = adapter.read_parquet(
+                    self._path,
+                    filters=filter_expr,
+                    backend=backend,
+                )
+            finally:
+                adapter.close()
 
         return PydalaTable(result=res, ddb_con=self.ddb_con)
 
@@ -1362,8 +1380,10 @@ class Optimize(ParquetDataset):
     """A specialized dataset class for optimizing Parquet datasets.
 
     This class extends ParquetDataset with methods for optimizing storage,
-    including compaction, repartitioning, and type optimization. It provides
-    tools to improve query performance and reduce storage costs.
+    including compaction, repartitioning, and type optimization. Compaction
+    and optimization are delegated to public ``fsspeckit`` maintenance APIs
+    while preserving pydala's method names, partition layout, compression
+    configuration, and metadata lifecycle.
     """
 
     def __init__(
@@ -1404,6 +1424,115 @@ class Optimize(ParquetDataset):
         )
         self.load()
 
+    # ------------------------------------------------------------------ #
+    # fsspeckit maintenance adapters
+    # ------------------------------------------------------------------ #
+    def _partition_prefix(self, file_path: str) -> str:
+        """Return the partition-directory prefix for a dataset-relative path."""
+        if not self.partition_names:
+            return ""
+        parts = file_path.split("/")
+        prefix_parts = []
+        for part in parts:
+            if "=" in part:
+                prefix_parts.append(part)
+            else:
+                break
+        return "/".join(prefix_parts)
+
+    def _fsspeckit_compact(
+        self,
+        path: str,
+        filesystem: AbstractFileSystem,
+        max_rows_per_file: int | None = None,
+        compression: str | None = None,
+        dry_run: bool = False,
+        partition_filter: list[str] | None = None,
+    ) -> dict[str, t.Any]:
+        return compact_parquet_dataset_pyarrow(
+            path=path,
+            filesystem=filesystem,
+            target_rows_per_file=max_rows_per_file,
+            compression=compression,
+            dry_run=dry_run,
+            partition_filter=partition_filter,
+        )
+
+    def _fsspeckit_optimize(
+        self,
+        path: str,
+        filesystem: AbstractFileSystem,
+        max_rows_per_file: int | None = None,
+        compression: str | None = None,
+        unique: bool | list[str] = False,
+        partition_filter: list[str] | None = None,
+    ) -> dict[str, t.Any]:
+        if isinstance(unique, list):
+            deduplicate_key_columns: list[str] | None = unique
+        else:
+            deduplicate_key_columns = None
+
+        return optimize_parquet_dataset_pyarrow(
+            path=path,
+            filesystem=filesystem,
+            target_rows_per_file=max_rows_per_file,
+            compression=compression,
+            deduplicate_key_columns=deduplicate_key_columns,
+            partition_filter=partition_filter,
+        )
+
+    def _run_fsspeckit_rewrite(
+        self,
+        path: str,
+        filesystem: AbstractFileSystem,
+        max_rows_per_file: int | None = None,
+        compression: str | None = None,
+        unique: bool | list[str] = False,
+        dry_run: bool = False,
+        partition_filter: list[str] | None = None,
+    ) -> dict[str, t.Any]:
+        """Run compaction (dry-run or real) or dedup+compaction (real only).
+
+        ``fsspeckit.optimize_parquet_dataset_pyarrow`` does not expose a dry-run
+        mode, so dry-run plans are produced by the compaction planner even when
+        ``unique`` requests deduplication.
+        """
+        if dry_run or not unique:
+            return self._fsspeckit_compact(
+                path=path,
+                filesystem=filesystem,
+                max_rows_per_file=max_rows_per_file,
+                compression=compression,
+                dry_run=dry_run,
+                partition_filter=partition_filter,
+            )
+        return self._fsspeckit_optimize(
+            path=path,
+            filesystem=filesystem,
+            max_rows_per_file=max_rows_per_file,
+            compression=compression,
+            unique=unique,
+            partition_filter=partition_filter,
+        )
+
+    def _refresh_after_rewrite(self) -> None:
+        """Invalidate caches and rebuild per-file, aggregate and table state."""
+        self.clear_cache()
+        self.load(update_metadata=True, reload_metadata=True)
+
+    def collect_stats(
+        self, partition_filter: list[str] | None = None
+    ) -> dict[str, t.Any]:
+        """Collect generic Parquet statistics through fsspeckit."""
+        return collect_dataset_stats_pyarrow(
+            path=self._path,
+            filesystem=self._filesystem,
+            partition_filter=partition_filter,
+        )
+
+    # ------------------------------------------------------------------ #
+    # Compaction methods
+    # ------------------------------------------------------------------ #
     def _compact_partition(
         self,
         partition: dict[str, t.Any],
@@ -1412,74 +1541,35 @@ class Optimize(ParquetDataset):
         compression: str = "zstd",
         row_group_size: int | None = 256_000,
         unique: bool = True,
+        dry_run: bool = False,
         **kwargs,
-    ) -> None:
+    ) -> dict[str, t.Any]:
         """Compact files within a specific partition.
 
-        This method reads all files within a partition, combines them,
-        and writes them back as optimized files with better compression
-        and row group sizing.
-
-        Args:
-            partition: Dictionary specifying the partition to compact.
-            max_rows_per_file: Maximum number of rows per output file.
-            sort_by: Column(s) to sort by before writing.
-            compression: Compression algorithm to use.
-            row_group_size: Target size for row groups.
-            unique: Whether to remove duplicate rows.
-            **kwargs: Additional arguments passed to write_to_dataset.
-
-        Returns:
-            None
-
-        Raises:
-            ValueError: If partition name or value is invalid.
+        Delegates the actual rewrite to ``fsspeckit``. A partition-relative
+        filesystem is used so that generated parquet files stay inside the
+        partition directory, preserving the hive layout.
         """
-        # if isinstance(partition, str):
-        #    partition = [partition]
-
-        # Securely build filter expression to prevent SQL injection
-        filter_parts = []
         for name, value in partition.items():
             if not validate_partition_name(name):
                 raise ValueError(f"Invalid partition name: {name}")
             if not validate_partition_value(value):
                 raise ValueError(f"Invalid partition value: {value}")
 
-            escaped_name = escape_sql_identifier(name)
-            escaped_value = escape_sql_literal(value)
-            filter_parts.append(f"{escaped_name}={escaped_value}")
+        partition_prefix = "/".join(f"{k}={v}" for k, v in partition.items())
+        part_path = posixpath.join(self._path, partition_prefix)
+        part_fs = DirFileSystem(path=part_path, fs=self._filesystem)
 
-        filter_ = " AND ".join(filter_parts)
-
-        scan = self.scan(filter_)
-        # if len(self.scan_files) == 1:
-        #     num_rows = (
-        #         self.metadata_table.filter(
-        #             f"file_path='{self.scan_files[0].replace(self._path,'').lstrip('/')}'"
-        #         )
-        #         .aggregate("sum(num_rows)")
-        #         .fetchone()[0]
-        #     )
-        # else:
-        #     num_rows = 0
-
-        batches = scan.to_batch_reader(sort_by=sort_by, batch_size=max_rows_per_file)
-        for batch in batches:
-            self.write_to_dataset(
-                pa.table(batch),
-                mode="append",
-                max_rows_per_file=max_rows_per_file,
-                row_group_size=row_group_size,
-                compression=compression,
-                update_metadata=False,
-                unique=unique,
-                **kwargs,
-            )
-
-            self.delete_files(self.scan_files)
-
+        result = self._run_fsspeckit_rewrite(
+            path=".",
+            filesystem=part_fs,
+            max_rows_per_file=max_rows_per_file,
+            compression=compression,
+            unique=unique,
+            dry_run=dry_run,
+        )
         self.reset_scan()
+        return result
 
     def compact_partitions(
         self,
@@ -1488,23 +1578,29 @@ class Optimize(ParquetDataset):
         compression: str = "zstd",
         row_group_size: int | None = 256_000,
         unique: bool = True,
+        dry_run: bool = False,
         **kwargs,
-    ) -> None:
+    ) -> list[dict[str, t.Any]] | None:
         """Compact partitions with multiple small files.
 
-        This method identifies partitions that contain multiple small files
-        and compacts them into fewer, larger files for better performance.
+        Identifies candidate partitions using the metadata table and delegates
+        each rewrite to ``fsspeckit``. After a real run the dataset caches,
+        file metadata, aggregate metadata and DuckDB metadata table are
+        refreshed.
 
         Args:
             max_rows_per_file: Maximum number of rows per output file.
-            sort_by: Column(s) to sort by before writing.
+            sort_by: Column(s) to sort by before writing (reserved; passed through
+                for API compatibility, but ``fsspeckit`` compaction does not sort).
             compression: Compression algorithm to use.
-            row_group_size: Target size for row groups.
+            row_group_size: Target size for row groups (reserved; fsspeckit-managed).
             unique: Whether to remove duplicate rows.
+            dry_run: When ``True``, return compaction plans without mutating files.
             **kwargs: Additional arguments passed to _compact_partition.
 
         Returns:
-            None
+            List of per-partition fsspeckit result dicts when ``dry_run`` is
+            ``True``; otherwise ``None``.
         """
         partitions_to_compact = (
             self.metadata_table.pl()
@@ -1518,30 +1614,26 @@ class Optimize(ParquetDataset):
             .select(self.partition_names)
             .to_dicts()
         )
+        results: list[dict[str, t.Any]] = []
         for partition in tqdm.tqdm(partitions_to_compact):
-            self._compact_partition(
+            result = self._compact_partition(
                 partition=partition,
                 max_rows_per_file=max_rows_per_file,
                 sort_by=sort_by,
                 compression=compression,
                 row_group_size=row_group_size,
                 unique=unique,
+                dry_run=dry_run,
                 **kwargs,
             )
+            results.append(result)
 
-        self.clear_cache()
-        self.load(update_metadata=True)
-        self.update_metadata_table()
+        if not dry_run:
+            self._refresh_after_rewrite()
+        return results if dry_run else None
 
     def compact_small_files(self) -> None:
-        """Compact small files in the dataset.
-
-        This method is a placeholder for compacting small files that are
-        not necessarily within the same partition. Implementation is pending.
-
-        Returns:
-            None
-        """
+        """Placeholder for compacting small files across partitions."""
         pass
 
     def _compact_by_timeperiod(
@@ -1554,86 +1646,65 @@ class Optimize(ParquetDataset):
         compression: str = "zstd",
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
         unique: bool = False,
+        dry_run: bool = False,
         **kwargs,
-    ) -> list[str]:
+    ) -> dict[str, t.Any]:
         """Compact files within a specific time period.
 
-        This method reads files containing data within the specified time range,
-        combines them, and writes optimized files. It returns a list of files
-        that were processed and can be deleted.
-
-        Args:
-            start_date: Start of the time period to compact.
-            end_date: End of the time period to compact.
-            timestamp_column: Column to use for time filtering. Uses dataset default if None.
-            max_rows_per_file: Maximum number of rows per output file.
-            row_group_size: Target size for row groups.
-            compression: Compression algorithm to use.
-            sort_by: Column(s) to sort by before writing.
-            unique: Whether to remove duplicate rows.
-            **kwargs: Additional arguments passed to write_to_dataset.
-
-        Returns:
-            List of file paths that were compacted and can be deleted.
-
-        Raises:
-            ValueError: If no timestamp column is specified or found.
+        The timestamp filter is applied through pydala's metadata scan; the
+        selected files are then rewritten by ``fsspeckit`` while keeping the
+        output inside the original partition directories.
         """
-        # Securely build timestamp filter to prevent SQL injection
         if timestamp_column is None:
             timestamp_column = self._timestamp_column
-
         if timestamp_column is None:
             raise ValueError("No timestamp column specified or found")
-
-        # Validate timestamp column name
         if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", timestamp_column):
             raise ValueError(f"Invalid timestamp column name: {timestamp_column}")
 
-        # Format dates safely as ISO strings and build filter with proper escaping
         start_date_str = start_date.isoformat()
         end_date_str = end_date.isoformat()
-        filter_ = f"{timestamp_column} >= '{start_date_str}' AND {timestamp_column} < '{end_date_str}'"
-
-        # Sanitize the filter expression
+        filter_ = (
+            f"{timestamp_column} >= '{start_date_str}' AND "
+            f"{timestamp_column} < '{end_date_str}'"
+        )
         filter_ = sanitize_filter_expression(filter_)
 
         scan = self.scan(filter_)
-
-        if len(self.scan_files) == 1:
-            # Safely escape file path for metadata query
-            file_path = self.scan_files[0].replace(self._path, "").lstrip("/")
-            escaped_file_path = file_path.replace("'", "''")
-            date_diff = (
-                self.metadata_table.filter(f"file_path='{escaped_file_path}'")
-                .aggregate("max(AE_DATUM.max) - min(AE_DATUM.min)")
-                .fetchone()[0]
-            )
-        else:
-            date_diff = dt.timedelta(0)
-
-        files_to_delete = []
-        if (len(self.scan_files) > 1) or (date_diff > end_date - start_date):
-            files_to_delete += self.scan_files
-            batches = (
-                scan.to_duckdb(sort_by=sort_by, distinct=unique)
-                .filter(filter_)
-                .fetch_arrow_reader(batch_size=max_rows_per_file)
-            )
-
-            for batch in batches:
-                self.write_to_dataset(
-                    pa.table(batch),
-                    mode="append",
-                    max_rows_per_file=max_rows_per_file,
-                    row_group_size=row_group_size,
-                    compression=compression,
-                    update_metadata=False,
-                    unique=unique,
-                    **kwargs,
-                )
+        files = list(self.scan_files)
         self.reset_scan()
-        return files_to_delete
+
+        if not files:
+            return {"planned_groups": []}
+
+        # Group selected files by partition prefix so fsspeckit can rewrite each
+        # group inside its own partition directory.
+        grouped: dict[str, list[str]] = {}
+        for file_path in files:
+            prefix = self._partition_prefix(file_path)
+            rel = file_path[len(prefix) :].lstrip("/") if prefix else file_path
+            grouped.setdefault(prefix, []).append(rel)
+
+        period_results: dict[str, t.Any] = {}
+        for prefix, rel_files in grouped.items():
+            if prefix:
+                fs = DirFileSystem(
+                    path=posixpath.join(self._path, prefix), fs=self._filesystem
+                )
+                path = "."
+            else:
+                fs = self._filesystem
+                path = self._path
+            period_results[prefix] = self._run_fsspeckit_rewrite(
+                path=path,
+                filesystem=fs,
+                max_rows_per_file=max_rows_per_file,
+                compression=compression,
+                unique=unique,
+                dry_run=dry_run,
+                partition_filter=rel_files,
+            )
+        return period_results
 
     def compact_by_timeperiod(
         self,
@@ -1642,35 +1713,22 @@ class Optimize(ParquetDataset):
         max_rows_per_file: int | None = 10_000_000,
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
         unique: bool = False,
-        compression="zstd",
+        compression: str = "zstd",
         row_group_size: int | None = 256_000,
+        dry_run: bool = False,
         **kwargs,
-    ) -> None:
+    ) -> list[dict[str, t.Any]] | None:
         """Compact files by time periods.
 
-        This method divides the dataset's time range into intervals and
-        compacts files within each interval. This is useful for time-series
-        data to optimize query performance for time-based queries.
-
-        Args:
-            interval: Time interval for compaction (string like '1 month' or timedelta).
-            timestamp_column: Column to use for time filtering. Uses dataset default if None.
-            max_rows_per_file: Maximum number of rows per output file.
-            sort_by: Column(s) to sort by before writing.
-            unique: Whether to remove duplicate rows.
-            compression: Compression algorithm to use.
-            row_group_size: Target size for row groups.
-            **kwargs: Additional arguments passed to _compact_by_timeperiod.
-
-        Returns:
-            None
+        Divides the dataset's time range into intervals and delegates each
+        interval rewrite to ``fsspeckit``. After a real run the full metadata
+        lifecycle is refreshed.
         """
         timestamp_column = timestamp_column or self._timestamp_column
 
         min_max_ts = self.t.sql(
             f"SELECT MIN({timestamp_column}.min) AS min, MAX({timestamp_column}.max) AS max FROM {self.name}_metadata"
         ).pl()
-
         min_ts = min_max_ts["min"][0]
         max_ts = min_max_ts["max"][0]
 
@@ -1678,7 +1736,6 @@ class Optimize(ParquetDataset):
             dates = _pl.datetime_range(
                 min_ts, max_ts, interval=interval, eager=True
             ).to_list()
-
         elif isinstance(interval, dt.timedelta):
             dates = [min_ts]
             ts = min_ts
@@ -1694,9 +1751,9 @@ class Optimize(ParquetDataset):
         start_dates = dates[:-1]
         end_dates = dates[1:]
 
-        files_to_delete = []
+        results: list[dict[str, t.Any]] = []
         for start_date, end_date in tqdm.tqdm(list(zip(start_dates, end_dates))):
-            files_to_delete_ = self._compact_by_timeperiod(
+            result = self._compact_by_timeperiod(
                 start_date=start_date,
                 end_date=end_date,
                 timestamp_column=timestamp_column,
@@ -1705,14 +1762,14 @@ class Optimize(ParquetDataset):
                 compression=compression,
                 sort_by=sort_by,
                 unique=unique,
+                dry_run=dry_run,
                 **kwargs,
             )
-            files_to_delete += files_to_delete_
+            results.append(result)
+            if not dry_run:
+                self._refresh_after_rewrite()
 
-        self.delete_files(files_to_delete)
-        self.clear_cache()
-        self.load(update_metadata=True)
-        self.update_metadata_table()
+        return results if dry_run else None
 
     def compact_by_rows(
         self,
@@ -1721,57 +1778,37 @@ class Optimize(ParquetDataset):
         unique: bool = False,
         compression: str = "zstd",
         row_group_size: int | None = 256_000,
+        dry_run: bool = False,
         **kwargs,
-    ) -> None:
+    ) -> dict[str, t.Any] | None:
         """Compact files based on row count.
 
-        This method identifies files that don't match the target row count
-        and reorganizes them to have more uniform file sizes. For partitioned
-        datasets, it calls compact_partitions. For non-partitioned datasets,
-        it directly compacts files based on row count.
-
-        Args:
-            max_rows_per_file: Target number of rows per file.
-            sort_by: Column(s) to sort by before writing.
-            unique: Whether to remove duplicate rows.
-            compression: Compression algorithm to use.
-            row_group_size: Target size for row groups.
-            **kwargs: Additional arguments passed to underlying methods.
-
-        Returns:
-            None
+        For partitioned datasets this delegates to ``compact_partitions``. For
+        non-partitioned datasets the rewrite is delegated directly to
+        ``fsspeckit``. After a real run the metadata lifecycle is refreshed.
         """
         if self._partitioning:
-            self.compact_partitions(
+            return self.compact_partitions(
                 max_rows_per_file=max_rows_per_file,
                 sort_by=sort_by,
                 unique=unique,
                 compression=compression,
                 row_group_size=row_group_size,
+                dry_run=dry_run,
                 **kwargs,
             )
-        else:
-            scan = self.scan(f"num_rows!={max_rows_per_file}")
 
-            batches = scan.to_duckdb(
-                sort_by=sort_by, distinct=unique
-            ).fetch_arrow_reader(batch_size=max_rows_per_file)
-
-            for batch in tqdm.tqdm(batches):
-                self.write_to_dataset(
-                    pa.table(batch),
-                    mode="append",
-                    max_rows_per_file=max_rows_per_file,
-                    row_group_size=row_group_size,
-                    compression=compression,
-                    update_metadata=False,
-                    unique=unique,
-                    **kwargs,
-                )
-            self.delete_files(self.scan_files)
-            self.clear_cache()
-            self.load(update_metadata=True)
-            self.update_metadata_table()
+        result = self._run_fsspeckit_rewrite(
+            path=self._path,
+            filesystem=self._filesystem,
+            max_rows_per_file=max_rows_per_file,
+            compression=compression,
+            unique=unique,
+            dry_run=dry_run,
+        )
+        if not dry_run:
+            self._refresh_after_rewrite()
+        return result if dry_run else None
 
     def repartition(
         self,
@@ -1780,28 +1817,16 @@ class Optimize(ParquetDataset):
         max_rows_per_file: int | None = 10_000_000,
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
         unique: bool = False,
-        compression="zstd",
+        compression: str = "zstd",
         row_group_size: int | None = 256_000,
         **kwargs,
     ) -> None:
         """Repartition the dataset.
 
-        This method rewrites the entire dataset with a new partitioning scheme.
-        It reads all data, repartitions it according to the specified columns,
-        and writes it back with optimized file sizes.
-
-        Args:
-            partitioning_columns: Column(s) to partition by.
-            partitioning_falvor: Partitioning flavor ('hive' or other).
-            max_rows_per_file: Maximum number of rows per file.
-            sort_by: Column(s) to sort by before writing.
-            unique: Whether to remove duplicate rows.
-            compression: Compression algorithm to use.
-            row_group_size: Target size for row groups.
-            **kwargs: Additional arguments passed to write_to_dataset.
-
-        Returns:
-            None
+        Rewrites the entire dataset with a new partitioning scheme using the
+        existing pydala write path. Compression and partition flavor are passed
+        through to ``write_to_dataset``. After the rewrite the metadata table is
+        refreshed alongside per-file and aggregate metadata.
         """
         batches = self.table.to_batch_reader(
             sort_by=sort_by, distinct=unique, batch_size=max_rows_per_file
@@ -1811,7 +1836,6 @@ class Optimize(ParquetDataset):
             self.write_to_dataset(
                 pa.table(batch),
                 partition_by=partitioning_columns,
-                # partitioning_falvor=partitioning_falvor,
                 mode="append",
                 max_rows_per_file=max_rows_per_file,
                 row_group_size=min(max_rows_per_file, row_group_size),
@@ -1824,6 +1848,7 @@ class Optimize(ParquetDataset):
         self.clear_cache()
         self.update()
         self.load()
+        self.update_metadata_table()
 
     def _optimize_dtypes(
         self,
@@ -1832,30 +1857,15 @@ class Optimize(ParquetDataset):
         exclude: str | list[str] | None = None,
         strict: bool = True,
         include: str | list[str] | None = None,
-        ts_unit: str | None = None,  # "us",
+        ts_unit: str | None = None,
         tz: str | None = None,
         **kwargs,
     ) -> None:
         """Optimize data types for a specific file.
 
         This method reads a file, optimizes its schema based on the actual
-        data types found, and rewrites it with the optimized schema. This
-        can reduce storage size and improve query performance.
-
-        Args:
-            file_path: Path to the file to optimize.
-            optimized_schema: Target schema with optimized types.
-            exclude: Columns to exclude from type optimization.
-            strict: Whether to use strict type inference.
-            include: Columns to include in type optimization.
-            ts_unit: Timestamp unit for conversion.
-            tz: Timezone for timestamp columns.
-            **kwargs: Additional arguments passed to write_to_dataset.
-
-        Returns:
-            None
+        data types found, and rewrites it with the optimized schema.
         """
-        # Safely escape file path to prevent SQL injection
         escaped_file_path = file_path.replace("'", "''")
         scan = self.scan(f"file_path='{escaped_file_path}'")
         schema = scan.arrow_dataset.schema
@@ -1876,17 +1886,15 @@ class Optimize(ParquetDataset):
                 ts_unit=ts_unit,
                 tz=tz,
             )
-
             self.write_to_dataset(
                 table,
                 mode="append",
                 update_metadata=False,
-                ts_unit=ts_unit,  # "us",
+                ts_unit=ts_unit,
                 tz=tz,
                 alter_schema=True,
                 **kwargs,
             )
-
             self.delete_files(self.scan_files)
             self.update_file_metadata()
 
@@ -1897,29 +1905,12 @@ class Optimize(ParquetDataset):
         exclude: str | list[str] | None = None,
         strict: bool = True,
         include: str | list[str] | None = None,
-        ts_unit: str | None = None,  # "us",
+        ts_unit: str | None = None,
         tz: str | None = None,
         infer_schema_size: int = 10_000,
         **kwargs,
     ) -> None:
-        """Optimize data types across all files in the dataset.
-
-        This method analyzes a sample of data to infer optimal data types,
-        then applies these optimized types to all files in the dataset.
-        This can significantly reduce storage size and improve performance.
-
-        Args:
-            exclude: Columns to exclude from type optimization.
-            strict: Whether to use strict type inference.
-            include: Columns to include in type optimization.
-            ts_unit: Timestamp unit for conversion.
-            tz: Timezone for timestamp columns.
-            infer_schema_size: Number of rows to sample for type inference.
-            **kwargs: Additional arguments passed to _optimize_dtypes.
-
-        Returns:
-            None
-        """
+        """Optimize data types across all files in the dataset."""
         optimized_schema = (
             self.table.pl.drop(self.partition_names)
             .head(infer_schema_size)
@@ -1928,7 +1919,6 @@ class Optimize(ParquetDataset):
             .to_arrow()
             .schema
         )
-
         optimized_schema = convert_large_types_to_normal(optimized_schema)
 
         for file_path in tqdm.tqdm(self.files):
@@ -1940,16 +1930,19 @@ class Optimize(ParquetDataset):
                 include=include,
                 ts_unit=ts_unit,
                 tz=tz,
-                # use_large_string=use_large_string,
                 **kwargs,
             )
 
         self.clear_cache()
-
         self._update_metadata()
         self.update_metadata_table()
 
 
+ParquetDataset._fsspeckit_compact = Optimize._fsspeckit_compact
+ParquetDataset._fsspeckit_optimize = Optimize._fsspeckit_optimize
+ParquetDataset._run_fsspeckit_rewrite = Optimize._run_fsspeckit_rewrite
+ParquetDataset._refresh_after_rewrite = Optimize._refresh_after_rewrite
+ParquetDataset.collect_stats = Optimize.collect_stats
 ParquetDataset.compact_partitions = Optimize.compact_partitions
 ParquetDataset._compact_partition = Optimize._compact_partition
 ParquetDataset.compact_by_timeperiod = Optimize.compact_by_timeperiod

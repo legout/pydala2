@@ -1,3 +1,4 @@
+import functools
 import posixpath
 
 import pyarrow as pa
@@ -7,10 +8,12 @@ import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 from fsspec.core import split_protocol
 from fsspeckit.datasets.schema import (
+    cast_schema as _fsspeckit_cast_schema,
     convert_large_types_to_normal,
     unify_schemas as _fsspeckit_unify_schemas,
 )
-from .helpers.misc import read_table, run_parallel, unify_schemas_pl
+from fsspeckit.common.parallel import run_parallel as _fsspeckit_run_parallel
+from .helpers.misc import read_table, unify_schemas_pl
 
 
 def strip_protocol(path: str) -> str:
@@ -392,9 +395,16 @@ def repair_schema(
     # use_large_types: bool = False,
     # sort: bool | list[str] = False,
     alter_schema: bool = True,
+    dry_run: bool = False,
     **kwargs,
 ):
-    """Repairs the pyarrow schema of a parquet or arrow dataset
+    """Repairs the pyarrow schema of a parquet or arrow dataset.
+
+    This adapter delegates schema unification and parallel execution to public
+    ``fsspeckit`` primitives while preserving pydala-specific coercion behavior
+    (string-to-bool, integer-to-timestamp, missing-field handling). When
+    ``dry_run`` is ``True`` no data or metadata is mutated; a plan describing the
+    files that would be rewritten is returned instead.
 
     Args:
         files (list[str]): Files of the dataset.
@@ -406,7 +416,12 @@ def repair_schema(
         verbose (bool, optional): Wheter to show the task progress using tqdm or not. Defaults to True.
         ts_unit (str|None): timestamp unit.
         tz (str|None): timezone for timestamp fields. Defaults to "UTC".
+        dry_run (bool): If True, return a plan without reading or writing parquet data.
         **kwargs: Additional keyword arguments for pyarrow.parquet.write_table.
+
+    Returns:
+        dict | None: When ``dry_run`` is ``True``, returns ``{"files": [...], "schema": schema}``
+        describing the repair plan; otherwise ``None``.
     """
     base_path = strip_protocol(base_path) if base_path is not None else None
     if files is None:
@@ -436,28 +451,31 @@ def repair_schema(
         }
 
     if schema is None:
+        # Preserve pydala's legacy numeric-promotion behavior (e.g. int32 +
+        # uint32 -> int64) by trying PyArrow's permissive unifier first, then
+        # delegating to fsspeckit's public schema primitive as a fallback.
         try:
             schema = pa.unify_schemas(
                 list(file_schemas.values()), promote_options="permissive"
             )
         except pa.ArrowTypeError:
             try:
-                schema = _fsspeckit_unify_schemas(list(file_schemas.values()))
-            except pa.ArrowException:
+                schema, _ = unify_schemas(list(file_schemas.values()))
+            except (pa.ArrowException, ValueError):
                 schema = unify_schemas_pl(list(file_schemas.values()))
 
     if ts_unit is not None or tz is not None:
         schema = convert_timestamp(schema, unit=ts_unit, tz=tz)
 
-    # if not use_large_types:
     schema = convert_large_types_to_normal(schema)
 
-    schemas_equal = all([schema == schemas_ for schemas_ in file_schemas.values()])
+    files_to_repair = [f for f in files if file_schemas[f] != schema]
 
-    if not schemas_equal:
-        files = [f for f in files if file_schemas[f] != schema]
+    if dry_run:
+        return {"files": files_to_repair, "schema": schema}
 
     def _repair_schema(f, schema, filesystem):
+        # pydala-specific coercions (missing fields, int->timestamp, str->bool)
         table = replace_schema(
             read_table(f, filesystem=filesystem, partitioning=None),
             schema=schema,
@@ -465,21 +483,34 @@ def repair_schema(
             tz=tz,
             alter_schema=alter_schema,
         )
+        # Final fsspeckit cast to ensure the table matches the target schema.
+        write_kwargs = kwargs.copy()
+        if "compression" not in write_kwargs:
+            metadata = pq.read_metadata(f, filesystem=filesystem)
+            if metadata.num_row_groups and metadata.row_group(0).num_columns:
+                write_kwargs["compression"] = (
+                    metadata.row_group(0).column(0).compression.lower()
+                )
+        table = _fsspeckit_cast_schema(table, schema)
         pq.write_table(
             table,
             f,
             filesystem=filesystem,
             coerce_timestamps=ts_unit,
             allow_truncated_timestamps=True,
-            **kwargs,
+            **write_kwargs,
         )
 
-    if len(files):
-        _ = run_parallel(
-            _repair_schema,
-            files,
-            schema=schema,
-            filesystem=filesystem,
+    if len(files_to_repair):
+        # Bind non-iterable arguments so fsspeckit's parallel runner only
+        # iterates over the file list (pa.Schema is iterable and would
+        # otherwise be mis-detected as a per-task iterable).
+        _repair_bound = functools.partial(
+            _repair_schema, schema=schema, filesystem=filesystem
+        )
+        _ = _fsspeckit_run_parallel(
+            _repair_bound,
+            files_to_repair,
             backend=backend,
             n_jobs=n_jobs,
             verbose=verbose,
@@ -513,7 +544,7 @@ def collect_file_schemas(
     def get_schema(f, filesystem):
         return {f: pq.read_schema(f, filesystem=filesystem)}
 
-    schemas = run_parallel(
+    schemas = _fsspeckit_run_parallel(
         get_schema,
         files,
         filesystem=filesystem,

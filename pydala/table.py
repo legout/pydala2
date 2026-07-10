@@ -24,15 +24,10 @@ class PydalaTable:
 
     def __init__(
         self,
-        result: pds.Dataset | _duckdb.DuckDBPyRelation,
+        result: pa.Table | pds.Dataset | _duckdb.DuckDBPyRelation,
         ddb_con: _duckdb.DuckDBPyConnection | None = None,
     ) -> None:
-        """Initialize a PydalaTable instance.
-
-        Args:
-            result: The data source - either a PyArrow dataset or DuckDB relation.
-            ddb_con: Existing DuckDB connection. If None, creates a new one.
-        """
+        """Initialize a PydalaTable from an Arrow table/dataset or DuckDB relation."""
         if ddb_con is None:
             self.ddb_con = _duckdb.connect()
         else:
@@ -42,6 +37,8 @@ class PydalaTable:
             "duckdb" if isinstance(result, _duckdb.DuckDBPyRelation) else "pyarrow"
         )
         if self._type == "pyarrow":
+            if isinstance(result, pa.Table):
+                result = pds.dataset(result, schema=result.schema)
             self._dataset = result
             self._ddb = self.ddb_con.from_arrow(result)
         else:
