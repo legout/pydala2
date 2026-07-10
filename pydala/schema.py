@@ -6,6 +6,10 @@ import pyarrow.fs as pfs
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 from fsspec.core import split_protocol
+from fsspeckit.datasets.schema import (
+    convert_large_types_to_normal,
+    unify_schemas as _fsspeckit_unify_schemas,
+)
 from .helpers.misc import read_table, run_parallel, unify_schemas_pl
 
 
@@ -57,61 +61,6 @@ def sort_schema(schema: pa.Schema, names: list[str] | None = None) -> pa.Schema:
 #         ]
 #     )
 
-
-def convert_large_types_to_normal(schema: pa.Schema) -> pa.Schema:
-    # Define mapping of large types to standard types
-    type_mapping = {
-        pa.large_string(): pa.string(),
-        pa.large_binary(): pa.binary(),
-        pa.large_utf8(): pa.utf8(),
-        pa.large_list(pa.null()): pa.list_(pa.null()),
-        pa.large_list_view(pa.null()): pa.list_view(pa.null()),
-    }
-    # Convert fields
-    new_fields = []
-    for field in schema:
-        field_type = field.type
-        # Check if type exists in mapping
-        if field_type in type_mapping:
-            new_field = pa.field(
-                name=field.name,
-                type=type_mapping[field_type],
-                nullable=field.nullable,
-                metadata=field.metadata,
-            )
-            new_fields.append(new_field)
-        # Handle large lists with nested types
-        elif isinstance(field_type, pa.LargeListType):
-            new_field = pa.field(
-                name=field.name,
-                type=pa.list_(
-                    type_mapping[field_type.value_type]
-                    if field_type.value_type in type_mapping
-                    else field_type.value_type
-                ),
-                nullable=field.nullable,
-                metadata=field.metadata,
-            )
-            new_fields.append(new_field)
-        # Handle dictionary with large_string, large_utf8, or large_binary values
-        elif isinstance(field_type, pa.DictionaryType):
-            new_field = pa.field(
-                name=field.name,
-                type=pa.dictionary(
-                    field_type.index_type,
-                    type_mapping[field_type.value_type]
-                    if field_type.value_type in type_mapping
-                    else field_type.value_type,
-                    field_type.ordered,
-                ),
-                # nullable=field.nullable,
-                metadata=field.metadata,
-            )
-            new_fields.append(new_field)
-        else:
-            new_fields.append(field)
-
-    return pa.schema(new_fields)
 
 
 def convert_timestamp(
@@ -341,135 +290,27 @@ def replace_schema(
     # return table.select(schema.names)
 
 
-def _unify_schemas(
-    schema1: pa.Schema,
-    schema2: pa.Schema,
-) -> tuple[dict, bool]:
-    """Returns a unified pyarrow schema.
-
-    Args:
-        schema1 (pa.Schema): Pyarrow schema 1.
-        schema2 (pa.Schema): Pyarrow schema 2.
-    Returns:
-        Tuple[dict, bool]: Unified pyarrow schema, bool value if schemas were equal.
-    """
-
-    dtypes = [
-        pa.null(),
-        pa.int8(),
-        pa.int16(),
-        pa.int32(),
-        pa.int64(),
-        pa.float16(),
-        pa.float32(),
-        pa.float64(),
-        pa.string(),
-        pa.utf8(),
-        pa.large_string(),
-        pa.large_utf8(),
-    ]
-    timestamp_units = ["ns", "us", "ms", "s"]
-    # string_dtypes = [pa.string(), pa.utf8(), pa.large_string(), pa.large_utf8()]
-
-    # check for equal columns and column order
-    if schema1.names == schema2.names:
-        all_names = schema1.names
-        file_schemas_equal = True
-
-    elif sorted(schema1.names) == sorted(schema2.names):
-        all_names = schema1.names
-        file_schemas_equal = False
-
-    else:
-        # all_names = list(set(schema1.names + schema2.names))
-        all_names = schema1.names + [
-            name for name in schema2.names if name not in schema1.names
-        ]
-        file_schemas_equal = False
-
-    schema = []
-    for name in all_names:
-        if name in schema1.names:
-            type1 = schema1.field(name).type
-        else:
-            type1 = schema2.field(name).type
-        if name in schema2.names:
-            type2 = schema2.field(name).type
-        else:
-            type2 = schema1.field(name).type
-
-        if type1 != type2:
-            if type1 in dtypes:
-                rank1 = dtypes.index(type1) if type1 in dtypes else 0
-                rank2 = dtypes.index(type2) if type2 in dtypes else 0
-
-                if type1.num_buffers == 2 and type2.num_buffers == 2:
-                    bit_width1 = type1.bit_width
-                    bit_width2 = type2.bit_width
-                    if bit_width1 > bit_width2:
-                        if rank1 > rank2:
-                            type_ = type1
-                        else:
-                            type_ = pa.float64()
-                    else:
-                        if rank2 > rank1:
-                            type_ = type2
-                        else:
-                            type_ = pa.float64()
-                else:
-                    type_ = type1 if rank1 > rank2 else type2
-
-            elif isinstance(type1, pa.TimestampType):
-                rank1 = (
-                    timestamp_units.index(type1.unit)
-                    if isinstance(type1, pa.TimestampType)
-                    else 0
-                )
-                if isinstance(type2, pa.TimestampType):
-                    rank2 = timestamp_units.index(type2.unit)
-                else:
-                    rank2 = 0
-                type_ = type1 if rank1 > rank2 else type2
-            else:
-                rank1 = 1
-                rank2 = 0
-                type_ = type1 if rank1 > rank2 else type2
-            schema.append(pa.field(name, type_))
-
-        else:
-            schema.append(pa.field(name, type1))
-
-    schema = pa.schema(schema)
-
-    if schema != schema1 or schema != schema2:
-        file_schemas_equal = False
-
-    return schema, file_schemas_equal
-
-
 def unify_schemas(
     schemas: list[pa.Schema],
 ) -> tuple[pa.Schema, bool]:
     """Get the unified pyarrow schema for a list of schemas.
 
+    Delegates schema unification to fsspeckit while preserving the
+    pydala contract of returning ``(schema, schemas_were_equal)``.
+
     Args:
-        schemas (list[pa.Schema]): Pyarrow schemas.
+        schemas: Pyarrow schemas.
 
     Returns:
-        tuple[pa.Schema, bool]: Unified pyarrow schema.
+        Tuple of unified schema and whether all inputs were equal.
     """
-
-    schemas_equal = True
-    unified_schema = schemas[0]
-    for schema in schemas[1:]:
-        unified_schema, schemas_equal_ = _unify_schemas(
-            unified_schema,
-            schema,
-        )
-
-        schemas_equal *= schemas_equal_
-
-    return unified_schema, bool(schemas_equal)
+    if not schemas:
+        raise ValueError("At least one schema must be provided")
+    if len(schemas) == 1:
+        return schemas[0], True
+    unified = _fsspeckit_unify_schemas(schemas)
+    schemas_equal = all(s == unified for s in schemas)
+    return unified, schemas_equal
 
 
 def repair_schema(
@@ -531,10 +372,8 @@ def repair_schema(
 
     if schema is None:
         try:
-            schema = pa.unify_schemas(
-                schemas=list(file_schemas.values()), promote_options="permissive"
-            )
-        except pa.lib.ArrowTypeError:
+            schema = _fsspeckit_unify_schemas(list(file_schemas.values()))
+        except Exception:
             schema = unify_schemas_pl(list(file_schemas.values()))
 
     if ts_unit is not None or tz is not None:
