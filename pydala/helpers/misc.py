@@ -1,5 +1,6 @@
 from typing import Any
 
+import functools
 import re
 
 import pyarrow as pa
@@ -74,13 +75,20 @@ def run_parallel(
     """
     # Legacy pydala callers pass extra *args/**kwargs as fixed per-task parameters.
     # fsspeckit's run_parallel treats any iterable positional argument as a
-    # per-task input, so we bind the extras in a closure before delegating.
-    def _task_wrapper(fp: Any) -> Any:
-        return func(fp, *args, **kwargs)
-
-    return _run_parallel(
-        _task_wrapper, func_params, n_jobs=n_jobs, backend=backend, verbose=verbose
+    # per-task input, so we bind the extras to a picklable partial before delegating.
+    wrapped = functools.partial(
+        _call_with_first_and_args, func=func, args=args, kwargs=kwargs
     )
+    return _run_parallel(
+        wrapped, func_params, n_jobs=n_jobs, backend=backend, verbose=verbose
+    )
+
+
+def _call_with_first_and_args(
+    fp: Any, func: callable, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> Any:
+    """Call ``func`` with the task parameter first, followed by bound extras."""
+    return func(fp, *args, **kwargs)
 
 
 def get_partitions_from_path(
