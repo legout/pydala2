@@ -260,13 +260,10 @@ class TestCatalogDirectIO(unittest.TestCase):
     """Characterize the catalog's ``as_dataset=False`` (direct IO) path.
 
     ``Catalog.load_parquet`` / ``load_csv`` / ``load_json`` with
-    ``as_dataset=False`` delegate to direct reader methods on the underlying
-    filesystem (``read_parquet``, ``read_parquet_dataset``, ``read_csv``,
-    ``read_json`` ...). pydala's own monkey-patched versions of these were
-    removed (commented out in ``filesystem.py``); ``fsspeckit`` now registers
-    some of them via ``fsspeckit.core.ext.register`` -- but not the
-    ``*_dataset`` variants, and the single-file parquet reader is currently
-    broken. The xfails below document that broken behaviour.
+    ``as_dataset=False`` now read directly from the underlying filesystem.
+    Parquet paths use ``pyarrow.parquet.read_table`` with the catalog
+    filesystem; CSV and JSON paths use the fsspeckit-registered
+    ``read_csv`` / ``read_json`` methods on the underlying filesystem.
     """
 
     def setUp(self) -> None:
@@ -332,8 +329,9 @@ class TestCatalogDirectIO(unittest.TestCase):
         """Document which direct-IO methods the fs currently exposes.
 
         ``fsspeckit`` registers the single-file readers/writers, but the
-        ``*_dataset`` helpers that pydala's catalog relies on for directory
-        paths are absent.
+        ``*_dataset`` helpers are absent. The catalog therefore uses
+        ``pq.read_table`` directly for directory parquet paths and the
+        single-file readers for csv/json paths.
         """
         fs = FileSystem(bucket=self.single_dir, cached=False)
         for present in ("read_parquet", "read_csv", "read_json", "write_parquet"):
@@ -363,16 +361,6 @@ class TestCatalogDirectIO(unittest.TestCase):
 
     # -- known-broken behaviour (xfail) ------------------------------------- #
 
-    @pytest.mark.xfail(
-        reason=(
-            "Catalog.load_parquet(as_dataset=False) for a directory delegates to "
-            "fs.read_parquet_dataset(), which is not registered (pydala's version "
-            "was removed and fsspeckit does not provide it). The intended replacement "
-            "is a 3-row table from the directory dataset."
-        ),
-        raises=AttributeError,
-        strict=True,
-    )
     def test_load_parquet_directory_direct_io(self) -> None:
         catalog = self._catalog()
         result = catalog.load_parquet("dir_table", as_dataset=False)
@@ -380,16 +368,6 @@ class TestCatalogDirectIO(unittest.TestCase):
             getattr(result, "num_rows", getattr(result, "height", None)), 3
         )
 
-    @pytest.mark.xfail(
-        reason=(
-            "Catalog.load_parquet(as_dataset=False) for a single file delegates to "
-            "fs.read_parquet(), which is currently broken: fsspeckit's parquet "
-            "reader crashes inside its loguru logging calls (KeyError on the "
-            "message template). The intended replacement is a 3-row table."
-        ),
-        raises=KeyError,
-        strict=True,
-    )
     def test_load_parquet_single_file_direct_io(self) -> None:
         catalog = self._catalog()
         result = catalog.load_parquet("single_table", as_dataset=False)
