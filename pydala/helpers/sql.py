@@ -15,21 +15,29 @@ from fsspeckit.sql.filters import (
 from .datetime import timestamp_from_string
 
 
+UNSIGNED_POLARS_INTS = frozenset({pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64})
+
+
 def sql2polars_filter(string: str, schema: pl.Schema) -> pl.Expr:
     """Convert a SQL boolean expression into a Polars expression.
 
-    fsspeckit 0.22.0 ships a sql2polars_filter, but its IN-list handling
-    raises for ``col IN (1, 2, 3)`` because it accesses ``expr.expression``
-    which is None for In nodes. We delegate simple predicates to fsspeckit
-    and keep the local implementation only for expressions containing IN.
+    fsspeckit 0.22.0 ships a sql2polars_filter, but it is incomplete:
+    its IN-list handling raises for ``col IN (1, 2, 3)`` and it does not
+    handle unsigned integer columns. We delegate simple predicates to
+    fsspeckit and keep the local implementation for IN-lists or schemas
+    containing unsigned integers.
     """
-    if parse_one(string).find(exp.In):
+    if _schema_has_unsigned(schema) or parse_one(string).find(exp.In):
         return _sql2polars_filter(string, schema)
     return _fsspeckit_sql2polars_filter(string, schema)
 
 
+def _schema_has_unsigned(schema: pl.Schema) -> bool:
+    return any(dtype in UNSIGNED_POLARS_INTS for dtype in schema.dtypes())
+
+
 def _sql2polars_filter(string: str, schema: pl.Schema) -> pl.Expr:
-    """Local fallback for SQL-to-Polars filters (covers IN-list expressions)."""
+    """Local fallback for SQL-to-Polars filters (covers IN-list and unsigned-int expressions)."""
 
     def parse_value(val: Any, dtype: Any) -> Any:
         if isinstance(val, (tuple, list)):
