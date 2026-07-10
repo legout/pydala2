@@ -126,13 +126,16 @@ class BaseDataset:
             # cache_storage = posixpath.join(cache_storage, path)
         else:
             cache_storage = None
-        self._filesystem = FileSystem(
-            bucket=bucket,
-            fs=filesystem,
-            cached=cached,
-            cache_storage=cache_storage,
-            **fs_kwargs,
-        )
+        if filesystem is not None and bucket is None and not cached:
+            self._filesystem = filesystem
+        else:
+            self._filesystem = FileSystem(
+                bucket=bucket,
+                fs=filesystem,
+                cached=cached,
+                cache_storage=cache_storage,
+                **fs_kwargs,
+            )
         self._path = strip_protocol(path) if path else ""
         self.table = None
         self._makedirs()
@@ -1339,13 +1342,11 @@ class JSONDataset(BaseDataset):
         Returns:
             None
         """
-        self._arrow_dataset = pds.dataset(
-            self._filesystem.read_json_dataset(
-                self._path,
-            )
-            .opt_dtype(strict=False)
-            .to_arrow()
-        )
+        files = self._filesystem.glob(safe_join(self._path, "*.json"))
+        if not files:
+            raise FileNotFoundError(f"No JSON files found at {self._path!r}")
+        data = self._filesystem.read_json(files, as_dataframe=True, concat=True)
+        self._arrow_dataset = pds.dataset(data.opt_dtype(strict=False).to_arrow())
         self.table = PydalaTable(result=self._arrow_dataset, ddb_con=self.ddb_con)
 
         self.ddb_con.register(f"{self.name}", self._arrow_dataset)

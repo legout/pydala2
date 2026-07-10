@@ -289,13 +289,78 @@ def replace_schema(
     # return table.select(schema.names)
 
 
+_LEGACY_PROMOTION_TYPES_LIST = (
+    pa.null(),
+    pa.int8(),
+    pa.int16(),
+    pa.int32(),
+    pa.int64(),
+    pa.float16(),
+    pa.float32(),
+    pa.float64(),
+    pa.string(),
+    pa.utf8(),
+    pa.large_string(),
+    pa.large_utf8(),
+)
+_LEGACY_PROMOTION_TYPES = frozenset(_LEGACY_PROMOTION_TYPES_LIST)
+_TIMESTAMP_UNIT_ORDER = {"ns": 0, "us": 1, "ms": 2, "s": 3}
+
+
+def _pydala_legacy_type(source_types: list[pa.DataType]) -> pa.DataType:
+    """Resolve field types using pydala's pre-fsspeckit conflict policy."""
+    field_type = source_types[0]
+    for candidate in source_types[1:]:
+        if field_type == candidate:
+            continue
+        if field_type in _LEGACY_PROMOTION_TYPES:
+            rank1 = _LEGACY_PROMOTION_TYPES_LIST.index(field_type)
+            rank2 = (
+                _LEGACY_PROMOTION_TYPES_LIST.index(candidate)
+                if candidate in _LEGACY_PROMOTION_TYPES
+                else 0
+            )
+            if field_type.num_buffers == 2 and candidate.num_buffers == 2:
+                if field_type.bit_width > candidate.bit_width:
+                    field_type = field_type if rank1 > rank2 else pa.float64()
+                else:
+                    field_type = candidate if rank2 > rank1 else pa.float64()
+            else:
+                field_type = field_type if rank1 > rank2 else candidate
+        elif isinstance(field_type, pa.TimestampType):
+            rank1 = _TIMESTAMP_UNIT_ORDER[field_type.unit]
+            rank2 = (
+                _TIMESTAMP_UNIT_ORDER[candidate.unit]
+                if isinstance(candidate, pa.TimestampType)
+                else 0
+            )
+            field_type = field_type if rank1 > rank2 else candidate
+    return field_type
+
+
+def _pydala_compatible_schema(
+    unified: pa.Schema, schemas: list[pa.Schema]
+) -> pa.Schema:
+    """Restore pydala's public schema-unification edge behavior."""
+    fields = []
+    for field in unified:
+        source_types = [
+            schema.field(field.name).type
+            for schema in schemas
+            if field.name in schema.names
+        ]
+        field_type = _pydala_legacy_type(source_types) if source_types else field.type
+        fields.append(pa.field(field.name, field_type))
+    return pa.schema(fields)
+
+
 def unify_schemas(
     schemas: list[pa.Schema],
 ) -> tuple[pa.Schema, bool]:
     """Get the unified pyarrow schema for a list of schemas.
 
-    Delegates schema unification to fsspeckit while preserving the
-    pydala contract of returning ``(schema, schemas_were_equal)``.
+    Delegates generic unification to fsspeckit while retaining pydala's
+    public conflict-resolution and metadata behavior.
 
     Args:
         schemas: Pyarrow schemas.
@@ -307,7 +372,8 @@ def unify_schemas(
         raise ValueError("At least one schema must be provided")
     if len(schemas) == 1:
         return schemas[0], True
-    unified = _fsspeckit_unify_schemas(schemas)
+    unified = _fsspeckit_unify_schemas(schemas, use_large_dtypes=True)
+    unified = _pydala_compatible_schema(unified, schemas)
     schemas_equal = all(s == unified for s in schemas)
     return unified, schemas_equal
 
@@ -371,9 +437,14 @@ def repair_schema(
 
     if schema is None:
         try:
-            schema = _fsspeckit_unify_schemas(list(file_schemas.values()))
-        except Exception:
-            schema = unify_schemas_pl(list(file_schemas.values()))
+            schema = pa.unify_schemas(
+                list(file_schemas.values()), promote_options="permissive"
+            )
+        except pa.ArrowTypeError:
+            try:
+                schema = _fsspeckit_unify_schemas(list(file_schemas.values()))
+            except pa.ArrowException:
+                schema = unify_schemas_pl(list(file_schemas.values()))
 
     if ts_unit is not None or tz is not None:
         schema = convert_timestamp(schema, unit=ts_unit, tz=tz)

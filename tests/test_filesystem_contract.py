@@ -33,6 +33,7 @@ from fsspec.implementations.dirfs import DirFileSystem
 from fsspec.implementations.local import LocalFileSystem
 from fsspec.implementations.memory import MemoryFileSystem
 from pydala.catalog import Catalog
+from pydala.dataset import JSONDataset
 from pydala.filesystem import FileSystem, clear_cache
 
 from tests.conftest import assert_metadata_invariants
@@ -280,6 +281,8 @@ class TestCatalogDirectIO(unittest.TestCase):
         self.dir_root = os.path.join(self.root, "dirtable")
         os.makedirs(self.dir_root)
         pq.write_table(self._table, os.path.join(self.dir_root, "part.parquet"))
+        self.empty_root = os.path.join(self.root, "empty")
+        os.makedirs(self.empty_root)
 
         self._write_catalog()
 
@@ -296,6 +299,11 @@ class TestCatalogDirectIO(unittest.TestCase):
                     "bucket": self.dir_root,
                     "cached": False,
                 },
+                "empty": {
+                    "protocol": "file",
+                    "bucket": self.empty_root,
+                    "cached": False,
+                },
             },
             "tables": {
                 "default": {
@@ -308,6 +316,16 @@ class TestCatalogDirectIO(unittest.TestCase):
                         "path": ".",
                         "format": "parquet",
                         "filesystem": "dir",
+                    },
+                    "empty_csv": {
+                        "path": ".",
+                        "format": "csv",
+                        "filesystem": "empty",
+                    },
+                    "empty_json": {
+                        "path": ".",
+                        "format": "json",
+                        "filesystem": "empty",
                     },
                 }
             },
@@ -373,6 +391,61 @@ class TestCatalogDirectIO(unittest.TestCase):
         self.assertEqual(
             getattr(result, "num_rows", getattr(result, "height", None)), 3
         )
+
+    def test_load_parquet_supports_compatible_fsspeckit_options(self) -> None:
+        catalog = self._catalog()
+
+        result = catalog.load_parquet(
+            "single_table", as_dataset=False, include_file_path=True, opt_dtypes=True
+        )
+
+        self.assertIn("file_path", result.columns)
+        self.assertEqual(
+            result.get_column("file_path").to_list(), ["single.parquet"] * 3
+        )
+        with self.assertRaisesRegex(ValueError, "batch_size"):
+            catalog.load_parquet("single_table", as_dataset=False, batch_size=1)
+        with self.assertRaisesRegex(ValueError, "concat=True"):
+            catalog.load_parquet("single_table", as_dataset=False, concat=False)
+
+    def test_load_parquet_tracks_each_directory_source_path(self) -> None:
+        pq.write_table(
+            pa.table({"a": [4], "b": ["other"]}),
+            os.path.join(self.dir_root, "other.parquet"),
+        )
+
+        result = self._catalog().load_parquet(
+            "dir_table", as_dataset=False, include_file_path=True
+        )
+
+        self.assertEqual(result.height, 4)
+        self.assertEqual(
+            {os.path.basename(path) for path in result.get_column("file_path")},
+            {"part.parquet", "other.parquet"},
+        )
+
+    def test_empty_direct_csv_and_json_paths_raise_clear_errors(self) -> None:
+        catalog = self._catalog()
+
+        with self.assertRaisesRegex(FileNotFoundError, "No CSV files"):
+            catalog.load_csv("empty_csv", as_dataset=False)
+        with self.assertRaisesRegex(FileNotFoundError, "No JSON files"):
+            catalog.load_json("empty_json", as_dataset=False)
+
+
+class TestManagedJSONDataset(unittest.TestCase):
+    """Managed JSON datasets use fsspeckit's registered direct reader."""
+
+    def test_loads_without_removed_dataset_reader(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            filesystem = FileSystem(bucket=root, cached=False)
+            filesystem.makedirs("data")
+            filesystem.pipe_file("data/part.json", b'[{"value": 1}, {"value": 2}]')
+            dataset = JSONDataset("data", filesystem=filesystem)
+
+            dataset.load()
+
+            self.assertEqual(dataset._arrow_dataset.to_table().num_rows, 2)
 
 
 class TestManagedDatasetMetadataInvariants:

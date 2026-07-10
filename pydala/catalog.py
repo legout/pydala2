@@ -5,6 +5,7 @@ import posixpath
 import duckdb
 import pandas as pd
 import pyarrow as pa
+import pyarrow.parquet as pq
 import yaml
 from fsspec import AbstractFileSystem
 from munch import Munch, munchify, toYAML, unmunchify
@@ -326,11 +327,45 @@ class Catalog:
             return
         if not as_dataset:
             fs = self.fs[params.filesystem]
-            import pyarrow.parquet as pq
-            import polars as pl
-
-            table = pq.read_table(params.path, filesystem=fs, **kwargs)
+            read_kwargs = kwargs.copy()
+            include_file_path = read_kwargs.pop("include_file_path", False)
+            opt_dtypes = read_kwargs.pop("opt_dtypes", False)
+            batch_size = read_kwargs.pop("batch_size", None)
+            concat = read_kwargs.pop("concat", True)
+            read_kwargs.pop("verbose", None)
+            if batch_size is not None:
+                raise ValueError(
+                    "Catalog.load_parquet(as_dataset=False) does not support batch_size"
+                )
+            if not concat:
+                raise ValueError(
+                    "Catalog.load_parquet(as_dataset=False) requires concat=True"
+                )
+            if include_file_path:
+                if params.path.endswith(".parquet"):
+                    files = [params.path]
+                else:
+                    files = fs.glob(posixpath.join(params.path, "**", "*.parquet"))
+                    if not files:
+                        files = fs.glob(posixpath.join(params.path, "*.parquet"))
+                if not files:
+                    raise FileNotFoundError(
+                        f"No Parquet files found at {params.path!r}"
+                    )
+                tables = []
+                for file in files:
+                    table = pq.read_table(file, filesystem=fs, **read_kwargs)
+                    tables.append(
+                        table.append_column(
+                            "file_path", pa.array([file] * table.num_rows)
+                        )
+                    )
+                table = pa.concat_tables(tables, promote_options="permissive")
+            else:
+                table = pq.read_table(params.path, filesystem=fs, **read_kwargs)
             df = pl.from_arrow(table)
+            if opt_dtypes:
+                df = df.opt_dtype(strict=False)
             self.ddb_con.register(table_name, df)
             return df
 
@@ -371,18 +406,14 @@ class Catalog:
             return
         if not as_dataset:
             fs = self.fs[params.filesystem]
-            import polars as pl
-
             if params.path.endswith(".csv"):
                 df = fs.read_csv(params.path, **kwargs)
             else:
                 files = fs.glob(posixpath.join(params.path, "*.csv"))
+                if not files:
+                    raise FileNotFoundError(f"No CSV files found at {params.path!r}")
                 dfs = [fs.read_csv(f, **kwargs) for f in files]
-                df = (
-                    pl.concat(dfs, how="diagonal_relaxed")
-                    if len(dfs) > 1
-                    else (dfs[0] if dfs else pl.DataFrame())
-                )
+                df = pl.concat(dfs, how="diagonal_relaxed") if len(dfs) > 1 else dfs[0]
             self.ddb_con.register(table_name, df)
             return df
 
@@ -414,18 +445,14 @@ class Catalog:
             return
         if not as_dataset:
             fs = self.fs[params.filesystem]
-            import polars as pl
-
             if params.path.endswith(".json"):
                 df = fs.read_json(params.path, **kwargs)
             else:
                 files = fs.glob(posixpath.join(params.path, "*.json"))
+                if not files:
+                    raise FileNotFoundError(f"No JSON files found at {params.path!r}")
                 dfs = [fs.read_json(f, **kwargs) for f in files]
-                df = (
-                    pl.concat(dfs, how="diagonal_relaxed")
-                    if len(dfs) > 1
-                    else (dfs[0] if dfs else pl.DataFrame())
-                )
+                df = pl.concat(dfs, how="diagonal_relaxed") if len(dfs) > 1 else dfs[0]
             self.ddb_con.register(table_name, df)
             return df
         return JSONDataset(

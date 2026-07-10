@@ -23,6 +23,7 @@ from pydala.schema import (
     convert_large_types_to_normal,
     convert_timestamp,
     replace_schema,
+    repair_schema,
     unify_schemas,
 )
 
@@ -203,6 +204,104 @@ class TestUnifySchemas(unittest.TestCase):
         self.assertTrue(equal)
         self.assertEqual(result, schema)
 
+    def test_preserves_large_types_when_schemas_differ(self):
+        s1 = pa.schema([("value", pa.large_string())])
+        s2 = pa.schema([("value", pa.string())])
+
+        result, equal = unify_schemas([s1, s2])
+
+        self.assertFalse(equal)
+        self.assertEqual(result.field("value").type, pa.large_string())
+
+    def test_signed_and_unsigned_conflicts_keep_legacy_float_promotion(self):
+        s1 = pa.schema([("value", pa.int32())])
+        s2 = pa.schema([("value", pa.uint32())])
+
+        result, equal = unify_schemas([s1, s2])
+
+        self.assertFalse(equal)
+        self.assertEqual(result.field("value").type, pa.float64())
+
+    def test_non_promoted_binary_conflicts_keep_first_type(self):
+        s1 = pa.schema([("value", pa.binary())])
+        s2 = pa.schema([("value", pa.large_binary())])
+
+        result, equal = unify_schemas([s1, s2])
+
+        self.assertFalse(equal)
+        self.assertEqual(result.field("value").type, pa.binary())
+
+    def test_timestamp_conflicts_follow_legacy_unit_and_schema_order(self):
+        s1 = pa.schema([("ts", pa.timestamp("s", tz="UTC"))])
+        s2 = pa.schema([("ts", pa.timestamp("ms", tz="America/New_York"))])
+
+        result, equal = unify_schemas([s1, s2])
+
+        self.assertFalse(equal)
+        self.assertEqual(
+            result.field("ts").type,
+            pa.timestamp("s", tz="UTC"),
+        )
+
+    def test_timestamp_timezone_ties_follow_later_schema(self):
+        s1 = pa.schema([("ts", pa.timestamp("us", tz="UTC"))])
+        s2 = pa.schema([("ts", pa.timestamp("us", tz="America/New_York"))])
+
+        result, equal = unify_schemas([s1, s2])
+
+        self.assertFalse(equal)
+        self.assertEqual(
+            result.field("ts").type,
+            pa.timestamp("us", tz="America/New_York"),
+        )
+
+    def test_legacy_unsupported_type_and_field_metadata_behavior(self):
+        s1 = pa.schema(
+            [
+                pa.field(
+                    "value",
+                    pa.decimal128(10, 2),
+                    nullable=False,
+                    metadata={b"source": b"first"},
+                )
+            ],
+            metadata={b"schema": b"first"},
+        )
+        s2 = pa.schema([("value", pa.decimal128(20, 4))])
+
+        result, equal = unify_schemas([s1, s2])
+
+        self.assertFalse(equal)
+        self.assertEqual(result.field("value").type, pa.decimal128(10, 2))
+        self.assertTrue(result.field("value").nullable)
+        self.assertIsNone(result.field("value").metadata)
+        self.assertIsNone(result.metadata)
+
+
+class TestRepairSchema(unittest.TestCase):
+    """``repair_schema`` retains PyArrow's compatible numeric promotion."""
+
+    def test_promotes_signed_and_unsigned_integers_without_float_narrowing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            int_path = f"{tmpdir}/int.parquet"
+            uint_path = f"{tmpdir}/uint.parquet"
+            pq.write_table(
+                pa.table({"id": pa.array([16_777_217], type=pa.int32())}), int_path
+            )
+            pq.write_table(
+                pa.table({"id": pa.array([16_777_218], type=pa.uint32())}), uint_path
+            )
+
+            repair_schema(
+                files=[int_path, uint_path],
+                n_jobs=1,
+                backend="sequential",
+                verbose=False,
+            )
+
+            self.assertEqual(pq.read_schema(int_path).field("id").type, pa.int64())
+            self.assertEqual(pq.read_schema(uint_path).field("id").type, pa.int64())
+
 
 class TestCollectFileSchemas(unittest.TestCase):
     """Schema collection exercises the public schema batch flow."""
@@ -227,14 +326,12 @@ class TestCollectFileSchemas(unittest.TestCase):
             )
 
         self.assertEqual(set(schema_result), set(paths))
-        self.assertEqual(
-            schema_result[paths[0]], pa.schema([("value", pa.int32())])
-        )
-        self.assertEqual(
-            schema_result[paths[1]], pa.schema([("value", pa.int64())])
-        )
+        self.assertEqual(schema_result[paths[0]], pa.schema([("value", pa.int32())]))
+        self.assertEqual(schema_result[paths[1]], pa.schema([("value", pa.int64())]))
         self.assertEqual(set(metadata_result), set(paths))
-        self.assertTrue(all(metadata.num_rows == 1 for metadata in metadata_result.values()))
+        self.assertTrue(
+            all(metadata.num_rows == 1 for metadata in metadata_result.values())
+        )
 
 
 class TestConvertTimestamp(unittest.TestCase):
