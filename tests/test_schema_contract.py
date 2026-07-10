@@ -11,10 +11,14 @@ a downstream replacement must preserve.
 from __future__ import annotations
 
 import datetime
+import tempfile
 import unittest
+
 import pyarrow as pa
+import pyarrow.parquet as pq
 
 from pydala.schema import (
+    collect_file_schemas,
     convert_large_types_to_normal,
     convert_timestamp,
     replace_schema,
@@ -197,6 +201,30 @@ class TestUnifySchemas(unittest.TestCase):
 
         self.assertTrue(equal)
         self.assertEqual(result, schema)
+
+
+class TestCollectFileSchemas(unittest.TestCase):
+    """Schema collection exercises the public schema batch flow."""
+
+    def test_collects_multiple_file_schemas(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            paths = []
+            for index, dtype in enumerate((pa.int32(), pa.int64())):
+                path = f"{tmpdir}/part-{index}.parquet"
+                table = pa.table(
+                    {"value": pa.array([index], type=dtype)},
+                    schema=pa.schema([("value", dtype)]),
+                )
+                pq.write_table(table, path)
+                paths.append(path)
+
+            result = collect_file_schemas(
+                paths, n_jobs=1, backend="sequential", verbose=False
+            )
+
+        self.assertEqual(set(result), set(paths))
+        self.assertEqual(result[paths[0]], pa.schema([("value", pa.int32())]))
+        self.assertEqual(result[paths[1]], pa.schema([("value", pa.int64())]))
 
 
 class TestConvertTimestamp(unittest.TestCase):

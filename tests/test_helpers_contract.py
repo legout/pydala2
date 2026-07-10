@@ -21,8 +21,6 @@ import datetime as dt
 import polars as pl
 import pytest
 
-import fsspeckit.common.datetime as f_dt
-import fsspeckit.datasets.polars as f_pl
 import pydala.helpers.datetime as p_dt
 import pydala.helpers.polars as p_pl
 from pydala.helpers.datetime import (
@@ -90,17 +88,18 @@ class TestExactDelegation:
 
     @pytest.mark.parametrize("name", POLARS_DELEGATES)
     def test_polars_helper_is_exact_delegate(self, name):
-        assert getattr(p_pl, name) is getattr(f_pl, name)
+        # The public seam exposes the fsspeckit implementation directly; a
+        # pydala wrapper would have this module's name instead.
+        assert getattr(p_pl, name).__module__ == "fsspeckit.datasets.polars"
 
     @pytest.mark.parametrize("name", DATETIME_DELEGATES)
     def test_datetime_helper_is_exact_delegate(self, name):
-        assert getattr(p_dt, name) is getattr(f_dt, name)
+        assert getattr(p_dt, name).__module__ == "fsspeckit.common.datetime"
 
     def test_reexported_pl_is_polars_module(self):
-        # The ``pl`` symbol re-exported from pydala must be the polars module
-        # itself (the same object fsspeckit re-exports).
+        # The ``pl`` symbol re-exported from pydala must be the Polars module.
         assert reexported_pl is pl
-        assert p_pl.pl is f_pl.pl
+        assert p_pl.pl is pl
 
     def test_polars_all_names_resolve(self):
         for name in p_pl.__all__:

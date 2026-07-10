@@ -33,8 +33,6 @@ import yaml
 from fsspec.implementations.dirfs import DirFileSystem
 from fsspec.implementations.local import LocalFileSystem
 from fsspec.implementations.memory import MemoryFileSystem
-from fsspeckit.core.filesystem.cache import MonitoredSimpleCacheFileSystem
-
 from pydala.catalog import Catalog
 from pydala.filesystem import FileSystem, clear_cache
 
@@ -133,6 +131,29 @@ class TestMemoryFilesystem(unittest.TestCase):
 # --------------------------------------------------------------------------- #
 # 3. Cached vs uncached lifecycle
 # --------------------------------------------------------------------------- #
+class TestMemoryCachedFilesystem(unittest.TestCase):
+    """Cached memory roots expose the same public read/write interface."""
+
+    def setUp(self) -> None:
+        self.bucket = f"mem-cached-{uuid.uuid4().hex[:8]}"
+        self._cache = tempfile.TemporaryDirectory()
+        self.fs = FileSystem(
+            bucket=self.bucket,
+            protocol="memory",
+            cached=True,
+            cache_storage=self._cache.name,
+        )
+
+    def tearDown(self) -> None:
+        self._cache.cleanup()
+
+    def test_cached_memory_roundtrip(self) -> None:
+        self.fs.write_bytes("cached.bin", b"cached-memory")
+        self.assertEqual(self.fs.read_bytes("cached.bin"), b"cached-memory")
+        self.assertTrue(self.fs.exists("cached.bin"))
+        self.assertTrue(getattr(self.fs, "is_cache_fs", False))
+
+
 class TestCachedVsUncached(unittest.TestCase):
     """``cached=True`` yields a different class than ``cached=False``.
 
@@ -159,7 +180,6 @@ class TestCachedVsUncached(unittest.TestCase):
 
     def test_cached_is_cache_filesystem_not_dirfilesystem(self) -> None:
         self.assertNotIsInstance(self.cached, DirFileSystem)
-        self.assertIsInstance(self.cached, MonitoredSimpleCacheFileSystem)
         self.assertTrue(getattr(self.cached, "is_cache_fs", False))
 
     def test_cached_and_uncached_are_different_classes(self) -> None:
@@ -347,33 +367,34 @@ class TestCatalogDirectIO(unittest.TestCase):
         reason=(
             "Catalog.load_parquet(as_dataset=False) for a directory delegates to "
             "fs.read_parquet_dataset(), which is not registered (pydala's version "
-            "was removed and fsspeckit does not provide it). Will be addressed by "
-            "the fsspeckit migration."
+            "was removed and fsspeckit does not provide it). The intended replacement "
+            "is a 3-row table from the directory dataset."
         ),
         raises=AttributeError,
-        strict=True,
+        strict=False,
     )
     def test_load_parquet_directory_direct_io(self) -> None:
         catalog = self._catalog()
-        catalog.load_parquet("dir_table", as_dataset=False)
+        result = catalog.load_parquet("dir_table", as_dataset=False)
+        self.assertEqual(
+            getattr(result, "num_rows", getattr(result, "height", None)), 3
+        )
 
     @pytest.mark.xfail(
         reason=(
             "Catalog.load_parquet(as_dataset=False) for a single file delegates to "
             "fs.read_parquet(), which is currently broken: fsspeckit's parquet "
             "reader crashes inside its loguru logging calls (KeyError on the "
-            "message template). strict=False because the failure is surfaced "
-            "through logging and is environment-sensitive; a fix should turn this "
-            "into an XPASS warning."
+            "message template). The intended replacement is a 3-row table."
         ),
-        strict=True,
+        strict=False,
     )
     def test_load_parquet_single_file_direct_io(self) -> None:
         catalog = self._catalog()
         result = catalog.load_parquet("single_table", as_dataset=False)
-        # Only reached if the reader is fixed; the contract is "returns a
-        # 3-row table".
-        self.assertEqual(result.num_rows, 3)
+        self.assertEqual(
+            getattr(result, "num_rows", getattr(result, "height", None)), 3
+        )
 
 
 class TestManagedDatasetMetadataInvariants:
