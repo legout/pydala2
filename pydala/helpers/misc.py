@@ -5,9 +5,9 @@ import re
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-import tqdm
 from fsspec import filesystem as fsspec_filesystem, AbstractFileSystem
-from joblib import Parallel, delayed
+from fsspeckit.common import get_partitions_from_path as _get_partitions_from_path
+from fsspeckit.common import run_parallel as _run_parallel
 from .polars import pl
 
 
@@ -64,24 +64,18 @@ def run_parallel(
     """Runs a function for a list of parameters in parallel.
 
     Args:
-        func (Callable): function to run in Parallelallel.
+        func (Callable): function to run in parallel.
         func_params (list[any]): parameters for the function
         n_jobs (int, optional): Number of joblib workers. Defaults to -1.
         backend (str, optional): joblib backend. Valid options are
-        `loky`,`threading`, `mutliprocessing` or `sequential`.  Defaults to "threading".
+        `loky`, `threading`, `multiprocessing` or `sequential`. Defaults to "threading".
 
     Returns:
         list[any]: Function output.
     """
-    if verbose:
-        return Parallel(n_jobs=n_jobs, backend=backend)(
-            delayed(func)(fp, *args, **kwargs) for fp in tqdm.tqdm(func_params)
-        )
-
-    else:
-        return Parallel(n_jobs=n_jobs, backend=backend)(
-            delayed(func)(fp, *args, **kwargs) for fp in func_params
-        )
+    return _run_parallel(
+        func, func_params, *args, n_jobs=n_jobs, backend=backend, verbose=verbose, **kwargs
+    )
 
 
 def get_partitions_from_path(
@@ -96,21 +90,9 @@ def get_partitions_from_path(
     Returns:
         list[tuple]: Partitions.
     """
-    if "." in path:
-        path = posixpath.dirname(path)
-
-    parts = path.split("/")
-
-    if isinstance(partitioning, str):
-        if partitioning == "hive":
-            return [tuple(p.split("=")) for p in parts if "=" in p]
-
-        else:
-            return [
-                (partitioning, parts[0]),
-            ]
-    else:
-        return list(zip(partitioning, parts[-len(partitioning) :]))
+    if partitioning is None:
+        return list(zip(partitioning, path.split("/")[-len(partitioning) :]))
+    return _get_partitions_from_path(path, partitioning)
 
 
 def humanize_size(size: int, unit: str = "MB") -> float:
