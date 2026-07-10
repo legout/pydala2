@@ -48,16 +48,34 @@ class TestFsspeckitManagedParquetAdapter(unittest.TestCase):
                 filtered.to_arrow().column("name").to_pylist(), ["two"]
             )
 
-    def test_memory_adapter_warns_before_using_stable_arrow_fallback(self) -> None:
+    def test_memory_pyarrow_adapter_routes_through_fsspeckit(self) -> None:
         filesystem = FileSystem(
             bucket=f"adapter-{uuid.uuid4().hex}", protocol="memory", cached=False
         )
         dataset = self._write_dataset(filesystem)
 
-        with self.assertWarnsRegex(RuntimeWarning, "does not support"):
-            filtered = dataset.filter(
-                pds.field("id") >= 2, use="fsspeckit-duckdb"
-            )
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            filtered = dataset.filter("id >= 2", use="fsspeckit")
 
         self.assertIsInstance(filtered, PydalaTable)
         self.assertEqual(filtered.to_arrow().column("id").to_pylist(), [2, 3])
+
+    def test_memory_duckdb_adapter_routes_through_fsspeckit(self) -> None:
+        filesystem = FileSystem(
+            bucket=f"adapter-{uuid.uuid4().hex}", protocol="memory", cached=False
+        )
+        dataset = self._write_dataset(filesystem)
+
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            filtered = dataset.filter(
+                pds.field("name") == "two", use="fsspeckit-duckdb"
+            )
+
+        self.assertIsInstance(filtered, PydalaTable)
+        self.assertEqual(filtered.to_arrow().column("name").to_pylist(), ["two"])

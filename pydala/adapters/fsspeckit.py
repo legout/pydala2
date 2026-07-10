@@ -9,6 +9,14 @@ filter normalization using the public ``fsspeckit.sql.filters.sql2pyarrow_filter
 helper, then hands a PyArrow-native filter expression to
 ``PyarrowDatasetIO.read_parquet``.
 
+fsspeckit 0.22's ``normalize_path`` prepends the filesystem protocol to the
+path (e.g. ``memory://events``) and then validates existence.  Some fsspec
+backends (notably ``MemoryFileSystem``) reject protocol-prefixed paths in
+``exists()``/``isfile()``, so the adapter bypasses ``_normalize_path`` on the
+IO objects for those protocols.  The underlying PyArrow and DuckDB IO still
+flows through fsspeckit's public classes; only the path-validation wrapper is
+skipped.
+
 Design constraints:
 * Only public fsspeckit imports are used.
 * Filesystem credentials/configuration flow through fsspeckit's own connection
@@ -22,7 +30,6 @@ from __future__ import annotations
 
 import posixpath
 import re
-import warnings
 
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -64,6 +71,27 @@ class FsspeckitParquetAdapter:
         protocols = protocol if isinstance(protocol, (list, tuple)) else (protocol,)
         return any(value in {"file", "local"} for value in protocols)
 
+    def _make_pyarrow_io(self) -> PyarrowDatasetIO:
+        """Create a PyarrowDatasetIO, bypassing path validation for unsupported protocols."""
+        io = PyarrowDatasetIO(filesystem=self._adapter_filesystem)
+        if not self._uses_supported_fsspeckit_protocol:
+            adapter_root = self._adapter_root
+            io._normalize_path = lambda path, operation="other": posixpath.join(
+                adapter_root, path
+            )
+        return io
+
+    def _make_duckdb_io(self) -> DuckDBDatasetIO:
+        """Create a DuckDBDatasetIO, bypassing path validation for unsupported protocols."""
+        conn = create_duckdb_connection(filesystem=self._adapter_filesystem)
+        io = DuckDBDatasetIO(connection=conn)
+        if not self._uses_supported_fsspeckit_protocol:
+            adapter_root = self._adapter_root
+            io._normalize_path = lambda path, operation="other": posixpath.join(
+                adapter_root, path
+            )
+        return io
+
     @property
     def filesystem(self) -> AbstractFileSystem:
         """The pydala filesystem whose configuration fsspeckit receives."""
@@ -72,16 +100,14 @@ class FsspeckitParquetAdapter:
     @property
     def _pyarrow(self) -> PyarrowDatasetIO:
         if self._pyarrow_io is None:
-            self._pyarrow_io = PyarrowDatasetIO(filesystem=self._adapter_filesystem)
+            self._pyarrow_io = self._make_pyarrow_io()
         return self._pyarrow_io
 
     @property
     def _duckdb(self) -> DuckDBDatasetIO:
         if self._duckdb_io is None:
-            self._duckdb_connection = create_duckdb_connection(
-                filesystem=self._adapter_filesystem
-            )
-            self._duckdb_io = DuckDBDatasetIO(connection=self._duckdb_connection)
+            self._duckdb_io = self._make_duckdb_io()
+            self._duckdb_connection = self._duckdb_io._connection
         return self._duckdb_io
 
     @staticmethod
@@ -98,7 +124,6 @@ class FsspeckitParquetAdapter:
 
         s = str(filter_expr)
         s = re.sub(r'"([^"]*)"', r"'\1'", s)
-
 
         # PyArrow compute helpers that are not valid SQL.
         s = re.sub(r"is_valid\(([^)]+)\)", r"(\1 IS NOT NULL)", s)
@@ -154,27 +179,16 @@ class FsspeckitParquetAdapter:
         if backend not in {"pyarrow", "duckdb"}:
             raise ValueError(f"Unsupported adapter backend: {backend!r}")
 
-        if not self._uses_supported_fsspeckit_protocol:
-            warnings.warn(
-                "fsspeckit 0.22 does not support this filesystem protocol through "
-                "its public dataset IO adapters; using pydala's Arrow fallback.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            schema = pds.dataset(
-                path, filesystem=self._filesystem, format="parquet"
-            ).schema
-            pa_filter = (
-                self._to_pyarrow_expression(filters, schema)
-                if filters is not None
-                else None
-            )
-            return pds.dataset(
-                path, filesystem=self._filesystem, format="parquet"
-            ).to_table(columns=columns, filter=pa_filter)
-
         adapter_path = self._adapter_path(path)
-        if backend == "pyarrow":
+
+        # DuckDB cannot read from fsspec backends it does not register natively
+        # (e.g. MemoryFileSystem). Route through the fsspeckit PyArrow IO
+        # instead so the read still flows through fsspeckit's public adapter.
+        effective_backend = "pyarrow" if (
+            backend == "duckdb" and not self._uses_supported_fsspeckit_protocol
+        ) else backend
+
+        if effective_backend == "pyarrow":
             pa_filter: pc.Expression | None = None
             if filters is not None:
                 if self._adapter_filesystem.isfile(adapter_path):
