@@ -325,12 +325,11 @@ class Catalog:
         if "parquet" not in params.format.lower():
             return
         if not as_dataset:
-            if params.path.endswith(".parquet"):
-                df = self.fs[params.filesystem].read_parquet(params.path, **kwargs)
-                self.ddb_con.register(table_name, df)
-                return df
-
-            df = self.fs[params.filesystem].read_parquet_dataset(params.path, **kwargs)
+            fs = self.fs[params.filesystem]
+            import pyarrow.parquet as pq
+            import polars as pl
+            table = pq.read_table(params.path, filesystem=fs, **kwargs)
+            df = pl.from_arrow(table)
             self.ddb_con.register(table_name, df)
             return df
 
@@ -370,12 +369,14 @@ class Catalog:
         if "csv" not in params.format.lower():
             return
         if not as_dataset:
+            fs = self.fs[params.filesystem]
+            import polars as pl
             if params.path.endswith(".csv"):
-                df = self.fs[params.filesystem].read_parquet(params.path, **kwargs)
-                self.ddb_con.register(table_name, df)
-                return df
-
-            df = self.fs[params.filesystem].read_parquet_dataset(params.path, **kwargs)
+                df = fs.read_csv(params.path, **kwargs)
+            else:
+                files = fs.glob(posixpath.join(params.path, "*.csv"))
+                dfs = [fs.read_csv(f, **kwargs) for f in files]
+                df = pl.concat(dfs, how="diagonal_relaxed") if len(dfs) > 1 else (dfs[0] if dfs else pl.DataFrame())
             self.ddb_con.register(table_name, df)
             return df
 
@@ -406,12 +407,14 @@ class Catalog:
         if "json" not in params.format.lower():
             return
         if not as_dataset:
+            fs = self.fs[params.filesystem]
+            import polars as pl
             if params.path.endswith(".json"):
-                df = self.fs[params.filesystem].read_json(params.path, **kwargs)
-                self.ddb_con.register(table_name, df)
-                return df
-
-            df = self.fs[params.filesystem].read_json_dataset(params.path, **kwargs)
+                df = fs.read_json(params.path, **kwargs)
+            else:
+                files = fs.glob(posixpath.join(params.path, "*.json"))
+                dfs = [fs.read_json(f, **kwargs) for f in files]
+                df = pl.concat(dfs, how="diagonal_relaxed") if len(dfs) > 1 else (dfs[0] if dfs else pl.DataFrame())
             self.ddb_con.register(table_name, df)
             return df
         return JSONDataset(
