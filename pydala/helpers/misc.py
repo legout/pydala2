@@ -1,6 +1,7 @@
 from typing import Any
 
 import functools
+import posixpath
 import re
 
 import pyarrow as pa
@@ -104,7 +105,19 @@ def get_partitions_from_path(
         list[tuple]: Partitions.
     """
     if partitioning is None:
+        # Preserve the legacy pydala contract that raises TypeError here.
         return list(zip(partitioning, path.split("/")[-len(partitioning) :]))
+
+    if isinstance(partitioning, str) and partitioning != "hive":
+        # fsspeckit returns the last directory for a single-column string
+        # partitioning; pydala's legacy contract uses the first segment.
+        if "." in path:
+            path = posixpath.dirname(path)
+        parts = path.split("/")
+        if parts and parts[0]:
+            return [(partitioning, parts[0])]
+        return []
+
     return _get_partitions_from_path(path, partitioning)
 
 
