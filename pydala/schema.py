@@ -62,7 +62,6 @@ def sort_schema(schema: pa.Schema, names: list[str] | None = None) -> pa.Schema:
 #     )
 
 
-
 def convert_timestamp(
     schema: pa.Schema,
     timestamp_fields: str | list[str] | None = None,

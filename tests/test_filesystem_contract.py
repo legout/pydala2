@@ -28,7 +28,6 @@ import uuid
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-import pytest
 import yaml
 from fsspec.implementations.dirfs import DirFileSystem
 from fsspec.implementations.local import LocalFileSystem
