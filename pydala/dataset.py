@@ -1469,6 +1469,8 @@ class Optimize(ParquetDataset):
     ) -> dict[str, t.Any]:
         if isinstance(unique, list):
             deduplicate_key_columns: list[str] | None = unique
+        elif unique:
+            deduplicate_key_columns = list(self.schema.names)
         else:
             deduplicate_key_columns = None
 

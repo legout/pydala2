@@ -42,3 +42,25 @@ def test_stats_are_collected_through_maintenance_adapter(managed_dataset) -> Non
 
     assert stats["total_rows"] == 15
     assert len(stats["files"]) == 2
+
+
+def test_unique_true_removes_exact_duplicates(managed_dataset) -> None:
+    managed_dataset.load()
+    rows_before = managed_dataset.table.to_arrow().num_rows
+
+    # Write the same batch again to create exact duplicates.
+    from tests.conftest import make_simple_table
+
+    managed_dataset.write_to_dataset(make_simple_table(n_rows=5, seed=0), mode="append")
+    managed_dataset.update()
+    managed_dataset.load()
+
+    managed_dataset.compact_by_rows(
+        max_rows_per_file=100,
+        compression="zstd",
+        unique=True,
+    )
+
+    rows_after = managed_dataset.table.to_arrow().num_rows
+    assert rows_after == rows_before, f"expected {rows_before}, got {rows_after}"
+    assert_metadata_invariants(managed_dataset)
