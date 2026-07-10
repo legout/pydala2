@@ -114,9 +114,7 @@ def get_partitions_from_path(
         if "." in path:
             path = posixpath.dirname(path)
         parts = path.split("/")
-        if parts and parts[0]:
-            return [(partitioning, parts[0])]
-        return []
+        return [(partitioning, parts[0])]
 
     return _get_partitions_from_path(path, partitioning)
 
