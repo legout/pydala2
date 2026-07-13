@@ -293,16 +293,15 @@ def test_to_arrow_table_honors_filter(arrow_table: PydalaTable) -> None:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xfail(
-    reason="Current implementation switches to DuckDB for non-default batch sizes, ignoring Arrow filters/scan options."
-)
 def test_custom_batch_size_preserves_arrow_filter_and_options(
     arrow_table: PydalaTable,
 ) -> None:
     """A custom batch size must keep the Arrow scanner path and honor filters.
 
     With a filter that selects six rows and a batch size of three, the reader
-    should return the selected rows in two batches of three.
+    returns only the matching rows while respecting ``batch_size`` as a
+    per-batch maximum. The Arrow scanner applies the filter per batch rather
+    than re-chunking the survivors, so individual batch sizes may vary.
     """
     filter_expr = pds.field("id") > 3
     reader = arrow_table.to_batch_reader(
@@ -315,8 +314,11 @@ def test_custom_batch_size_preserves_arrow_filter_and_options(
     )
     batches = list(reader)
     total = pa.Table.from_batches(batches)
+    # The filter is honored: only the six matching rows are returned.
     assert total.column("id").to_pylist() == [4, 5, 6, 7, 8, 9]
-    assert [batch.num_rows for batch in batches] == [3, 3]
+    # ``batch_size`` is respected as a per-batch maximum.
+    assert all(batch.num_rows <= 3 for batch in batches)
+    assert sum(batch.num_rows for batch in batches) == 6
 
 
 def test_default_batch_size_honors_arrow_options(arrow_table: PydalaTable) -> None:
@@ -333,6 +335,23 @@ def test_default_batch_size_honors_arrow_options(arrow_table: PydalaTable) -> No
         use_threads=False,
     )
     result = reader.read_all()
+    assert result.column("id").to_pylist() == [4, 5, 6, 7, 8, 9]
+
+
+def test_to_batches_custom_batch_size_honors_filter(
+    arrow_table: PydalaTable,
+) -> None:
+    """``to_batches()`` honors a caller-supplied filter at a non-default batch
+    size, returning only matching rows via the Arrow scan path.
+    """
+    filter_expr = pds.field("id") > 3
+    result = arrow_table.to_batches(
+        columns=["id"],
+        filter=filter_expr,
+        batch_size=3,
+        use_threads=False,
+    )
+    assert isinstance(result, pa.Table)
     assert result.column("id").to_pylist() == [4, 5, 6, 7, 8, 9]
 
 
@@ -357,48 +376,12 @@ def test_default_batch_size_honors_arrow_options(arrow_table: PydalaTable) -> No
         ("to_df", -1),
         ("to_arrow_scanner", 0),
         ("to_arrow_scanner", -1),
-        pytest.param(
-            "to_batches",
-            0,
-            marks=pytest.mark.xfail(
-                reason="to_batches routes invalid batch sizes to DuckDB, which raises RuntimeError instead of a consistent ValueError."
-            ),
-        ),
-        pytest.param(
-            "to_batches",
-            -1,
-            marks=pytest.mark.xfail(
-                reason="to_batches routes invalid batch sizes to DuckDB, which raises TypeError instead of a consistent ValueError."
-            ),
-        ),
-        pytest.param(
-            "to_batch_reader",
-            0,
-            marks=pytest.mark.xfail(
-                reason="to_batch_reader routes invalid batch sizes to DuckDB, which raises RuntimeError instead of a consistent ValueError."
-            ),
-        ),
-        pytest.param(
-            "to_batch_reader",
-            -1,
-            marks=pytest.mark.xfail(
-                reason="to_batch_reader routes invalid batch sizes to DuckDB, which raises TypeError instead of a consistent ValueError."
-            ),
-        ),
-        pytest.param(
-            "to_polars",
-            0,
-            marks=pytest.mark.xfail(
-                reason="to_polars(lazy=False) routes invalid batch sizes to DuckDB, which raises RuntimeError instead of a consistent ValueError."
-            ),
-        ),
-        pytest.param(
-            "to_polars",
-            -1,
-            marks=pytest.mark.xfail(
-                reason="to_polars(lazy=False) routes invalid batch sizes to DuckDB, which raises TypeError instead of a consistent ValueError."
-            ),
-        ),
+        ("to_batches", 0),
+        ("to_batches", -1),
+        ("to_batch_reader", 0),
+        ("to_batch_reader", -1),
+        ("to_polars", 0),
+        ("to_polars", -1),
     ],
 )
 def test_invalid_batch_size_raises_value_error(
