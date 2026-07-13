@@ -355,13 +355,7 @@ def test_default_batch_size_honors_arrow_options(arrow_table: PydalaTable) -> No
         ("to_pandas", -1),
         ("to_df", 0),
         ("to_df", -1),
-        pytest.param(
-            "to_arrow_scanner",
-            0,
-            marks=pytest.mark.xfail(
-                reason="to_arrow_scanner currently uses 'or' defaulting, so batch_size=0 is silently treated as the default instead of raising."
-            ),
-        ),
+        ("to_arrow_scanner", 0),
         ("to_arrow_scanner", -1),
         pytest.param(
             "to_batches",

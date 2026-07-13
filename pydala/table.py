@@ -1,4 +1,5 @@
 import re
+
 # Third-party imports
 import duckdb as _duckdb
 import pandas as pd
@@ -90,7 +91,9 @@ class PydalaTable:
             backend = "duckdb" if use == "fsspeckit-duckdb" else "pyarrow"
             adapter = FsspeckitParquetAdapter(filesystem=filesystem)
             try:
-                result = adapter.read_parquet(path, filters=filter_expr, backend=backend)
+                result = adapter.read_parquet(
+                    path, filters=filter_expr, backend=backend
+                )
             finally:
                 adapter.close()
         else:
@@ -115,6 +118,7 @@ class PydalaTable:
         finally:
             adapter.close()
         return cls(result=result, ddb_con=ddb_con)
+
     @staticmethod
     def prune_files(
         metadata_table: _duckdb.DuckDBPyRelation,
@@ -165,6 +169,7 @@ class PydalaTable:
 
         scanned = metadata_table.filter(" AND ".join(candidates))
         return sorted({row[0] for row in scanned.select("file_path").fetchall()})
+
     @staticmethod
     def _parse_sort_by_string(sort_by: str) -> list[list[str]]:
         """Parse a string sort specification into a list of [field, direction] pairs."""
@@ -213,10 +218,12 @@ class PydalaTable:
         """Format sort specification for DuckDB."""
         return ",".join(
             [
-                " ".join([
-                    s[0],
-                    s[1].replace("ascending", "ASC").replace("descending", "DESC"),
-                ])
+                " ".join(
+                    [
+                        s[0],
+                        s[1].replace("ascending", "ASC").replace("descending", "DESC"),
+                    ]
+                )
                 for s in sort_by
             ]
         )
@@ -287,6 +294,68 @@ class PydalaTable:
         """
         return self.to_arrow_dataset()
 
+    def _build_scanner(
+        self,
+        columns: str | list[str] | None = None,
+        filter: pds.Expression | None = None,
+        batch_size: int | None = None,
+        sort_by: str | list[str] | list[tuple[str, str]] | None = None,
+        batch_readahead: int | None = None,
+        fragment_readahead: int | None = None,
+        fragment_scan_options: pds.FragmentScanOptions | None = None,
+        use_threads: bool | None = None,
+        memory_pool: pa.MemoryPool | None = None,
+    ) -> pds.Scanner:
+        from .constants import ScannerConfig
+
+        if self._type != "pyarrow":
+            raise ValueError("This method is only available for pyarrow datasets.")
+
+        config = ScannerConfig()
+        batch_size = config.batch_size if batch_size is None else batch_size
+        batch_readahead = (
+            config.batch_readahead if batch_readahead is None else batch_readahead
+        )
+        fragment_readahead = (
+            config.fragment_readahead
+            if fragment_readahead is None
+            else fragment_readahead
+        )
+        fragment_scan_options = (
+            config.fragment_scan_options
+            if fragment_scan_options is None
+            else fragment_scan_options
+        )
+        use_threads = config.use_threads if use_threads is None else use_threads
+        memory_pool = config.memory_pool if memory_pool is None else memory_pool
+
+        if batch_size <= 0:
+            raise ValueError("batch_size must be a positive integer")
+        if batch_readahead < 0:
+            raise ValueError("batch_readahead must be a non-negative integer")
+        if fragment_readahead < 0:
+            raise ValueError("fragment_readahead must be a non-negative integer")
+
+        if isinstance(columns, str):
+            columns = [columns]
+
+        if sort_by is not None:
+            sort_by = self._get_sort_by(sort_by, "pyarrow")
+            dataset = self._dataset.sort_by(**sort_by)
+        else:
+            dataset = self._dataset
+
+        return dataset.scanner(
+            columns=columns,
+            filter=filter,
+            batch_size=batch_size,
+            batch_readahead=batch_readahead,
+            fragment_readahead=fragment_readahead,
+            fragment_scan_options=fragment_scan_options,
+            use_threads=use_threads,
+            memory_pool=memory_pool,
+        )
+
     def to_arrow_scanner(
         self,
         columns: str | list[str] | None = None,
@@ -326,54 +395,17 @@ class PydalaTable:
         Raises:
             ValueError: If the table type is not "pyarrow".
         """
-        from .constants import ScannerConfig
-
-        if self._type != "pyarrow":
-            raise ValueError("This method is only available for pyarrow datasets.")
-
-        # Use config defaults if not specified
-        config = ScannerConfig()
-        batch_size = batch_size or config.batch_size
-        batch_readahead = batch_readahead or config.batch_readahead
-        fragment_readahead = fragment_readahead or config.fragment_readahead
-        use_threads = use_threads if use_threads is not None else config.use_threads
-        fragment_scan_options = fragment_scan_options or config.fragment_scan_options
-        memory_pool = memory_pool or config.memory_pool
-
-        # Validate parameters
-        if batch_size <= 0:
-            raise ValueError("batch_size must be a positive integer")
-        if batch_readahead < 0:
-            raise ValueError("batch_readahead must be a non-negative integer")
-        if fragment_readahead < 0:
-            raise ValueError("fragment_readahead must be a non-negative integer")
-
-        if isinstance(columns, str):
-            columns = [columns]
-
-        if sort_by is not None:
-            sort_by = self._get_sort_by(sort_by, "pyarrow")
-            return self._dataset.sort_by(**sort_by).scanner(
-                columns=columns,
-                filter=filter,
-                batch_size=batch_size,
-                batch_readahead=batch_readahead,
-                fragment_readahead=fragment_readahead,
-                fragment_scan_options=fragment_scan_options,
-                use_threads=use_threads,
-                memory_pool=memory_pool,
-            )
-        else:
-            return self._dataset.scanner(
-                columns=columns,
-                filter=filter,
-                batch_size=batch_size,
-                batch_readahead=batch_readahead,
-                fragment_readahead=fragment_readahead,
-                fragment_scan_options=fragment_scan_options,
-                use_threads=use_threads,
-                memory_pool=memory_pool,
-            )
+        return self._build_scanner(
+            columns=columns,
+            filter=filter,
+            batch_size=batch_size,
+            sort_by=sort_by,
+            batch_readahead=batch_readahead,
+            fragment_readahead=fragment_readahead,
+            fragment_scan_options=fragment_scan_options,
+            use_threads=use_threads,
+            memory_pool=memory_pool,
+        )
 
     def to_scanner(
         self,
@@ -417,19 +449,19 @@ class PydalaTable:
         warnings.warn(
             "to_scanner() is deprecated, use scanner() instead",
             DeprecationWarning,
-            stacklevel=2
+            stacklevel=2,
         )
 
-        return self.scanner(
+        return self._build_scanner(
             columns=columns,
             filter=filter,
             batch_size=batch_size,
+            sort_by=sort_by,
             batch_readahead=batch_readahead,
             fragment_readahead=fragment_readahead,
             fragment_scan_options=fragment_scan_options,
             use_threads=use_threads,
             memory_pool=memory_pool,
-            sort_by=sort_by,
         )
 
     def scanner(
@@ -469,29 +501,16 @@ class PydalaTable:
         Returns:
             pds.Scanner: Scanner object for scanning the table.
         """
-        from .constants import ScannerConfig
-
-        # Use config defaults if not specified
-        config = ScannerConfig()
-
-        # Validate parameters before passing to to_arrow_scanner
-        if batch_size is not None and batch_size <= 0:
-            raise ValueError("batch_size must be a positive integer")
-        if batch_readahead is not None and batch_readahead < 0:
-            raise ValueError("batch_readahead must be a non-negative integer")
-        if fragment_readahead is not None and fragment_readahead < 0:
-            raise ValueError("fragment_readahead must be a non-negative integer")
-
-        return self.to_arrow_scanner(
+        return self._build_scanner(
             columns=columns,
             filter=filter,
-            batch_size=batch_size or config.batch_size,
-            batch_readahead=batch_readahead or config.batch_readahead,
-            fragment_readahead=fragment_readahead or config.fragment_readahead,
-            fragment_scan_options=fragment_scan_options or config.fragment_scan_options,
-            use_threads=use_threads if use_threads is not None else config.use_threads,
-            memory_pool=memory_pool or config.memory_pool,
+            batch_size=batch_size,
             sort_by=sort_by,
+            batch_readahead=batch_readahead,
+            fragment_readahead=fragment_readahead,
+            fragment_scan_options=fragment_scan_options,
+            use_threads=use_threads,
+            memory_pool=memory_pool,
         )
 
     def to_duckdb(
