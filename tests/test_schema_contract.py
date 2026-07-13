@@ -19,6 +19,7 @@ import pyarrow.parquet as pq
 
 from pydala.metadata import collect_parquet_metadata
 from pydala.schema import (
+    _plan_schema_repair,
     collect_file_schemas,
     convert_large_types_to_normal,
     convert_timestamp,
@@ -301,6 +302,45 @@ class TestRepairSchema(unittest.TestCase):
 
             self.assertEqual(pq.read_schema(int_path).field("id").type, pa.int64())
             self.assertEqual(pq.read_schema(uint_path).field("id").type, pa.int64())
+
+    def test_explicit_parquet_version_is_applied_to_repair_writes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = f"{tmpdir}/values.parquet"
+            pq.write_table(
+                pa.table({"id": pa.array([1], type=pa.int64())}),
+                path,
+                version="2.6",
+            )
+
+            repair_schema(
+                files=[path],
+                schema=pa.schema([("id", pa.int64())]),
+                version="1.0",
+                n_jobs=1,
+                backend="sequential",
+                verbose=False,
+            )
+
+            self.assertEqual(pq.read_metadata(path).format_version, "1.0")
+            self.assertEqual(pq.read_schema(path), pa.schema([("id", pa.int64())]))
+
+
+class TestSchemaRepairPlanner(unittest.TestCase):
+    """Shared planning keeps physical schema and repair constraints aligned."""
+
+    def test_planner_uses_one_snapshot_for_schema_and_version_candidates(self):
+        schema = pa.schema([("id", pa.int64())])
+        snapshots = {"current.parquet": schema, "legacy.parquet": schema}
+
+        plan = _plan_schema_repair(
+            snapshots,
+            file_versions={"current.parquet": "1.0", "legacy.parquet": "2.6"},
+            version="1.0",
+        )
+
+        self.assertEqual(plan["schema"], schema)
+        self.assertEqual(plan["files"], ["legacy.parquet"])
+        self.assertEqual(snapshots, {"current.parquet": schema, "legacy.parquet": schema})
 
 
 class TestRepairSchemaDryRun(unittest.TestCase):

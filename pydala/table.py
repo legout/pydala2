@@ -1,4 +1,3 @@
-import re
 
 # Third-party imports
 import duckdb as _duckdb
@@ -7,8 +6,9 @@ import pyarrow as pa
 import pyarrow.dataset as pds
 
 # Local imports
-from .helpers.polars import pl as _pl
 from .adapters.fsspeckit import FsspeckitParquetAdapter
+from .helpers.metadata import _prune_metadata_files
+from .helpers.polars import pl as _pl
 from .helpers.sql import sql2pyarrow_filter
 
 
@@ -125,50 +125,8 @@ class PydalaTable:
         filter_expr: str | None,
         files: list[str],
     ) -> list[str]:
-        """Select candidate files from immutable metadata statistics."""
-        if filter_expr is None:
-            return files
-
-        candidates: list[str] = []
-        for predicate in re.split(r"\s+[aA][nN][dD]\s+", filter_expr):
-            column = re.split("[>=<]", predicate)[0].lstrip("(")
-            if metadata_table.select(column).types[0].id != "struct":
-                candidates.append(predicate)
-                continue
-
-            is_date = bool(
-                re.findall(
-                    r"[<>=!]'[1,2]\d{3}-\d{1,2}-\d{1,2}(?:[\s,T]\d{2}:\d{2}:{0,2}\d{0,2})?'",
-                    predicate,
-                )
-            )
-            if ">" in predicate:
-                predicate = (
-                    f"({predicate.replace('>', '.max>')} OR "
-                    f"{predicate.split('>')[0]}.max IS NULL)"
-                )
-            elif "<" in predicate:
-                predicate = (
-                    f"({predicate.replace('<', '.min<')} OR "
-                    f"{predicate.split('<')[0]}.min IS NULL)"
-                )
-            elif "=" in predicate:
-                predicate = (
-                    f"({predicate.replace('=', '.min<=')} OR "
-                    f"{predicate.split('=')[0]}.min IS NULL) AND "
-                    f"({predicate.replace('=', '.max>=')} OR "
-                    f"{predicate.split('=')[0]}.max IS NULL)"
-                )
-            if is_date:
-                predicate = (
-                    predicate.replace(">", "::DATE>")
-                    .replace("<", "::DATE<")
-                    .replace(" IS NULL", "::DATE IS NULL")
-                )
-            candidates.append(predicate)
-
-        scanned = metadata_table.filter(" AND ".join(candidates))
-        return sorted({row[0] for row in scanned.select("file_path").fetchall()})
+        """Select physical candidate files using conservative metadata statistics."""
+        return _prune_metadata_files(metadata_table, filter_expr, files)
 
     @staticmethod
     def _parse_sort_by_string(sort_by: str) -> list[list[str]]:

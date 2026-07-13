@@ -645,16 +645,6 @@ def test_update_repairs_timestamp_unit_divergence(local_path: str) -> None:
     assert_core_metadata_invariants(ds)
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Managed update(tz=...) does not apply timezone conversion to files "
-        "that already match the pre-conversion unified schema; the managed "
-        "repair planner does not apply tz/ts_unit before computing the "
-        "rewrite candidate set. Direct repair_schema(tz=...) handles this "
-        "correctly. See #22."
-    ),
-    strict=False,
-)
 def test_update_applies_timezone_to_already_unified_files(local_path: str) -> None:
     """update(tz=...) should add timezone to all files, not only divergent ones.
 
@@ -693,15 +683,6 @@ def test_update_applies_timezone_to_already_unified_files(local_path: str) -> No
     assert_core_metadata_invariants(ds)
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Managed update(ts_unit=..., tz=...) fails when files differ in both "
-        "unit and timezone because the repair candidate set is computed "
-        "without the requested tz/ts_unit, leaving some files unrepaired. "
-        "See #22 for the shared schema-repair planner."
-    ),
-    strict=False,
-)
 def test_update_repairs_mixed_timestamp_unit_and_timezone(local_path: str) -> None:
     """update(ts_unit=..., tz=...) should unify units and apply timezone together."""
     fs = FileSystem(bucket=str(local_path), cached=False)

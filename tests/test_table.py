@@ -184,6 +184,44 @@ class TestPydalaTable(unittest.TestCase):
             metadata, "num_rows > 50", ["small.parquet", "large.parquet"]
         )
         self.assertEqual(files, ["large.parquet"])
+    def test_prune_files_retains_all_physical_files_for_unsupported_statistics(self):
+        """Untranslatable statistics predicates must never omit physical files."""
+        metadata = _duckdb.connect().from_arrow(
+            pa.table(
+                {
+                    "file_path": ["old.parquet", "new.parquet"],
+                    "id": [
+                        {"min": 1, "max": 5},
+                        {"min": 10, "max": 20},
+                    ],
+                }
+            )
+        )
+
+        files = PydalaTable.prune_files(
+            metadata,
+            "id != 5",
+            ["old.parquet", "new.parquet", "untracked.parquet"],
+        )
+
+        self.assertEqual(
+            files, ["old.parquet", "new.parquet", "untracked.parquet"]
+        )
+
+    def test_prune_files_does_not_reintroduce_stale_metadata_files(self):
+        """Physical discovery remains authoritative over stale sidecar rows."""
+        metadata = _duckdb.connect().from_arrow(
+            pa.table(
+                {
+                    "file_path": ["stale.parquet"],
+                    "id": [{"min": 10, "max": 20}],
+                }
+            )
+        )
+
+        files = PydalaTable.prune_files(metadata, "id > 5", ["live.parquet"])
+
+        self.assertEqual(files, [])
 
     def test_scanner(self):
         # Test that scanner method returns a Scanner object

@@ -18,13 +18,19 @@ from fsspec.core import split_protocol
 from loguru import logger
 
 from .filesystem import FileSystem, clear_cache
+from .helpers.metadata import (
+    _plan_metadata_predicate,
+    _plan_non_statistics_predicate,
+    _prune_metadata_files,
+)
 
 # from .helpers.metadata import collect_parquet_metadata  # , remove_from_metadata
 from .helpers.misc import get_partitions_from_path, run_parallel, unify_schemas_pl
 import brotli
 from .schema import (
+    _execute_schema_repair,
+    _plan_schema_repair,
     convert_large_types_to_normal,  # unify_schemas
-    repair_schema,
 )
 
 
@@ -508,67 +514,87 @@ class ParquetDatasetMetadata:
         **kwargs,
     ):
         """
-        Repairs the schemas of files in the metadata.
+        Repairs file schemas from one reconciled physical-file snapshot.
 
         Args:
-            schema (pa.Schema | None, optional): The schema to use for repairing the files. If None,
-                the unified schema will be used. Defaults to None.
-            format_version (str | None, optional): The format version to use for repairing the files. If None,
-                the format version from the metadata will be used. Defaults to None.
-            tz (str | None, optional): The timezone to use for repairing the files. Defaults to None.
-            ts_unit (str | None, optional): The timestamp unit to use for repairing the files. Defaults to None.
-            alter_schema (bool, optional): Whether to alter the schema of the files. Defaults to True.
-            **kwargs: Additional keyword arguments to pass to the repair_schema function.
-
-        Returns:
-            None
+            schema (pa.Schema | None, optional): The schema to use for repairing
+                files. If None, a target is planned from the physical files.
+            format_version (str | None, optional): The Parquet version to use
+                for repair writes. If None, the metadata version is used.
+            tz (str | None, optional): The timezone to use for repairing files.
+            ts_unit (str | None, optional): The timestamp unit to use for
+                repairing files.
+            alter_schema (bool, optional): Whether to alter the schema of the
+                files. Defaults to True.
+            **kwargs: Additional keyword arguments to pass to repair_schema.
         """
-        # get unified schema
-        if schema is None:
-            schema, _ = self._get_unified_schema(verbose=verbose)
+        # Track 2 reconciliation has already updated sidecars from physical
+        # discovery in ``update``. Snapshot both views before planning so a
+        # repair cannot select stale or physically absent files.
+        physical_files = tuple(sorted(set(self._ls_files())))
+        file_metadata_snapshot = dict(self.file_metadata)
+        file_schemas_snapshot = {
+            file: metadata.schema.to_arrow_schema()
+            for file, metadata in file_metadata_snapshot.items()
+            if file in physical_files
+        }
+        file_versions_snapshot = {
+            file: metadata.format_version
+            for file, metadata in file_metadata_snapshot.items()
+            if file in file_schemas_snapshot
+        }
 
-        files_to_repair = [
-            f for f in self.file_metadata if self.file_schemas[f] != schema
-        ]
+        if not file_schemas_snapshot:
+            self._update_metadata(reload=False, verbose=verbose)
+            return
 
         if format_version is None and self.has_metadata:
             format_version = self.metadata.format_version
 
-        if format_version is not None:
-            files_to_repair += [
-                f
-                for f in self.file_metadata
-                if self.file_metadata[f].format_version != format_version
-            ]
-        # files with different schema
+        plan = _plan_schema_repair(
+            file_schemas=file_schemas_snapshot,
+            schema=schema,
+            ts_unit=ts_unit,
+            tz=tz,
+            file_versions=file_versions_snapshot,
+            version=format_version,
+        )
+        schema = plan["schema"]
+        files_to_repair = plan["files"]
 
-        files_to_repair = sorted(set(files_to_repair))
-        file_schemas_to_repair = {f: self.file_schemas[f] for f in files_to_repair}
-        # repair schema of files
         if len(files_to_repair):
             if verbose:
                 logger.info(
                     f"Repairing schema for number of files: {len(files_to_repair)}"
                 )
 
-            repair_schema(
-                files=files_to_repair,
-                file_schemas=file_schemas_to_repair,
+            repair_kwargs = kwargs.copy()
+            repair_n_jobs = repair_kwargs.pop("n_jobs", -1)
+            repair_backend = repair_kwargs.pop("backend", "threading")
+            repair_verbose = repair_kwargs.pop("verbose", verbose)
+            repair_files = [
+                file
+                if file == self._path or file.startswith(self._path + "/")
+                else posixpath.join(self._path, file)
+                for file in files_to_repair
+            ]
+            _execute_schema_repair(
+                files=repair_files,
                 schema=schema,
-                base_path=self._path,
                 filesystem=self._filesystem,
+                n_jobs=repair_n_jobs,
+                backend=repair_backend,
+                verbose=repair_verbose,
                 version=format_version,
                 ts_unit=ts_unit,
                 tz=tz,
                 alter_schema=alter_schema,
-                **kwargs,
+                **repair_kwargs,
             )
             self.clear_cache()
 
-            # update file metadata
-            self.update_file_metadata(
-                files=sorted(files_to_repair), verbose=verbose, **kwargs
-            )
+            # Refresh only files from the immutable, reconciled candidate set.
+            self.update_file_metadata(files=files_to_repair, verbose=verbose, **kwargs)
 
             # update metadata
             if any([f in self.files_in_metadata for f in files_to_repair]):
@@ -1023,102 +1049,33 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
     def metadata_table_scanned(self):
         return self._metadata_table_scanned
 
-    @staticmethod
-    def _gen_filter(filter_expr: str) -> list[str]:
-        """
-        Generate a modified filter expression for a given filter expression and list of excluded columns.
-
-        Args:
-            filter_expr (str): The filter expression to modify.
-            exclude_columns (list[str], optional): A list of columns to exclude from the modification. Defaults to [].
-
-        Returns:
-            list: A list of modified filter expressions.
-        """
-        # chech if filter_expr is a date string
-        filter_expr_mod = []
-        is_date = False
-        is_timestamp = False
-        res = re.findall(
-            r"[<>=!]\'[1,2]{1}\d{3}-\d{1,2}-\d{1,2}(?:[\s,T]\d{2}:\d{2}:{0,2}\d{0,2})?\'",
-            filter_expr,
-        )
-        if len(res):
-            is_date = len(res[0]) <= 13
-            is_timestamp = len(res[0]) > 13
-
-        # print(is_date)
-        if ">" in filter_expr:
-            filter_expr = f"({filter_expr.replace('>', '.max>')} OR {filter_expr.split('>')[0]}.max IS NULL)"
-        elif "<" in filter_expr:
-            filter_expr = f"({filter_expr.replace('<', '.min<')} OR {filter_expr.split('<')[0]}.min IS NULL)"
-        elif "=" in filter_expr:
-            filter_expr = (
-                f"({filter_expr.replace('=', '.min<=')} OR {filter_expr.split('=')[0]}.min IS NULL) "
-                + f"AND ({filter_expr.replace('=', '.max>=')} OR {filter_expr.split('=')[0]}.max IS NULL)"
-            )
-
-        if is_date:
-            filter_expr = (
-                filter_expr.replace(">", "::DATE>")
-                .replace("<", "::DATE<")
-                .replace(" IS NULL", "::DATE IS NULL")
-            )
-        elif is_timestamp:
-            filter_expr = (
-                filter_expr.replace(">", "::TIMESTAMP>")
-                .replace("<", "::TIMESTAMP<")
-                .replace(" IS NULL", "::TIMESTAMP IS NULL")
-            )
-
-        filter_expr_mod.append(filter_expr)
-
-        return filter_expr_mod
-
     def scan(self, filter_expr: str | None = None):
-        """
-        Scans the dataset for files that match the given filter expression.
-
-        Args:
-            filter_expr (str | None): A filter expression to apply to the dataset. Defaults to None.
-            lazy (bool): Whether to perform the scan lazily or eagerly. Defaults to True.
-
-        Returns:
-            None
-        """
+        """Scan metadata conservatively and retain physical file candidates."""
         self._filter_expr = filter_expr
-        if filter_expr is not None:
-            filter_expr = re.split(
-                r"\s+[a,A][n,N][d,D]\s+",
-                filter_expr,
-            )
+        if filter_expr is None:
+            return
 
-            filter_expr_mod = []
-
-            for fe in filter_expr:
-                # if (
-                #    re.split("[>=<]", fe)[0].lstrip("(")
-                #    in self.metadata_table.column_names
-                # ):
-                col = re.split("[>=<]", fe)[0].lstrip("(")
-                # if not isinstance(
-                #    self.metadata_table.schema.field(col).type, pa.StructType
-                # ):
-                if self.metadata_table.select(col).types[0].id != "struct":
-                    filter_expr_mod.append(fe)
-                else:
-                    filter_expr_mod += self._gen_filter(fe)
-
-            self._filter_expr_mod = " AND ".join(filter_expr_mod)
-
-            # self._metadata_table_scanned = (
-            #    self._con.from_arrow(self.metadata_table)
-            #    .filter(self._filter_expr_mod)
-            #    .arrow()
-            # )
-            self._metadata_table_scanned = self._metadata_table.filter(
-                self._filter_expr_mod
-            )
+        self._filter_expr_mod = _plan_metadata_predicate(
+            self.metadata_table, filter_expr
+        )
+        scan_files = _prune_metadata_files(
+            self.metadata_table, filter_expr, self.files
+        )
+        if not scan_files:
+            self._metadata_table_scanned = self._metadata_table.filter("1 = 0")
+            return
+        in_values = ", ".join(
+            "'" + file_path.replace("'", "''") + "'" for file_path in scan_files
+        )
+        file_filter = f"file_path IN ({in_values})"
+        metadata_filter = _plan_non_statistics_predicate(
+            self.metadata_table, filter_expr
+        )
+        if metadata_filter is not None:
+            # Statistics predicates are represented by selected files; only
+            # independent metadata predicates are evaluated row-wise here.
+            file_filter = f"({metadata_filter}) AND ({file_filter})"
+        self._metadata_table_scanned = self._metadata_table.filter(file_filter)
 
     # def filter(self, filter_expr: str | None = None):
     #     """
