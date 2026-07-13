@@ -55,7 +55,69 @@ def strip_protocol(path: str) -> str:
     return path
 
 
-class BaseDataset:
+class _DatasetStorage:
+    """Canonical owner of path, filesystem, cache, and directory lifecycle.
+
+    Centralizes storage initialization so every dataset type shares one
+    unambiguous owner for normalized path state, filesystem selection,
+    cache configuration, directory creation, and cache invalidation.
+    """
+
+    def _init_storage(
+        self,
+        path: str,
+        filesystem: AbstractFileSystem | None,
+        bucket: str | None,
+        cached: bool,
+        **fs_kwargs,
+    ) -> None:
+        if not isinstance(path, str) or not path:
+            raise ValueError("path must be a non-empty string")
+
+        self._bucket = bucket
+        self._cached = cached
+        self._base_filesystem = filesystem
+        if cached:
+            cache_storage = fs_kwargs.pop(
+                "cache_storage", tempfile.mkdtemp(prefix="pydala2_")
+            )
+        else:
+            cache_storage = None
+        if filesystem is not None and bucket is None and not cached:
+            self._filesystem = filesystem
+        else:
+            self._filesystem = FileSystem(
+                bucket=bucket,
+                fs=filesystem,
+                cached=cached,
+                cache_storage=cache_storage,
+                **fs_kwargs,
+            )
+        self._path = strip_protocol(path)
+        self._makedirs()
+
+    def _makedirs(self) -> None:
+        if self._filesystem.exists(self._path):
+            return
+        try:
+            self._filesystem.mkdirs(self._path)
+        except (OSError, PermissionError) as e:
+            logger.warning(f"Failed to create directory {self._path}: {e}")
+            try:
+                self._filesystem.touch(posixpath.join(self._path, "tmp.delete"))
+                self._filesystem.rm(posixpath.join(self._path, "tmp.delete"))
+            except Exception as e2:
+                logger.error(f"Alternative directory creation also failed: {e2}")
+                raise
+
+    def clear_cache(self) -> None:
+        if hasattr(self._filesystem, "fs"):
+            clear_cache(self._filesystem.fs)
+        clear_cache(self._filesystem)
+        clear_cache(self._base_filesystem)
+
+
+class BaseDataset(_DatasetStorage):
     """A base class for dataset operations supporting multiple file formats.
 
     This class provides a unified interface for working with datasets in various formats
@@ -107,8 +169,6 @@ class BaseDataset:
             ValueError: If path, format, partitioning, or timestamp_column are invalid types.
         """
         # Input validation
-        if not isinstance(path, str) or not path:
-            raise ValueError("path must be a non-empty string")
         if format is not None and not isinstance(format, str):
             raise ValueError("format must be a string or None")
         if partitioning is not None and not isinstance(partitioning, (str, list)):
@@ -116,31 +176,11 @@ class BaseDataset:
         if timestamp_column is not None and not isinstance(timestamp_column, str):
             raise ValueError("timestamp_column must be a string or None")
 
+        self._init_storage(path, filesystem, bucket, cached, **fs_kwargs)
+
         self._schema = schema
-        self._bucket = bucket
-        self._cached = cached
         self._format = format
-        self._base_filesystem = filesystem
-        if cached:
-            cache_storage = fs_kwargs.pop(
-                "cache_storage", tempfile.mkdtemp(prefix="pydala2_")
-            )
-            # cache_storage = posixpath.join(cache_storage, path)
-        else:
-            cache_storage = None
-        if filesystem is not None and bucket is None and not cached:
-            self._filesystem = filesystem
-        else:
-            self._filesystem = FileSystem(
-                bucket=bucket,
-                fs=filesystem,
-                cached=cached,
-                cache_storage=cache_storage,
-                **fs_kwargs,
-            )
-        self._path = strip_protocol(path) if path else ""
         self.table = None
-        self._makedirs()
 
         if name is None:
             self.name = posixpath.basename(path)
@@ -171,13 +211,21 @@ class BaseDataset:
                 partitioning = None
         self._partitioning = partitioning
 
+        if type(self) is BaseDataset:
+            self._load_eager()
+
+    def _load_eager(self) -> None:
+        """Eagerly load the dataset after construction state is complete.
+
+        Errors during loading are swallowed so datasets can be created
+        before any files exist (matching the historical contract).
+        """
         try:
             self.load()
         except FileNotFoundError:
             logger.debug(f"Dataset path does not exist yet: {self._path}")
         except Exception as e:
             logger.warning(f"Failed to load dataset {self._path}: {e}")
-            # Don't raise - allow dataset to be created without files
 
     def load_files(self) -> None:
         """
@@ -197,20 +245,6 @@ class BaseDataset:
             for fn in sorted(self._filesystem.glob(glob_pattern))
         ]
 
-    def _makedirs(self) -> None:
-        if self._filesystem.exists(self._path):
-            return
-        try:
-            self._filesystem.mkdirs(self._path)
-        except (OSError, PermissionError) as e:
-            logger.warning(f"Failed to create directory {self._path}: {e}")
-            # Try alternative approach
-            try:
-                self._filesystem.touch(posixpath.join(self._path, "tmp.delete"))
-                self._filesystem.rm(posixpath.join(self._path, "tmp.delete"))
-            except Exception as e2:
-                logger.error(f"Alternative directory creation also failed: {e2}")
-                raise
 
     @property
     def files(self) -> list:
@@ -286,21 +320,6 @@ class BaseDataset:
                 self._tz = None
 
             self.ddb_con.register(f"{self.name}", self._arrow_dataset)
-
-    def clear_cache(self) -> None:
-        """
-        Clears the cache for the dataset.
-
-        This method clears the cache for the dataset by calling the `clear_cache` function
-        for both the `_filesystem` and `_base_filesystem` attributes.
-
-        Returns:
-            None
-        """
-        if hasattr(self._filesystem, "fs"):
-            clear_cache(self._filesystem.fs)
-        clear_cache(self._filesystem)
-        clear_cache(self._base_filesystem)
 
     @property
     def schema(self):
@@ -1194,6 +1213,7 @@ class PyarrowDataset(BaseDataset):
             ddb_con=ddb_con,
             **fs_kwargs,
         )
+        self._load_eager()
 
 
 class CSVDataset(PyarrowDataset):
@@ -1288,6 +1308,7 @@ class JSONDataset(BaseDataset):
             ddb_con=ddb_con,
             **fs_kwargs,
         )
+        self._load_eager()
 
     def load(self) -> None:
         """Load the JSON dataset.

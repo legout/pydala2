@@ -33,7 +33,7 @@ from fsspec.implementations.dirfs import DirFileSystem
 from fsspec.implementations.local import LocalFileSystem
 from fsspec.implementations.memory import MemoryFileSystem
 from pydala.catalog import Catalog
-from pydala.dataset import JSONDataset
+from pydala.dataset import JSONDataset, PyarrowDataset
 from pydala.filesystem import FileSystem, clear_cache
 
 from tests.conftest import assert_metadata_invariants
@@ -465,5 +465,78 @@ class TestManagedDatasetMetadataInvariants:
         assert set(managed_dataset.files_in_metadata) == set(managed_dataset.files)
 
 
+class TestGenericDatasetEagerLoading(unittest.TestCase):
+    """Generic dataset types are eager and load exactly once during construction."""
+
+    def setUp(self) -> None:
+        self._root = tempfile.TemporaryDirectory()
+        self.root = self._root.name
+        self.fs = FileSystem(bucket=self.root, cached=False)
+        self.fs.makedirs("data")
+        pq.write_table(
+            pa.table({"a": [1, 2, 3], "b": ["x", "y", "z"]}),
+            os.path.join(self.root, "data", "part.parquet"),
+        )
+
+    def tearDown(self) -> None:
+        self._root.cleanup()
+
+    def test_pyarrow_dataset_is_query_ready(self) -> None:
+        ds = PyarrowDataset("data", filesystem=self.fs)
+        self.assertTrue(ds.is_loaded)
+        self.assertEqual(ds.count_rows(), 3)
+
+    def test_base_dataset_is_query_ready(self) -> None:
+        from pydala.dataset import BaseDataset
+
+        ds = BaseDataset("data", filesystem=self.fs, format="parquet")
+        self.assertTrue(ds.is_loaded)
+        self.assertEqual(ds.count_rows(), 3)
+
+    def test_load_called_exactly_once(self) -> None:
+        """Each concrete type invokes load exactly once during construction."""
+        from pydala.dataset import BaseDataset
+
+        call_count = [0]
+        original_load = BaseDataset.load
+
+        def counting_load(self):
+            call_count[0] += 1
+            return original_load(self)
+
+        BaseDataset.load = counting_load
+        try:
+            PyarrowDataset("data", filesystem=self.fs)
+        finally:
+            BaseDataset.load = original_load
+        self.assertEqual(call_count[0], 1)
+
+    def test_no_dynamic_dispatch_during_base_init(self) -> None:
+        """BaseDataset.__init__ must not call an overridden load() on subclasses."""
+        from pydala.dataset import BaseDataset
+
+        load_during_base_init = [False]
+        original_init = BaseDataset.__init__
+
+        def tracking_init(self, *args, **kwargs):
+            original_load_method = type(self).load
+            def spy_load(self_inner):
+                load_during_base_init[0] = True
+                return original_load_method(self_inner)
+            type(self).load = spy_load
+            try:
+                original_init(self, *args, **kwargs)
+            finally:
+                type(self).load = original_load_method
+
+        BaseDataset.__init__ = tracking_init
+        try:
+            PyarrowDataset("data", filesystem=self.fs)
+        finally:
+            BaseDataset.__init__ = original_init
+        self.assertFalse(
+            load_during_base_init[0],
+            "load() must not be dispatched during BaseDataset.__init__",
+        )
 if __name__ == "__main__":
     unittest.main()
