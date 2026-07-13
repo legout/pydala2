@@ -1,4 +1,6 @@
+import datetime
 import unittest
+
 import pytest
 import pyarrow.dataset as pds
 import pyarrow as pa
@@ -11,14 +13,15 @@ class TestPydalaTable(unittest.TestCase):
     def setUp(self):
         # Create a mock table object
         # Create a simple PyArrow table for testing
-        data = pa.table({
-            'col1': [1, 2, 3, 4, 5],
-            'col2': ['a', 'b', 'c', 'd', 'e'],
-            'col3': [10, 20, 30, 40, 50]
-        })
+        data = pa.table(
+            {
+                "col1": [1, 2, 3, 4, 5],
+                "col2": ["a", "b", "c", "d", "e"],
+                "col3": [10, 20, 30, 40, 50],
+            }
+        )
         dataset = pds.dataset(data)
         self.table = PydalaTable(dataset)
-
 
     def test_filter_routes_arrow_execution_inside_table(self):
         result = self.table.filter("col1 > 3")
@@ -49,6 +52,139 @@ class TestPydalaTable(unittest.TestCase):
         )
 
         self.assertEqual(files, ["second.parquet"])
+
+    def test_prune_files_equality_selects_overlapping_range(self):
+        """``=`` retains any file whose [min, max] range overlaps the value."""
+
+        metadata = _duckdb.connect().from_arrow(
+            pa.table(
+                {
+                    "file_path": ["lo.parquet", "hi.parquet"],
+                    "id": [
+                        {"min": 1, "max": 10},
+                        {"min": 11, "max": 20},
+                    ],
+                }
+            )
+        )
+
+        files = PydalaTable.prune_files(
+            metadata, "id = 5", ["lo.parquet", "hi.parquet"]
+        )
+        self.assertEqual(files, ["lo.parquet"])
+
+    def test_prune_files_date_predicate(self):
+        """Date literal predicates are cast correctly for min/max comparison."""
+        metadata = _duckdb.connect().from_arrow(
+            pa.table(
+                {
+                    "file_path": ["jan.parquet", "jun.parquet"],
+                    "d": [
+                        {
+                            "min": datetime.date(2024, 1, 1),
+                            "max": datetime.date(2024, 1, 31),
+                        },
+                        {
+                            "min": datetime.date(2024, 6, 1),
+                            "max": datetime.date(2024, 6, 30),
+                        },
+                    ],
+                }
+            )
+        )
+
+        files = PydalaTable.prune_files(
+            metadata, "d < '2024-03-01'", ["jan.parquet", "jun.parquet"]
+        )
+        self.assertEqual(files, ["jan.parquet"])
+
+    def test_prune_files_timestamp_predicate(self):
+        """Timestamp literal predicates are compared via min/max statistics."""
+        metadata = _duckdb.connect().from_arrow(
+            pa.table(
+                {
+                    "file_path": ["early.parquet", "late.parquet"],
+                    "ts": [
+                        {
+                            "min": datetime.datetime(2024, 1, 1, 0, 0, 0),
+                            "max": datetime.datetime(2024, 1, 31, 23, 59, 59),
+                        },
+                        {
+                            "min": datetime.datetime(2024, 6, 1, 0, 0, 0),
+                            "max": datetime.datetime(2024, 6, 30, 23, 59, 59),
+                        },
+                    ],
+                }
+            )
+        )
+
+        files = PydalaTable.prune_files(
+            metadata, "ts > '2024-03-01 00:00:00'", ["early.parquet", "late.parquet"]
+        )
+        self.assertEqual(files, ["late.parquet"])
+
+    def test_prune_files_compound_and_predicate(self):
+        """``AND`` conjunctions prune across multiple statistics columns."""
+        metadata = _duckdb.connect().from_arrow(
+            pa.table(
+                {
+                    "file_path": ["a.parquet", "b.parquet", "c.parquet"],
+                    "id": [
+                        {"min": 1, "max": 10},
+                        {"min": 11, "max": 20},
+                        {"min": 21, "max": 30},
+                    ],
+                    "amount": [
+                        {"min": 100.0, "max": 200.0},
+                        {"min": 100.0, "max": 200.0},
+                        {"min": 300.0, "max": 400.0},
+                    ],
+                }
+            )
+        )
+
+        files = PydalaTable.prune_files(
+            metadata,
+            "id > 5 AND amount > 250",
+            ["a.parquet", "b.parquet", "c.parquet"],
+        )
+        self.assertEqual(files, ["c.parquet"])
+
+    def test_prune_files_retains_null_statistics(self):
+        """Files with NULL min/max are retained (conservative pruning)."""
+        metadata = _duckdb.connect().from_arrow(
+            pa.table(
+                {
+                    "file_path": ["has.parquet", "nulls.parquet"],
+                    "id": [
+                        {"min": 1, "max": 5},
+                        {"min": None, "max": None},
+                    ],
+                }
+            )
+        )
+
+        files = PydalaTable.prune_files(
+            metadata, "id > 10", ["has.parquet", "nulls.parquet"]
+        )
+        self.assertIn("nulls.parquet", files)
+
+    def test_prune_files_preserves_non_statistics_predicate(self):
+        """Predicates on non-struct metadata columns are applied directly."""
+        metadata = _duckdb.connect().from_arrow(
+            pa.table(
+                {
+                    "file_path": ["small.parquet", "large.parquet"],
+                    "num_rows": [3, 100],
+                }
+            )
+        )
+
+        files = PydalaTable.prune_files(
+            metadata, "num_rows > 50", ["small.parquet", "large.parquet"]
+        )
+        self.assertEqual(files, ["large.parquet"])
+
     def test_scanner(self):
         # Test that scanner method returns a Scanner object
         scanner = self.table.scanner()
@@ -115,7 +251,7 @@ class TestPydalaTable(unittest.TestCase):
             batch_readahead=None,
             fragment_readahead=None,
             use_threads=None,
-            memory_pool=None
+            memory_pool=None,
         )
         self.assertIsInstance(scanner, pds.Scanner)
 
@@ -152,10 +288,7 @@ class TestPydalaTable(unittest.TestCase):
     def test_to_batches_with_parameters(self):
         # Test to_batches with various parameters
         table = self.table.to_batches(
-            columns=["col1", "col2"],
-            batch_size=100,
-            sort_by="col1",
-            distinct=True
+            columns=["col1", "col2"], batch_size=100, sort_by="col1", distinct=True
         )
         # to_batches actually returns a Table (despite the name)
         self.assertIsInstance(table, pa.Table)

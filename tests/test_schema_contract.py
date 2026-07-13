@@ -279,7 +279,7 @@ class TestUnifySchemas(unittest.TestCase):
 
 
 class TestRepairSchema(unittest.TestCase):
-    """``repair_schema`` retains PyArrow's compatible numeric promotion."""
+    """``repair_schema`` execution and dry-run characterization."""
 
     def test_promotes_signed_and_unsigned_integers_without_float_narrowing(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -301,6 +301,204 @@ class TestRepairSchema(unittest.TestCase):
 
             self.assertEqual(pq.read_schema(int_path).field("id").type, pa.int64())
             self.assertEqual(pq.read_schema(uint_path).field("id").type, pa.int64())
+
+
+class TestRepairSchemaDryRun(unittest.TestCase):
+    """``repair_schema(dry_run=True)`` describes the planned mutation safely.
+
+    These tests pin the public dry-run contract: it returns a dictionary
+    describing which files would be rewritten and the target schema, without
+    mutating any data. See issue #21.
+    """
+
+    _RUN_KW = dict(n_jobs=1, backend="sequential", verbose=False)
+
+    def test_dry_run_returns_dictionary_with_files_and_schema(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            int_path = f"{tmpdir}/int.parquet"
+            uint_path = f"{tmpdir}/uint.parquet"
+            pq.write_table(pa.table({"id": pa.array([1], type=pa.int32())}), int_path)
+            pq.write_table(pa.table({"id": pa.array([2], type=pa.uint32())}), uint_path)
+
+            plan = repair_schema(
+                files=[int_path, uint_path], dry_run=True, **self._RUN_KW
+            )
+
+            self.assertIsInstance(plan, dict)
+            self.assertEqual(set(plan.keys()), {"files", "schema"})
+            self.assertEqual(set(plan["files"]), {int_path, uint_path})
+            self.assertEqual(plan["schema"], pa.schema([("id", pa.int64())]))
+
+    def test_dry_run_does_not_mutate_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            int_path = f"{tmpdir}/int.parquet"
+            uint_path = f"{tmpdir}/uint.parquet"
+            pq.write_table(pa.table({"id": pa.array([1], type=pa.int32())}), int_path)
+            pq.write_table(pa.table({"id": pa.array([2], type=pa.uint32())}), uint_path)
+
+            _ = repair_schema(files=[int_path, uint_path], dry_run=True, **self._RUN_KW)
+
+            # Files remain untouched.
+            self.assertEqual(pq.read_schema(int_path).field("id").type, pa.int32())
+            self.assertEqual(pq.read_schema(uint_path).field("id").type, pa.uint32())
+
+    def test_dry_run_lists_only_files_that_differ_from_target(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            small = f"{tmpdir}/small.parquet"
+            wide = f"{tmpdir}/wide.parquet"
+            pq.write_table(pa.table({"id": pa.array([1], type=pa.int32())}), small)
+            pq.write_table(pa.table({"id": pa.array([2], type=pa.int64())}), wide)
+
+            plan = repair_schema(files=[small, wide], dry_run=True, **self._RUN_KW)
+
+            # The unified schema is int64; only the int32 file needs rewriting.
+            self.assertEqual(plan["files"], [small])
+            self.assertEqual(plan["schema"].field("id").type, pa.int64())
+
+    def test_dry_run_returns_empty_files_when_already_unified(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            a = f"{tmpdir}/a.parquet"
+            b = f"{tmpdir}/b.parquet"
+            for path in (a, b):
+                pq.write_table(pa.table({"id": [1, 2]}), path)
+
+            plan = repair_schema(files=[a, b], dry_run=True, **self._RUN_KW)
+
+            self.assertEqual(plan["files"], [])
+
+    def test_dry_run_target_schema_reflects_timestamp_unit_and_timezone(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s_us = pa.schema([("ts", pa.timestamp("us")), ("id", pa.int32())])
+            s_ms = pa.schema([("ts", pa.timestamp("ms")), ("id", pa.int32())])
+            p_us = f"{tmpdir}/us.parquet"
+            p_ms = f"{tmpdir}/ms.parquet"
+            pq.write_table(
+                pa.table(
+                    {
+                        "ts": pa.array(
+                            [datetime.datetime(2024, 1, 1)], pa.timestamp("us")
+                        ),
+                        "id": [1],
+                    },
+                    schema=s_us,
+                ),
+                p_us,
+            )
+            pq.write_table(
+                pa.table(
+                    {
+                        "ts": pa.array(
+                            [datetime.datetime(2024, 1, 2)], pa.timestamp("ms")
+                        ),
+                        "id": [2],
+                    },
+                    schema=s_ms,
+                ),
+                p_ms,
+            )
+
+            plan = repair_schema(
+                files=[p_us, p_ms],
+                dry_run=True,
+                ts_unit="us",
+                tz="UTC",
+                **self._RUN_KW,
+            )
+
+            ts_type = plan["schema"].field("ts").type
+            self.assertEqual(ts_type, pa.timestamp("us", tz="UTC"))
+            self.assertEqual(set(plan["files"]), {p_us, p_ms})
+
+
+class TestRepairSchemaTimestampConversion(unittest.TestCase):
+    """Direct ``repair_schema`` execution applies timestamp unit/timezone conversion.
+
+    See issue #21 — compatibility for timestamp/timezone repair.
+    """
+
+    _RUN_KW = dict(n_jobs=1, backend="sequential", verbose=False)
+
+    def test_repair_unifies_timestamp_units(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s_us = pa.schema([("ts", pa.timestamp("us")), ("id", pa.int32())])
+            s_ms = pa.schema([("ts", pa.timestamp("ms")), ("id", pa.int32())])
+            p_us = f"{tmpdir}/us.parquet"
+            p_ms = f"{tmpdir}/ms.parquet"
+            pq.write_table(
+                pa.table(
+                    {
+                        "ts": pa.array(
+                            [datetime.datetime(2024, 1, 1)], pa.timestamp("us")
+                        ),
+                        "id": [1],
+                    },
+                    schema=s_us,
+                ),
+                p_us,
+            )
+            pq.write_table(
+                pa.table(
+                    {
+                        "ts": pa.array(
+                            [datetime.datetime(2024, 1, 2)], pa.timestamp("ms")
+                        ),
+                        "id": [2],
+                    },
+                    schema=s_ms,
+                ),
+                p_ms,
+            )
+
+            repair_schema(files=[p_us, p_ms], ts_unit="us", **self._RUN_KW)
+
+            self.assertEqual(pq.read_schema(p_us).field("ts").type, pa.timestamp("us"))
+            self.assertEqual(pq.read_schema(p_ms).field("ts").type, pa.timestamp("us"))
+
+    def test_repair_applies_timezone_to_timestamp_fields(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            schema = pa.schema([("ts", pa.timestamp("us")), ("id", pa.int32())])
+            a = f"{tmpdir}/a.parquet"
+            b = f"{tmpdir}/b.parquet"
+            for i, path in enumerate((a, b)):
+                pq.write_table(
+                    pa.table(
+                        {
+                            "ts": pa.array(
+                                [datetime.datetime(2024, 1, 1 + i)],
+                                pa.timestamp("us"),
+                            ),
+                            "id": [i],
+                        },
+                        schema=schema,
+                    ),
+                    path,
+                )
+
+            repair_schema(files=[a, b], tz="UTC", **self._RUN_KW)
+
+            self.assertEqual(
+                pq.read_schema(a).field("ts").type,
+                pa.timestamp("us", tz="UTC"),
+            )
+            self.assertEqual(
+                pq.read_schema(b).field("ts").type,
+                pa.timestamp("us", tz="UTC"),
+            )
+
+    def test_repair_promotes_disjoint_columns_via_unification(self):
+        """Repair adds missing columns so every file converges to the union schema."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            a = f"{tmpdir}/a.parquet"
+            b = f"{tmpdir}/b.parquet"
+            pq.write_table(pa.table({"id": [1, 2], "name": ["x", "y"]}), a)
+            pq.write_table(pa.table({"id": [3, 4], "value": [1.0, 2.0]}), b)
+
+            repair_schema(files=[a, b], alter_schema=True, **self._RUN_KW)
+
+            schema_a = pq.read_schema(a)
+            schema_b = pq.read_schema(b)
+            self.assertEqual(set(schema_a.names), {"id", "name", "value"})
+            self.assertEqual(set(schema_b.names), {"id", "name", "value"})
 
 
 class TestCollectFileSchemas(unittest.TestCase):

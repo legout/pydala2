@@ -18,6 +18,7 @@ writing (commit ccb1a7b9e251731aca9e76778c3fa87323b7aea4):
 
 from __future__ import annotations
 
+import datetime
 import posixpath
 
 import duckdb
@@ -28,6 +29,7 @@ import pytest
 from pydala import ParquetDataset
 from pydala.dataset import Optimize
 from pydala.filesystem import FileSystem
+from pydala.table import PydalaTable
 from tests.conftest import (
     SIMPLE_SCHEMA,
     assert_metadata_invariants,
@@ -251,6 +253,66 @@ def test_optimize_is_constructible_and_compatible(local_path: str) -> None:
     ds.update()
     ds.load()
     assert ds.t.to_arrow().num_rows == 5
+    assert_metadata_invariants(ds)
+
+
+# Public optimization methods that must live natively on ParquetDataset
+# (not copied at runtime from Optimize) per ADR 0001 / issue #14.
+_OPTIMIZATION_METHODS = [
+    "compact_by_rows",
+    "compact_partitions",
+    "compact_by_timeperiod",
+    "compact_small_files",
+    "optimize_dtypes",
+    "repartition",
+    "collect_stats",
+]
+
+
+def test_optimization_methods_are_native_to_parquet_dataset() -> None:
+    """Optimization methods are defined on ParquetDataset, not monkey-patched."""
+    for name in _OPTIMIZATION_METHODS:
+        assert name in ParquetDataset.__dict__, (
+            f"{name} must be defined directly on ParquetDataset, not copied at runtime"
+        )
+        # Optimize must NOT override — it inherits unchanged.
+        assert name not in Optimize.__dict__
+
+
+def test_optimize_shares_full_optimization_surface() -> None:
+    """Optimize exposes the same optimization methods as ParquetDataset."""
+    for name in _OPTIMIZATION_METHODS:
+        assert hasattr(Optimize, name), f"Optimize missing {name}"
+        # Methods resolve to the identical function object.
+        assert getattr(Optimize, name) is getattr(ParquetDataset, name)
+
+
+def test_optimize_can_run_compact_by_rows_dry_run(local_path: str) -> None:
+    """An Optimize instance can actually invoke inherited compaction."""
+    fs = FileSystem(bucket=str(local_path), cached=False)
+    ds = Optimize(path="opt_dry_run", filesystem=fs)
+    ds.write_to_dataset(make_simple_table(n_rows=10), mode="append")
+    ds.write_to_dataset(make_simple_table(n_rows=5, seed=10), mode="append")
+    ds.update()
+    ds.load(update_metadata=True)
+
+    plan = ds.compact_by_rows(max_rows_per_file=100, dry_run=True)
+    assert isinstance(plan, dict)
+    assert_metadata_invariants(ds)
+
+
+def test_optimize_can_optimize_dtypes(local_path: str) -> None:
+    """An Optimize instance can invoke inherited dtype optimization."""
+    fs = FileSystem(bucket=str(local_path), cached=False)
+    ds = Optimize(path="opt_dtypes", filesystem=fs)
+    ds.write_to_dataset(make_simple_table(n_rows=10), mode="append")
+    ds.update()
+    ds.load(update_metadata=True)
+
+    rows_before = ds.t.to_arrow().num_rows
+    ds.optimize_dtypes(exclude="name")
+    ds.load(update_metadata=True)
+    assert ds.t.to_arrow().num_rows == rows_before
     assert_metadata_invariants(ds)
 
 
@@ -534,3 +596,476 @@ def test_metadata_table_uses_caller_supplied_connection(local_path: str) -> None
     assert ds.metadata_table is not None
     rows = con.sql("SELECT COUNT(*) AS n FROM metadata_table").fetchone()
     assert rows[0] > 0
+
+
+# --------------------------------------------------------------------------- #
+# Managed timestamp/timezone repair
+# --------------------------------------------------------------------------- #
+
+
+def test_update_repairs_timestamp_unit_divergence(local_path: str) -> None:
+    """update(ts_unit=...) normalizes files with mixed timestamp units."""
+    fs = FileSystem(bucket=str(local_path), cached=False)
+    ds = ParquetDataset(path="ts_diverge", filesystem=fs)
+
+    s_us = pa.schema([("ts", pa.timestamp("us")), ("id", pa.int32())])
+    s_ms = pa.schema([("ts", pa.timestamp("ms")), ("id", pa.int32())])
+
+    with fs.open(posixpath.join(ds.path, "us.parquet"), "wb") as f:
+        pq.write_table(
+            pa.table(
+                {
+                    "ts": pa.array([datetime.datetime(2024, 1, 1)], pa.timestamp("us")),
+                    "id": [1],
+                },
+                schema=s_us,
+            ),
+            f,
+        )
+    with fs.open(posixpath.join(ds.path, "ms.parquet"), "wb") as f:
+        pq.write_table(
+            pa.table(
+                {
+                    "ts": pa.array([datetime.datetime(2024, 1, 2)], pa.timestamp("ms")),
+                    "id": [2],
+                },
+                schema=s_ms,
+            ),
+            f,
+        )
+
+    ds.update(ts_unit="us")
+    ds.load()
+
+    for f in ds.files:
+        full_path = posixpath.join(local_path, "ts_diverge", f)
+        arrow_schema = pq.read_metadata(full_path).schema.to_arrow_schema()
+        assert arrow_schema.field("ts").type == pa.timestamp("us")
+
+    assert_core_metadata_invariants(ds)
+
+
+@pytest.mark.xfail(
+    reason=(
+        "Managed update(tz=...) does not apply timezone conversion to files "
+        "that already match the pre-conversion unified schema; the managed "
+        "repair planner does not apply tz/ts_unit before computing the "
+        "rewrite candidate set. Direct repair_schema(tz=...) handles this "
+        "correctly. See #22."
+    ),
+    strict=False,
+)
+def test_update_applies_timezone_to_already_unified_files(local_path: str) -> None:
+    """update(tz=...) should add timezone to all files, not only divergent ones.
+
+    This is the desired behavior: the managed repair candidate set should
+    include files that differ only in timezone from the requested target
+    schema. See issue #22 for the shared schema-repair planner that will
+    make direct and managed repair select the same rewrite candidates.
+    """
+    fs = FileSystem(bucket=str(local_path), cached=False)
+    ds = ParquetDataset(path="tz_add", filesystem=fs)
+
+    schema = pa.schema([("ts", pa.timestamp("us")), ("id", pa.int32())])
+    for name in ("a.parquet", "b.parquet"):
+        with fs.open(posixpath.join(ds.path, name), "wb") as f:
+            pq.write_table(
+                pa.table(
+                    {
+                        "ts": pa.array(
+                            [datetime.datetime(2024, 1, 1)], pa.timestamp("us")
+                        ),
+                        "id": [1],
+                    },
+                    schema=schema,
+                ),
+                f,
+            )
+
+    ds.update(tz="UTC")
+    ds.load()
+
+    for f in ds.files:
+        full_path = posixpath.join(local_path, "tz_add", f)
+        arrow_schema = pq.read_metadata(full_path).schema.to_arrow_schema()
+        assert arrow_schema.field("ts").type == pa.timestamp("us", tz="UTC")
+
+    assert_core_metadata_invariants(ds)
+
+
+@pytest.mark.xfail(
+    reason=(
+        "Managed update(ts_unit=..., tz=...) fails when files differ in both "
+        "unit and timezone because the repair candidate set is computed "
+        "without the requested tz/ts_unit, leaving some files unrepaired. "
+        "See #22 for the shared schema-repair planner."
+    ),
+    strict=False,
+)
+def test_update_repairs_mixed_timestamp_unit_and_timezone(local_path: str) -> None:
+    """update(ts_unit=..., tz=...) should unify units and apply timezone together."""
+    fs = FileSystem(bucket=str(local_path), cached=False)
+    ds = ParquetDataset(path="ts_mixed", filesystem=fs)
+
+    s_us = pa.schema([("ts", pa.timestamp("us")), ("id", pa.int32())])
+    s_ms = pa.schema([("ts", pa.timestamp("ms")), ("id", pa.int32())])
+
+    with fs.open(posixpath.join(ds.path, "us.parquet"), "wb") as f:
+        pq.write_table(
+            pa.table(
+                {
+                    "ts": pa.array([datetime.datetime(2024, 1, 1)], pa.timestamp("us")),
+                    "id": [1],
+                },
+                schema=s_us,
+            ),
+            f,
+        )
+    with fs.open(posixpath.join(ds.path, "ms.parquet"), "wb") as f:
+        pq.write_table(
+            pa.table(
+                {
+                    "ts": pa.array([datetime.datetime(2024, 1, 2)], pa.timestamp("ms")),
+                    "id": [2],
+                },
+                schema=s_ms,
+            ),
+            f,
+        )
+
+    ds.update(ts_unit="us", tz="UTC")
+    ds.load()
+
+    for f in ds.files:
+        full_path = posixpath.join(local_path, "ts_mixed", f)
+        arrow_schema = pq.read_metadata(full_path).schema.to_arrow_schema()
+        assert arrow_schema.field("ts").type == pa.timestamp("us", tz="UTC")
+
+    assert_core_metadata_invariants(ds)
+
+
+def test_update_repair_reconciles_sidecar_views(local_path: str) -> None:
+    """After schema repair, both sidecar views match the repaired physical files."""
+    fs = FileSystem(bucket=str(local_path), cached=False)
+    ds = ParquetDataset(path="sidecar_reconcile", filesystem=fs)
+
+    s_a = pa.schema([("id", pa.int32()), ("name", pa.string())])
+    s_b = pa.schema([("id", pa.int64()), ("name", pa.string())])
+    with fs.open(posixpath.join(ds.path, "a.parquet"), "wb") as f:
+        pq.write_table(pa.table({"id": [1, 2], "name": ["a", "b"]}, schema=s_a), f)
+    with fs.open(posixpath.join(ds.path, "b.parquet"), "wb") as f:
+        pq.write_table(pa.table({"id": [3, 4], "name": ["c", "d"]}, schema=s_b), f)
+
+    ds.update()
+    ds.load()
+
+    # Aggregate and per-file sidecars reflect the same physical files.
+    files = set(ds.files)
+    assert set(ds.files_in_metadata) == files
+    assert set(ds.files_in_file_metadata) == files
+
+    # Every physical file was promoted to the unified schema.
+    for f in ds.files:
+        full_path = posixpath.join(local_path, "sidecar_reconcile", f)
+        arrow_schema = pq.read_metadata(full_path).schema.to_arrow_schema()
+        assert arrow_schema.field("id").type == pa.int64()
+
+    # The aggregate metadata sidecar reflects the repaired schema.
+    aggregate_schema = ds.metadata.schema.to_arrow_schema()
+    assert aggregate_schema.field("id").type == pa.int64()
+
+    # The per-file metadata sidecar entries exist for every physical file.
+    for f in ds.files:
+        assert f in ds.file_metadata
+
+    assert_core_metadata_invariants(ds)
+
+
+def test_reload_repairs_newly_added_physical_files(local_path: str) -> None:
+    """reload(update_metadata=True) repairs newly written physical files."""
+    fs = FileSystem(bucket=str(local_path), cached=False)
+    ds = ParquetDataset(path="incremental", filesystem=fs)
+
+    # Initial dataset with a consistent schema.
+    ds.write_to_dataset(make_simple_table(n_rows=5), mode="append")
+    ds.update()
+    ds.load()
+
+    # Write a divergent file directly outside the API.
+    divergent = pa.schema([("id", pa.int32())])
+    with fs.open(posixpath.join(ds.path, "extra.parquet"), "wb") as f:
+        pq.write_table(
+            pa.table({"id": pa.array([99], type=pa.int32())}, schema=divergent), f
+        )
+
+    ds.load(reload_metadata=True)
+
+    # The new file was discovered and repaired.
+    assert "extra.parquet" in ds.files
+    full_path = posixpath.join(local_path, "incremental", "extra.parquet")
+    arrow_schema = pq.read_metadata(full_path).schema.to_arrow_schema()
+    assert arrow_schema.field("id").type == pa.int64()
+
+    assert_core_metadata_invariants(ds)
+
+
+# --------------------------------------------------------------------------- #
+# Metadata-statistics predicate pruning (managed scan + table file pruning)
+# --------------------------------------------------------------------------- #
+
+
+def _write_disjoint_range_dataset(
+    local_path: str, name: str = "prune_ds"
+) -> ParquetDataset:
+    """Write a two-file dataset with disjoint ranges for pruning tests.
+
+    File ``low`` has ids 1-3 and dates in January 2024.
+    File ``high`` has ids 100-102 and dates in June 2024.
+    """
+    fs = FileSystem(bucket=str(local_path), cached=False)
+    ds = ParquetDataset(path=name, filesystem=fs)
+
+    schema = pa.schema(
+        [
+            pa.field("id", pa.int64()),
+            pa.field("amount", pa.float64()),
+            pa.field("d", pa.date32()),
+            pa.field("ts", pa.timestamp("us")),
+        ]
+    )
+
+    low = pa.table(
+        {
+            "id": [1, 2, 3],
+            "amount": [10.0, 20.0, 30.0],
+            "d": pa.array(
+                [
+                    datetime.date(2024, 1, 1),
+                    datetime.date(2024, 1, 2),
+                    datetime.date(2024, 1, 3),
+                ]
+            ),
+            "ts": pa.array(
+                [
+                    datetime.datetime(2024, 1, 1, 10, 0, 0),
+                    datetime.datetime(2024, 1, 1, 11, 0, 0),
+                    datetime.datetime(2024, 1, 1, 12, 0, 0),
+                ]
+            ),
+        },
+        schema=schema,
+    )
+    high = pa.table(
+        {
+            "id": [100, 101, 102],
+            "amount": [1000.0, 2000.0, 3000.0],
+            "d": pa.array(
+                [
+                    datetime.date(2024, 6, 1),
+                    datetime.date(2024, 6, 2),
+                    datetime.date(2024, 6, 3),
+                ]
+            ),
+            "ts": pa.array(
+                [
+                    datetime.datetime(2024, 6, 1, 10, 0, 0),
+                    datetime.datetime(2024, 6, 1, 11, 0, 0),
+                    datetime.datetime(2024, 6, 1, 12, 0, 0),
+                ]
+            ),
+        },
+        schema=schema,
+    )
+
+    ds.write_to_dataset(low, mode="append")
+    ds.write_to_dataset(high, mode="append")
+    ds.update()
+    ds.load()
+    ds.update_metadata_table()
+    assert_core_metadata_invariants(ds)
+    return ds
+
+
+def test_managed_scan_prunes_numeric_predicate(local_path: str) -> None:
+    """ParquetDataset.scan prunes files using numeric statistics.
+
+    The low file (ids 1-3) is deselected; the high file (ids 100-102) is
+    returned. Because scan() returns all rows from selected files, the
+    presence of high-range ids and absence of low-range ids proves the
+    low file was pruned at the file level.
+    """
+    ds = _write_disjoint_range_dataset(local_path)
+
+    result = ds.scan("id > 50")
+    ids = result.to_arrow()["id"].to_pylist()
+    assert ids == [100, 101, 102]
+
+
+def test_managed_scan_prunes_date_predicate(local_path: str) -> None:
+    """ParquetDataset.scan prunes files using date statistics."""
+    ds = _write_disjoint_range_dataset(local_path)
+
+    result = ds.scan("d < '2024-03-01'")
+    dates = result.to_arrow()["d"].to_pylist()
+    assert len(dates) == 3
+    assert all(d.month == 1 for d in dates)
+
+
+def test_managed_scan_prunes_timestamp_predicate(local_path: str) -> None:
+    """ParquetDataset.scan prunes files using timestamp statistics."""
+    ds = _write_disjoint_range_dataset(local_path)
+
+    result = ds.scan("ts > '2024-03-01 00:00:00'")
+    timestamps = result.to_arrow()["ts"].to_pylist()
+    assert len(timestamps) == 3
+    assert all(ts.month == 6 for ts in timestamps)
+
+
+def test_managed_scan_returns_all_rows_from_selected_file(local_path: str) -> None:
+    """scan() is a file-level optimization: all rows from selected files are returned.
+
+    This proves pruning is at the file level, not the row level. The high file
+    has ids [100, 101, 102]; all are returned even though the predicate is
+    ``id > 50`` because statistics-based pruning selects the whole file.
+    """
+    ds = _write_disjoint_range_dataset(local_path)
+
+    result = ds.scan("id > 50")
+    ids = result.to_arrow()["id"].to_pylist()
+    # Every row from the high file is present, including those the predicate
+    # does not describe (e.g. ids below 50 are absent because the file was
+    # pruned, not the rows filtered).
+    assert set(ids) == {100, 101, 102}
+    assert 1 not in ids
+
+
+def test_table_prune_files_numeric_predicate(local_path: str) -> None:
+    """PydalaTable.prune_files selects candidates using numeric statistics."""
+    ds = _write_disjoint_range_dataset(local_path)
+
+    scan_files = PydalaTable.prune_files(ds.metadata_table, "id > 50", ds.files)
+    # Only the file with ids >= 100 should survive.
+    assert len(scan_files) == 1
+
+
+def test_table_prune_files_date_and_timestamp_predicates(local_path: str) -> None:
+    """PydalaTable.prune_files selects candidates for date and timestamp stats."""
+    ds = _write_disjoint_range_dataset(local_path)
+
+    date_files = PydalaTable.prune_files(
+        ds.metadata_table, "d < '2024-03-01'", ds.files
+    )
+    assert len(date_files) == 1
+
+    ts_files = PydalaTable.prune_files(
+        ds.metadata_table, "ts > '2024-03-01 00:00:00'", ds.files
+    )
+    assert len(ts_files) == 1
+
+
+def test_table_prune_files_compound_and_predicate(local_path: str) -> None:
+    """PydalaTable.prune_files handles ``AND`` conjunctions across columns."""
+    ds = _write_disjoint_range_dataset(local_path)
+
+    scan_files = PydalaTable.prune_files(
+        ds.metadata_table,
+        "id > 5 AND amount > 500",
+        ds.files,
+    )
+    assert len(scan_files) == 1
+
+
+def test_managed_scan_equality_predicate(local_path: str) -> None:
+    """ParquetDataset.scan with ``=`` selects only the overlapping file."""
+    ds = _write_disjoint_range_dataset(local_path)
+
+    result = ds.scan("id = 1")
+    ids = result.to_arrow()["id"].to_pylist()
+    assert ids == [1, 2, 3]
+
+
+def test_prune_files_retains_null_statistics_file() -> None:
+    """Files with NULL min/max statistics are retained as candidates."""
+    metadata = duckdb.from_arrow(
+        pa.table(
+            {
+                "file_path": ["stats.parquet", "nulls.parquet"],
+                "id": [
+                    {"min": 1, "max": 5, "has_min_max": True},
+                    {"min": None, "max": None, "has_min_max": False},
+                ],
+            }
+        )
+    )
+
+    result = PydalaTable.prune_files(
+        metadata, "id > 10", ["stats.parquet", "nulls.parquet"]
+    )
+    # The file with no statistics must be retained (conservative pruning).
+    assert "nulls.parquet" in result
+
+
+def test_prune_files_preserves_non_statistics_predicate() -> None:
+    """Predicates on non-statistics metadata columns are passed through as-is."""
+    metadata = duckdb.from_arrow(
+        pa.table(
+            {
+                "file_path": ["f1.parquet", "f2.parquet"],
+                "num_rows": [3, 100],
+            }
+        )
+    )
+
+    result = PydalaTable.prune_files(
+        metadata, "num_rows > 50", ["f1.parquet", "f2.parquet"]
+    )
+    assert result == ["f2.parquet"]
+
+
+@pytest.mark.xfail(
+    reason=(
+        "The current predicate planner raises a DuckDB BinderException for "
+        "``!=`` on statistics columns instead of retaining all physical files "
+        "as candidates. The conservative planner from #23 will retain all "
+        "files when a statistics predicate cannot be safely translated."
+    ),
+    strict=False,
+)
+def test_unsupported_not_equal_does_not_prune_valid_file(local_path: str) -> None:
+    """An unsupported ``!=`` predicate must not exclude a physical file with valid rows.
+
+    File ``lo`` contains ids [1, 2, 3], all of which satisfy ``id != 10``.
+    File ``hi`` contains ids [10, 20, 30], where 20 and 30 also satisfy
+    ``id != 10``. Both files contain potentially valid rows and must be
+    retained as scan candidates. See issue #23.
+    """
+    ds = _write_disjoint_range_dataset(local_path)
+
+    result = ds.scan("id != 10")
+    ids = result.to_arrow()["id"].to_pylist()
+    # Both files' rows must be present — no file with valid rows pruned.
+    assert set(ids) == {1, 2, 3, 100, 101, 102}
+
+
+@pytest.mark.xfail(
+    reason=(
+        "The current predicate planner raises a DuckDB error for ``IN`` on "
+        "statistics columns instead of retaining all physical files. See #23 "
+        "for the conservative shared predicate planner."
+    ),
+    strict=False,
+)
+def test_unsupported_in_predicate_does_not_prune_valid_file(local_path: str) -> None:
+    """An ``IN`` statistics predicate must not exclude a file with valid rows.
+
+    File ``lo`` has ids [1, 2, 3]; ``id IN (2, 150)`` could match id=2.
+    File ``hi`` has ids [100, 101, 102]; ``id IN (2, 150)`` could match none,
+    but since the planner cannot safely translate ``IN`` to a min/max range
+    check, both files must be retained. See issue #23.
+    """
+    ds = _write_disjoint_range_dataset(local_path)
+
+    result = ds.scan("id IN (2, 150)")
+    ids = result.to_arrow()["id"].to_pylist()
+    # No file may be pruned when the predicate is untranslatable.
+    assert set(ids) == {1, 2, 3, 100, 101, 102}

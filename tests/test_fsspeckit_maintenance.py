@@ -23,7 +23,9 @@ def test_compaction_dry_run_returns_plan_without_mutating_managed_metadata(
     assert_metadata_invariants(managed_dataset)
 
 
-def test_compaction_refreshes_managed_metadata_and_preserves_rows(managed_dataset) -> None:
+def test_compaction_refreshes_managed_metadata_and_preserves_rows(
+    managed_dataset,
+) -> None:
     managed_dataset.load()
     rows_before = managed_dataset.table.to_arrow().num_rows
 
@@ -64,3 +66,25 @@ def test_unique_true_removes_exact_duplicates(managed_dataset) -> None:
     rows_after = managed_dataset.table.to_arrow().num_rows
     assert rows_after == rows_before, f"expected {rows_before}, got {rows_after}"
     assert_metadata_invariants(managed_dataset)
+
+
+def test_optimize_dtypes_preserves_rows_and_metadata(managed_dataset) -> None:
+    """dtype optimization rewrites files in place and preserves row count."""
+    managed_dataset.load(update_metadata=True)
+    rows_before = managed_dataset.table.to_arrow().num_rows
+
+    managed_dataset.optimize_dtypes(exclude="name")
+    managed_dataset.load(update_metadata=True)
+
+    assert managed_dataset.table.to_arrow().num_rows == rows_before
+    assert_metadata_invariants(managed_dataset)
+
+
+def test_scan_files_returns_filtered_subset(managed_dataset) -> None:
+    """scan() must populate _metadata_table_scanned so scan_files is scoped."""
+    managed_dataset.load(update_metadata=True)
+    first_file = managed_dataset.files[0]
+
+    managed_dataset.scan(f"file_path='{first_file}'")
+    assert managed_dataset.scan_files == [first_file]
+    managed_dataset.reset_scan()

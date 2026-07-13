@@ -182,37 +182,30 @@ def test_arrow_conversion_methods_equivalent(duped_arrow_table: PydalaTable) -> 
     assert expected.schema.equals(expected_schema)
     assert expected.column("id").to_pylist() == expected_ids
 
-    # DuckDB relation (lazy): DuckDB DISTINCT does not guarantee ORDER BY order.
+    # DuckDB relation (lazy): DISTINCT-then-ORDER BY preserves ordering.
     ddb = duped_arrow_table.to_duckdb(columns=columns, sort_by=sort_by, distinct=True)
     ddb_arrow = ddb.to_arrow_table()
     assert ddb_arrow.column_names == ["id", "value"]
-    assert sorted(ddb_arrow.column("id").to_pylist()) == sorted(expected_ids)
+    assert ddb_arrow.column("id").to_pylist() == expected_ids
 
-    # Polars eager: routes through DuckDB for sort/distinct, so compare values only.
+    # Polars eager: ordering is preserved through DuckDB DISTINCT-then-ORDER BY.
     pl = duped_arrow_table.to_polars(
         lazy=False, columns=columns, sort_by=sort_by, distinct=True
     )
     assert pl.columns == ["id", "value"]
-    assert sorted(pl.to_arrow().column("id").to_pylist()) == sorted(expected_ids)
+    assert pl.to_arrow().column("id").to_pylist() == expected_ids
 
     # Pandas
     pdf = duped_arrow_table.to_pandas(columns=columns, sort_by=sort_by, distinct=True)
     assert isinstance(pdf, pd.DataFrame)
     assert list(pdf.columns) == columns
-    assert sorted(pdf["id"].tolist()) == sorted(expected_ids)
+    assert pdf["id"].tolist() == expected_ids
 
 
-@pytest.mark.xfail(
-    reason="DuckDB-backed tables currently call scanner() inside to_duckdb(lazy=False), which fails because scanner() requires an Arrow dataset."
-)
 def test_duckdb_eager_to_duckdb_and_polars_equivalent(
     duped_duckdb_table: PydalaTable,
 ) -> None:
-    """DuckDB-backed tables support eager conversion methods.
-
-    This is the desired behavior; the current implementation raises because
-    ``to_duckdb(lazy=False)`` routes through ``scanner()``, which is Arrow-only.
-    """
+    """DuckDB-backed tables support eager conversion methods."""
     columns = ["id", "value"]
     sort_by = [["id", "descending"]]
 
@@ -534,9 +527,6 @@ def test_to_batches_returns_table(arrow_table: PydalaTable) -> None:
     assert result.num_rows == 10
 
 
-@pytest.mark.xfail(
-    reason="DuckDB's DISTINCT currently does not preserve the ORDER BY ordering, so sorted distinct results are not ordered."
-)
 def test_batch_reader_with_sort_and_distinct(arrow_table: PydalaTable) -> None:
     """``to_batch_reader`` supports sorting and distinctness requests."""
     reader = arrow_table.to_batch_reader(
@@ -665,3 +655,58 @@ def test_df_property(arrow_table: PydalaTable) -> None:
     d2 = arrow_table.df
     assert isinstance(d2, pd.DataFrame)
     assert d1.equals(d2)
+
+
+# --------------------------------------------------------------------------- #
+# Canonical materialization consolidation (issue #19)
+# --------------------------------------------------------------------------- #
+
+
+def test_arrow_eager_to_duckdb_preserves_columns_and_order(
+    duped_arrow_table: PydalaTable,
+) -> None:
+    """Arrow-backed ``to_duckdb(lazy=False)`` materializes through the scanner
+    and preserves multi-column projection with sort/distinct ordering.
+    """
+    columns = ["id", "value"]
+    sort_by = [["id", "descending"]]
+    expected_ids = [4, 3, 2, 1, 0]
+
+    ddb = duped_arrow_table.to_duckdb(
+        lazy=False, columns=columns, sort_by=sort_by, distinct=True
+    )
+    result = ddb.to_arrow_table()
+    assert result.column_names == columns
+    assert result.column("id").to_pylist() == expected_ids
+
+
+@pytest.mark.parametrize("backend", ["arrow", "duckdb"])
+def test_distinct_sort_preserves_order_across_conversions(
+    backend: str,
+    duped_arrow_table: PydalaTable,
+    duped_duckdb_table: PydalaTable,
+) -> None:
+    """All conversion methods produce the same ordered distinct results.
+
+    Verifies that Arrow table, DuckDB, Polars, and pandas conversions all
+    preserve the DISTINCT-then-ORDER BY semantics regardless of backend.
+    """
+    t = duped_arrow_table if backend == "arrow" else duped_duckdb_table
+    columns = ["id", "value"]
+    sort_by = [["id", "descending"]]
+    expected_ids = [4, 3, 2, 1, 0]
+
+    arrow_result = t.to_arrow_table(columns=columns, sort_by=sort_by, distinct=True)
+    assert arrow_result.column("id").to_pylist() == expected_ids
+
+    ddb_result = t.to_duckdb(columns=columns, sort_by=sort_by, distinct=True)
+    assert ddb_result.to_arrow_table().column("id").to_pylist() == expected_ids
+
+    pl_result = t.to_polars(lazy=False, columns=columns, sort_by=sort_by, distinct=True)
+    assert pl_result.to_arrow().column("id").to_pylist() == expected_ids
+
+    pdf_result = t.to_pandas(columns=columns, sort_by=sort_by, distinct=True)
+    assert pdf_result["id"].tolist() == expected_ids
+
+    batch_result = t.to_batches(columns=columns, sort_by=sort_by, distinct=True)
+    assert batch_result.column("id").to_pylist() == expected_ids

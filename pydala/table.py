@@ -539,26 +539,43 @@ class PydalaTable:
         Returns:
             A DuckDBPyRelation object representing the table data.
         """
-
         if isinstance(columns, str):
             columns = [columns]
 
-        columns = "*" if columns is None else ",".join(columns)
-
-        if lazy:
+        if lazy or self._type == "duckdb":
+            # Build the relation directly from the underlying DuckDB relation.
+            # Applying DISTINCT before ORDER BY preserves the requested
+            # ordering (DuckDB's ``.order().distinct()`` does not).
+            columns_str = "*" if columns is None else ",".join(columns)
+            ddb = self._ddb.select(columns_str)
+            if distinct:
+                ddb = ddb.distinct()
             if sort_by is not None:
                 sort_by = self._get_sort_by(sort_by, "duckdb")
-                ddb = self._ddb.select(columns).order(sort_by)
-            else:
-                ddb = self._ddb.select(columns)
+                ddb = ddb.order(sort_by)
+            if not lazy:
+                # Eager DuckDB-backed: snapshot the materialized result so
+                # the returned relation is independent of later source
+                # mutations, consistent with the Arrow-backed eager path.
+                ddb = self.ddb_con.from_arrow(ddb.to_arrow_table())
         else:
-            ddb = self.ddb_con.from_arrow(
-                self.scanner(
-                    columns=columns, sort_by=sort_by, batch_size=batch_size, **kwargs
-                ).to_table()
-            )
+            # Eager Arrow-backed: materialize projection/filter/batch_size
+            # through the Arrow scanner, then build the DuckDB relation
+            # with the same DISTINCT-then-ORDER BY semantics as the lazy
+            # path. Sort/distinct are handled by DuckDB (not the scanner)
+            # so the eager path stays consistent and avoids type-specific
+            # deduplication backends.
+            arrow_table = self.scanner(
+                columns=columns, batch_size=batch_size, **kwargs
+            ).to_table()
+            ddb = self.ddb_con.from_arrow(arrow_table)
+            if distinct:
+                ddb = ddb.distinct()
+            if sort_by is not None:
+                sort_by = self._get_sort_by(sort_by, "duckdb")
+                ddb = ddb.order(sort_by)
 
-        return ddb.distinct() if distinct else ddb
+        return ddb
 
     def to_batch_reader(
         self,

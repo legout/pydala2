@@ -37,9 +37,8 @@ from .helpers.security import (
 )
 from .helpers.polars import pl as _pl
 from .io import PartialWriteError, Writer
-from .metadata import ParquetDatasetMetadata, PydalaDatasetMetadata
-from .schema import replace_schema  # from .optimize import Optimize
-from .schema import convert_large_types_to_normal
+from .metadata import PydalaDatasetMetadata
+from .schema import convert_large_types_to_normal, replace_schema
 from .table import PydalaTable
 
 
@@ -1006,21 +1005,42 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
     #         self.metadata, self._partitioning
     #     )
 
-    def scan(self, filter_expr: str | None = None) -> ParquetDatasetMetadata:
+    def scan(self, filter_expr: str | None = None) -> PydalaTable:
         """
-        Scans the Parquet dataset metadata.
+        Scan the Parquet dataset metadata and return a filtered table.
+
+        Applies the filter expression to per-file statistics to select
+        candidate files, then returns a :class:`PydalaTable` backed by
+        only those files.
 
         Args:
-            filter_expr (str, optional): An optional filter expression to apply to the metadata.
+            filter_expr: An optional filter expression to apply to the
+                metadata (e.g. ``"id >= 5"``).
 
         Returns:
-            ParquetDatasetMetadata: The ParquetDatasetMetadata object.
+            A PydalaTable containing only the rows from files that match
+            the filter.
         """
         scan_files = self.table.prune_files(
             self.metadata_table,
             filter_expr,
             self.files,
         )
+
+        # Maintain the _metadata_table_scanned invariant so the scan_files
+        # property returns the pruned subset, matching the files included
+        # in the returned PydalaTable.  Without this, scan_files falls back
+        # to self.files and callers (e.g. _optimize_dtypes) that delete
+        # scan_files would remove every file in the dataset.
+        if scan_files:
+            in_values = ", ".join(
+                "'" + f.replace("'", "''") + "'" for f in scan_files
+            )
+            self._metadata_table_scanned = self._metadata_table.filter(
+                f"file_path IN ({in_values})"
+            )
+        else:
+            self._metadata_table_scanned = None
 
         if len(scan_files) == 0:
             return PydalaTable(result=self.table.ddb.limit(0))
