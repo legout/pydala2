@@ -461,12 +461,13 @@ class ParquetDatasetMetadata:
 
         """
 
+        new_files = []
+
         if self.has_file_metadata:
             new_files = sorted(
                 (set(self.files_in_file_metadata) - set(self.files_in_metadata))
             )
 
-        if len(new_files):
             if verbose:
                 logger.info(
                     f"Get unified schema for number of new files: {len(new_files)}"

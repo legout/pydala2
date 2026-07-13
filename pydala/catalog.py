@@ -618,9 +618,8 @@ class Catalog:
             )
             fields["path"] = fields.get("path", data._path)
             fields["format"] = fields.get("format", data._format)
-            fields["partitioning"] = fields.get("partitioning", data._partitioning)
             fields["partitioning_columns"] = fields.get(
-                "partitioning_columns", data._partitioning_columns
+                "partitioning_columns", data.partition_names
             )
 
         if table_name is None:

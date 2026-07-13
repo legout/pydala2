@@ -35,6 +35,15 @@ def strip_protocol(path: str) -> str:
     protocol, path = split_protocol(path)
     return path
 
+class PartialWriteError(RuntimeError):
+    """Raised when Parquet files were written but dataset completion failed."""
+
+    def __init__(self, message: str, metadata: list[dict[str, pq.FileMetaData]]):
+        super().__init__(message)
+        self.metadata = metadata
+
+
+
 
 def write_table(
     table: pa.Table,
@@ -59,17 +68,14 @@ def write_table(
         tuple[str, pq.FileMetaData]: A tuple containing the file path and the metadata of the written Parquet file.
     """
     path = strip_protocol(path)
+    if filesystem is None:
+        filesystem = fsspec_filesystem("file")
+
     if not filesystem.exists(posixpath.dirname(path)):
         try:
             filesystem.makedirs(posixpath.dirname(path), exist_ok=True)
         except (OSError, PermissionError) as e:
             logger.warning(f"Failed to create directory {posixpath.dirname(path)}: {e}")
-
-    if filesystem is None:
-        filesystem = fsspec_filesystem("file")
-
-    filesystem.invalidate_cache()
-
     metadata = []
     pq.write_table(
         table,
@@ -331,6 +337,59 @@ class Writer:
         self._to_polars()
         self.data = self.data.delta(other, subset=subset)
 
+
+    def execute(
+        self,
+        *,
+        sort_by: str | list[str] | list[tuple[str, str]] | None = None,
+        unique: bool | str | list[str] = False,
+        ts_unit: str = "us",
+        tz: str | None = None,
+        remove_tz: bool = False,
+        alter_schema: bool = False,
+        partition_by: str | list[str] | None = None,
+        timestamp_column: str | None = None,
+        delta_other=None,
+        delta_subset: str | list[str] | None = None,
+        **write_options,
+    ) -> list[dict[str, pq.FileMetaData]]:
+        """Execute the complete write plan behind Writer's interface."""
+        if self.shape[0] == 0:
+            return []
+
+        self.sort_data(by=sort_by)
+        if unique:
+            self.unique(columns=unique)
+        self.cast_schema(
+            ts_unit=ts_unit,
+            tz=tz,
+            remove_tz=remove_tz,
+            alter_schema=alter_schema,
+        )
+        if partition_by:
+            self.add_datepart_columns(
+                columns=partition_by,
+                timestamp_column=timestamp_column,
+            )
+        if delta_other is not None:
+            self._to_polars()
+            other = delta_other(self.data, delta_subset)
+            if other is not None:
+                self.delta(other=other, subset=delta_subset)
+
+        metadata = self.write_to_dataset(
+            partitioning_columns=partition_by,
+            partitioning_flavor="hive",
+            **write_options,
+        )
+        try:
+            self.clear_cache()
+        except Exception as exc:
+            raise PartialWriteError(
+                "Parquet files were written, but cache completion failed.",
+                metadata,
+            ) from exc
+        return metadata
     @property
     def shape(self) -> tuple[int, int]:
         if self.data is None:

@@ -1,3 +1,4 @@
+import re
 # Third-party imports
 import duckdb as _duckdb
 import pandas as pd
@@ -6,6 +7,8 @@ import pyarrow.dataset as pds
 
 # Local imports
 from .helpers.polars import pl as _pl
+from .adapters.fsspeckit import FsspeckitParquetAdapter
+from .helpers.sql import sql2pyarrow_filter
 
 
 class PydalaTable:
@@ -46,6 +49,122 @@ class PydalaTable:
             self._dataset = pds.dataset(arrow_result, schema=arrow_result.schema)
             self._ddb = result
 
+    def _filter_arrow(self, filter_expr: str | pds.Expression) -> pds.Dataset:
+        """Filter the Arrow dataset using the accepted pydala predicate contract."""
+        expression = (
+            sql2pyarrow_filter(filter_expr, self._dataset.schema)
+            if isinstance(filter_expr, str)
+            else filter_expr
+        )
+        return self._dataset.filter(expression)
+
+    def _filter_duckdb(self, filter_expr: str) -> _duckdb.DuckDBPyRelation:
+        """Filter the DuckDB relation using a SQL predicate."""
+        if not isinstance(filter_expr, str):
+            raise TypeError("DuckDB filtering requires a SQL string predicate.")
+        return self.ddb.filter(filter_expr)
+
+    def filter(
+        self,
+        filter_expr: str | pds.Expression,
+        use: str = "auto",
+        *,
+        filesystem=None,
+        path: str | None = None,
+    ) -> "PydalaTable":
+        """Execute a filter while keeping engine routing internal to the table."""
+        if use == "auto":
+            try:
+                result = self._filter_arrow(filter_expr)
+            except (pa.ArrowNotImplementedError, NotImplementedError):
+                result = self._filter_duckdb(filter_expr)
+        elif use == "pyarrow":
+            result = self._filter_arrow(filter_expr)
+        elif use == "duckdb":
+            result = self._filter_duckdb(filter_expr)
+        elif use in {"fsspeckit", "fsspeckit-pyarrow", "fsspeckit-duckdb"}:
+            if filesystem is None or path is None:
+                raise ValueError(
+                    "Filesystem and path are required for fsspeckit execution."
+                )
+            backend = "duckdb" if use == "fsspeckit-duckdb" else "pyarrow"
+            adapter = FsspeckitParquetAdapter(filesystem=filesystem)
+            try:
+                result = adapter.read_parquet(path, filters=filter_expr, backend=backend)
+            finally:
+                adapter.close()
+        else:
+            raise ValueError(f"Unsupported filter execution mode: {use!r}")
+
+        return PydalaTable(result=result, ddb_con=self.ddb_con)
+
+    @classmethod
+    def filter_filesystem(
+        cls,
+        filter_expr: str | pds.Expression,
+        *,
+        filesystem,
+        path: str,
+        backend: str,
+        ddb_con: _duckdb.DuckDBPyConnection | None = None,
+    ) -> "PydalaTable":
+        """Run an fsspeckit filter without requiring a preloaded dataset."""
+        adapter = FsspeckitParquetAdapter(filesystem=filesystem)
+        try:
+            result = adapter.read_parquet(path, filters=filter_expr, backend=backend)
+        finally:
+            adapter.close()
+        return cls(result=result, ddb_con=ddb_con)
+    @staticmethod
+    def prune_files(
+        metadata_table: _duckdb.DuckDBPyRelation,
+        filter_expr: str | None,
+        files: list[str],
+    ) -> list[str]:
+        """Select candidate files from immutable metadata statistics."""
+        if filter_expr is None:
+            return files
+
+        candidates: list[str] = []
+        for predicate in re.split(r"\s+[aA][nN][dD]\s+", filter_expr):
+            column = re.split("[>=<]", predicate)[0].lstrip("(")
+            if metadata_table.select(column).types[0].id != "struct":
+                candidates.append(predicate)
+                continue
+
+            is_date = bool(
+                re.findall(
+                    r"[<>=!]'[1,2]\d{3}-\d{1,2}-\d{1,2}(?:[\s,T]\d{2}:\d{2}:{0,2}\d{0,2})?'",
+                    predicate,
+                )
+            )
+            if ">" in predicate:
+                predicate = (
+                    f"({predicate.replace('>', '.max>')} OR "
+                    f"{predicate.split('>')[0]}.max IS NULL)"
+                )
+            elif "<" in predicate:
+                predicate = (
+                    f"({predicate.replace('<', '.min<')} OR "
+                    f"{predicate.split('<')[0]}.min IS NULL)"
+                )
+            elif "=" in predicate:
+                predicate = (
+                    f"({predicate.replace('=', '.min<=')} OR "
+                    f"{predicate.split('=')[0]}.min IS NULL) AND "
+                    f"({predicate.replace('=', '.max>=')} OR "
+                    f"{predicate.split('=')[0]}.max IS NULL)"
+                )
+            if is_date:
+                predicate = (
+                    predicate.replace(">", "::DATE>")
+                    .replace("<", "::DATE<")
+                    .replace(" IS NULL", "::DATE IS NULL")
+                )
+            candidates.append(predicate)
+
+        scanned = metadata_table.filter(" AND ".join(candidates))
+        return sorted({row[0] for row in scanned.select("file_path").fetchall()})
     @staticmethod
     def _parse_sort_by_string(sort_by: str) -> list[list[str]]:
         """Parse a string sort specification into a list of [field, direction] pairs."""

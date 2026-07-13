@@ -1,9 +1,7 @@
 import unittest
-from unittest.mock import Mock
 import pytest
 import pyarrow.dataset as pds
 import pyarrow as pa
-import pyarrow.parquet as pq
 import duckdb as _duckdb
 import polars as pl
 from pydala.table import PydalaTable
@@ -21,6 +19,36 @@ class TestPydalaTable(unittest.TestCase):
         dataset = pds.dataset(data)
         self.table = PydalaTable(dataset)
 
+
+    def test_filter_routes_arrow_execution_inside_table(self):
+        result = self.table.filter("col1 > 3")
+
+        self.assertEqual(result.to_arrow_table().column("col1").to_pylist(), [4, 5])
+
+    def test_filter_rejects_unknown_execution_mode(self):
+        with self.assertRaises(ValueError):
+            self.table.filter("col1 > 3", use="unknown")
+
+    def test_prune_files_uses_metadata_statistics(self):
+        metadata = _duckdb.connect().from_arrow(
+            pa.table(
+                {
+                    "file_path": ["first.parquet", "second.parquet"],
+                    "id": [
+                        {"min": 1, "max": 2},
+                        {"min": 3, "max": 4},
+                    ],
+                }
+            )
+        )
+
+        files = PydalaTable.prune_files(
+            metadata,
+            "id > 2",
+            ["first.parquet", "second.parquet"],
+        )
+
+        self.assertEqual(files, ["second.parquet"])
     def test_scanner(self):
         # Test that scanner method returns a Scanner object
         scanner = self.table.scanner()
@@ -91,7 +119,7 @@ class TestPydalaTable(unittest.TestCase):
         )
         self.assertIsInstance(scanner, pds.Scanner)
 
-    def test_scanner_invalid_batch_size(self):
+    def test_scanner_invalid_batch_size_zero(self):
         # Test that invalid batch size raises ValueError
         with self.assertRaises(ValueError):
             self.table.scanner(batch_size=0)

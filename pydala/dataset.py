@@ -29,20 +29,15 @@ logger = logging.getLogger(__name__)
 # Local imports
 from .filesystem import FileSystem, clear_cache
 from .helpers.datetime import get_timestamp_column
-from .helpers.sql import sql2pyarrow_filter
 from .helpers.security import (
-    escape_sql_identifier,
-    escape_sql_literal,
     validate_partition_name,
     validate_partition_value,
     sanitize_filter_expression,
-    validate_path,
     safe_join,
 )
 from .helpers.polars import pl as _pl
-from .io import Writer
+from .io import PartialWriteError, Writer
 from .metadata import ParquetDatasetMetadata, PydalaDatasetMetadata
-from .adapters.fsspeckit import FsspeckitParquetAdapter
 from .schema import replace_schema  # from .optimize import Optimize
 from .schema import convert_large_types_to_normal
 from .table import PydalaTable
@@ -178,7 +173,7 @@ class BaseDataset:
 
         try:
             self.load()
-        except FileNotFoundError as e:
+        except FileNotFoundError:
             logger.debug(f"Dataset path does not exist yet: {self._path}")
         except Exception as e:
             logger.warning(f"Failed to load dataset {self._path}: {e}")
@@ -416,19 +411,27 @@ class BaseDataset:
         # self.load(reload=True)
 
     def vacuum(self) -> None:
-        """Delete all files in the dataset.
+        """Delete all data files in the dataset.
 
-        This method removes all data files and metadata files from the dataset,
-        effectively emptying it while preserving the directory structure.
-
-        Returns:
-            None
+        Removes all parquet data files and metadata sidecars, preserving
+        the directory structure so writes can resume.
         """
+        if self.files:
+            self.delete_files(self.files)
+        self.delete_metadata_files()
+
+        # Reset in-memory metadata state so stale file references are gone.
+        self._metadata = None
+        self._file_metadata = None
+        for attr in ("_files", "_schema", "_file_schema"):
+            if hasattr(self, attr):
+                delattr(self, attr)
+
+        self.clear_cache()
 
     @property
     def partitioning_schema(self) -> pa.Schema:
         """
-        Returns the partitioning schema of the dataset.
 
         If the dataset has files and the partitioning schema has not been
         computed yet, it will be computed and cached. If the dataset is not
@@ -532,90 +535,28 @@ class BaseDataset:
 
                 return self._partitions
 
-    def _filter_duckdb(self, filter_expr: str) -> _duckdb.DuckDBPyRelation:
-        """
-        Filters the DuckDBPyRelation table based on the given filter expression.
-
-        Args:
-            filter_expr (str): The filter expression to apply.
-
-        Returns:
-            _duckdb.DuckDBPyRelation: The filtered DuckDBPyRelation table.
-        """
-        return self.table.ddb.filter(filter_expr)
-
-    def _filter_arrow_dataset(
-        self, filter_expr: str | pds.Expression
-    ) -> pds.FileSystemDataset:
-        """
-        Filters a PyArrow Parquet dataset based on the provided filter expression.
-
-        Args:
-            filter_expr (str | pds.Expression): The filter expression to be applied to the dataset.
-                It can be either a string representation of a filter expression or a PyArrow
-                Expression object.
-
-        Returns:
-            pds.FileSystemDataset: The filtered PyArrow Parquet dataset.
-        """
-        if self.is_loaded:
-            if isinstance(filter_expr, str):
-                filter_expr = sql2pyarrow_filter(filter_expr, self.schema)
-            return self._arrow_dataset.filter(filter_expr)
-
     def filter(
         self,
         filter_expr: str | pds.Expression,
         use: str = "auto",
-    ) -> pds.FileSystemDataset | pds.Dataset | _duckdb.DuckDBPyRelation:
-        """
-        Filters the dataset based on the given filter expression.
-
-        Args:
-            filter_expr (str | pds.Expression): The filter expression to apply.
-            use (str, optional): The method to use for filtering. Defaults to "auto".
-
-        Returns:
-            pds.FileSystemDataset | pds.Dataset | _duckdb.DuckDBPyRelation: The filtered dataset.
-
-        Raises:
-            Exception: If filtering with PyArrow fails and use is set to "auto".
-
-        Note:
-            If the filter expression contains any of the following: "%", "like", "similar to", or "*",
-            the method will automatically use DuckDB for filtering.
-
-        """
-        # if any([s in filter_expr for s in ["%", "like", "similar to", "*"]]):
-        #    use = "duckdb"
-
-        if use == "auto":
-            try:
-                res = self._filter_arrow_dataset(filter_expr)
-
-            except Exception as e:
-                e.add_note("Note: Filtering with PyArrow failed. Using DuckDB.")
-                print(e)
-                res = self._filter_duckdb(filter_expr)
-
-        elif use == "pyarrow":
-            res = self._filter_arrow_dataset(filter_expr)
-
-        elif use == "duckdb":
-            res = self._filter_duckdb(filter_expr)
-        elif use in {"fsspeckit", "fsspeckit-pyarrow", "fsspeckit-duckdb"}:
+    ) -> PydalaTable:
+        if self.table is None:
+            if use not in {"fsspeckit", "fsspeckit-pyarrow", "fsspeckit-duckdb"}:
+                raise RuntimeError("Dataset must be loaded before filtering.")
             backend = "duckdb" if use == "fsspeckit-duckdb" else "pyarrow"
-            adapter = FsspeckitParquetAdapter(filesystem=self._filesystem)
-            try:
-                res = adapter.read_parquet(
-                    self._path,
-                    filters=filter_expr,
-                    backend=backend,
-                )
-            finally:
-                adapter.close()
-
-        return PydalaTable(result=res, ddb_con=self.ddb_con)
+            return PydalaTable.filter_filesystem(
+                filter_expr,
+                filesystem=self._filesystem,
+                path=self._path,
+                backend=backend,
+                ddb_con=self.ddb_con,
+            )
+        return self.table.filter(
+            filter_expr,
+            use=use,
+            filesystem=self._filesystem,
+            path=self._path,
+        )
 
     @property
     def registered_tables(self) -> list[str]:
@@ -625,7 +566,7 @@ class BaseDataset:
         Returns:
             list[str]: A list of table names.
         """
-        return self.ddb_con.sql("SHOW TABLES").arrow().column("name").to_pylist()
+        return [row[0] for row in self.ddb_con.sql("SHOW TABLES").fetchall()]
 
     def interrupt_duckdb(self) -> None:
         """Interrupt any ongoing DuckDB operations.
@@ -636,6 +577,7 @@ class BaseDataset:
         Returns:
             None
         """
+        self.ddb_con.interrupt()
 
     def reset_duckdb(self):
         """
@@ -816,55 +758,44 @@ class BaseDataset:
                 filesystem=self._filesystem,
                 schema=schema if not alter_schema else None,
             )
-            if writer.shape[0] == 0:
-                continue
-
-            writer.sort_data(by=sort_by)
-
-            if unique:
-                writer.unique(columns=unique)
-
-            writer.cast_schema(
-                # use_large_string=use_large_string,
-                ts_unit=ts_unit,
-                tz=tz,
-                remove_tz=remove_tz,
-                alter_schema=alter_schema,
-            )
-
-            if partition_by:
-                writer.add_datepart_columns(
-                    columns=partition_by,
-                    timestamp_column=self._timestamp_column,
-                )
-
+            delta_other = None
             if mode == "delta" and self.is_loaded:
-                writer._to_polars()
-                other_df = self._get_delta_other_df(
-                    writer.data,
-                    filter_columns=delta_subset,
+                def delta_other(frame, subset):
+                    return self._get_delta_other_df(
+                        frame,
+                        filter_columns=subset,
+                    )
+            metadata.extend(
+                writer.execute(
+                    sort_by=sort_by,
+                    unique=unique,
+                    ts_unit=ts_unit,
+                    tz=tz,
+                    remove_tz=remove_tz,
+                    alter_schema=alter_schema,
+                    partition_by=partition_by,
+                    timestamp_column=self._timestamp_column,
+                    delta_other=delta_other,
+                    delta_subset=delta_subset,
+                    row_group_size=row_group_size,
+                    compression=compression,
+                    max_rows_per_file=max_rows_per_file,
+                    basename=basename,
+                    verbose=verbose,
+                    **kwargs,
                 )
-                if other_df is not None:
-                    writer.delta(other=other_df, subset=delta_subset)
-
-            metadata_ = writer.write_to_dataset(
-                row_group_size=row_group_size,
-                compression=compression,
-                partitioning_columns=partition_by,
-                partitioning_flavor="hive",
-                max_rows_per_file=max_rows_per_file,
-                basename=basename,
-                verbose=verbose,
-                **kwargs,
             )
-            if metadata_ is not None:
-                metadata.extend(metadata_)
 
         if mode == "overwrite":
-            del_files = [posixpath.join(self._path, fn) for fn in self.files]
-            self.delete_files(del_files)
+            try:
+                self.delete_files([posixpath.join(self._path, fn) for fn in self.files])
+            except Exception as exc:
+                raise PartialWriteError(
+                    "Parquet files were written, but overwrite completion failed.",
+                    metadata,
+                ) from exc
 
-        self.clear_cache()
+        return metadata
 
         # if update_metadata:
         return metadata
@@ -1065,14 +996,18 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         Returns:
             ParquetDatasetMetadata: The ParquetDatasetMetadata object.
         """
-        PydalaDatasetMetadata.scan(self, filter_expr=filter_expr)
+        scan_files = self.table.prune_files(
+            self.metadata_table,
+            filter_expr,
+            self.files,
+        )
 
-        if len(self.scan_files) == 0:
+        if len(scan_files) == 0:
             return PydalaTable(result=self.table.ddb.limit(0))
 
         return PydalaTable(
             result=pds.dataset(
-                [posixpath.join(self.path, fn) for fn in self.scan_files],
+                [posixpath.join(self.path, fn) for fn in scan_files],
                 filesystem=self._filesystem,
                 format=self._format,
                 partitioning=self._partitioning,
@@ -1184,19 +1119,24 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         )
 
         if update_metadata:
-            for md in metadata:
-                metadata_ = list(md.values())[0]
-                if self.metadata is not None:
-                    if metadata_.schema != self.metadata.schema:
+            try:
+                for md in metadata:
+                    metadata_ = list(md.values())[0]
+                    if self.metadata is not None and metadata_.schema != self.metadata.schema:
                         continue
 
-                f = list(md.keys())[0].replace(self._path, "").lstrip("/")
-                metadata_.set_file_path(f)
-                if self._file_metadata is None:
-                    self._file_metadata = {f: metadata_}
-                else:
-                    self._file_metadata[f] = metadata_
-            self._update_metadata(verbose=verbose)
+                    file_path = list(md.keys())[0].replace(self._path, "").lstrip("/")
+                    metadata_.set_file_path(file_path)
+                    if self._file_metadata is None:
+                        self._file_metadata = {file_path: metadata_}
+                    else:
+                        self._file_metadata[file_path] = metadata_
+                self._update_metadata(verbose=verbose)
+            except Exception as exc:
+                raise PartialWriteError(
+                    "Parquet files were written, but metadata completion failed.",
+                    metadata,
+                ) from exc
             # self._repair_file_schemas(alter_schema=alter_schema, verbose=verbose)
             # self._update_metadata()
             # try:
@@ -1672,7 +1612,7 @@ class Optimize(ParquetDataset):
         )
         filter_ = sanitize_filter_expression(filter_)
 
-        scan = self.scan(filter_)
+        self.scan(filter_)
         files = list(self.scan_files)
         self.reset_scan()
 
