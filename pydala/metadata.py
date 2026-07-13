@@ -298,18 +298,19 @@ class ParquetDatasetMetadata:
             self._filesystem.rm(posixpath.join(self._path, "tmp.delete"))
 
     def load_files(self) -> None:
-        if self.has_metadata:
-            self._files = get_file_paths(self._metadata)
-        else:
-            self.clear_cache()
-            self._files = [
-                fn.replace(self._path, "").lstrip("/")
-                for fn in sorted(
-                    self._filesystem.glob(
-                        posixpath.join(self._path, "**/*.parquet")  # {self._format}")
-                    )
-                )
-            ]
+        """Discover physical Parquet files on the filesystem.
+
+        Physical discovery is canonical per ADR 0001: ``files`` always
+        reflects what exists on disk, while ``files_in_metadata`` and
+        ``files_in_file_metadata`` remain explicit sidecar views.
+        """
+        self.clear_cache()
+        self._files = [
+            fn.replace(self._path, "").lstrip("/")
+            for fn in sorted(
+                self._filesystem.glob(posixpath.join(self._path, "**/*.parquet"))
+            )
+        ]
 
     def _ls_files(self) -> None:
         """
@@ -662,6 +663,10 @@ class ParquetDatasetMetadata:
         self.update_file_metadata(verbose=verbose, **kwargs)
 
         if len(self.files_in_file_metadata) == 0:
+            # If no physical files remain, remove any stale sidecars so public
+            # file discovery and metadata views stay consistent.
+            if self.has_metadata_file or self.has_file_metadata_file:
+                self.reset()
             return
 
         self._repair_file_schemas(
