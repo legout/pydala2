@@ -13,6 +13,7 @@ nav:
       - Quick Start: quick-start.md
   - User Guide:
       - Basic Usage: user-guide/basic-usage.md
+      - Merge and Delta Migration: user-guide/merge.md
       - Data Operations: user-guide/data-operations.md
       - Performance Optimization: user-guide/performance.md
       - Catalog Management: user-guide/catalog-management.md

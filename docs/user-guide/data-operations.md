@@ -353,44 +353,20 @@ write_in_batches(dataset, large_dataframe)
 
 ### Upsert Operations
 
+Use the public merge interface instead of manually splitting new and existing records:
+
 ```python
-def upsert_data(dataset, new_data, key_columns):
-    """Implement upsert functionality"""
-    # Get existing keys
-    existing_keys = dataset.ddb_con.sql(f"""
-        SELECT {', '.join(key_columns)}
-        FROM dataset
-    """).pl()
+result = dataset.merge(
+    updated_customers,
+    strategy="upsert",
+    key_columns=["customer_id"],
+)
 
-    # Find new vs existing records
-    new_keys = new_data.select(key_columns)
-
-    # Insert new records
-    new_records = new_data.join(
-        existing_keys,
-        on=key_columns,
-        how="anti"
-    )
-
-    if len(new_records) > 0:
-        dataset.write_to_dataset(
-            new_records,
-            mode="append"
-        )
-        print(f"Inserted {len(new_records)} new records")
-
-    # Update existing records using delta mode
-    if len(new_data) > len(new_records):
-        dataset.write_to_dataset(
-            new_data,
-            mode="delta",
-            delta_subset=key_columns
-        )
-        print(f"Updated existing records")
-
-# Usage
-upsert_data(dataset, updated_customers, ["customer_id"])
+print(f"Inserted {result.inserted} records")
+print(f"Updated {result.updated} records")
 ```
+
+Use `strategy="insert"` when matching target rows must remain unchanged, or `strategy="update"` when absent source keys should be ignored. See [Merge and Delta Migration](merge.md) for key validation, duplicate handling, partition rules, and backend selection.
 
 ## Data Quality Operations
 

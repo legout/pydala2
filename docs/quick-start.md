@@ -95,10 +95,10 @@ result = dataset.ddb_con.sql("SELECT category, COUNT(*) FROM dataset GROUP BY ca
 
 ## Advanced Features
 
-### Delta Updates
+### Keyed Inserts
 
 ```python
-# Add new data efficiently
+# Add only rows whose ids are absent from the target
 new_data = pl.DataFrame({
     'id': range(1001, 1501),
     'name': [f'User_{i}' for i in range(1001, 1501)],
@@ -106,13 +106,15 @@ new_data = pl.DataFrame({
     'category': ['A', 'B', 'C', 'D'] * 125
 })
 
-# Delta mode merges with existing data
-dataset.write_to_dataset(
+result = dataset.merge(
     new_data,
-    mode="delta",
-    partition_by=["category"]
+    strategy="insert",
+    key_columns=["id"],
+    partition_by=["category"],
 )
 ```
+
+See [Merge and Delta Migration](user-guide/merge.md) for update, upsert, backend, and migration guidance.
 
 ### Schema Evolution
 

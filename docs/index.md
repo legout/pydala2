@@ -16,7 +16,7 @@ PyDala2 provides a sophisticated dataset management system that combines:
 - **Automatic optimization** of Parquet file layouts
 - **Intelligent metadata management** with schema evolution
 - **Multi-engine query processing** (PyArrow + DuckDB)
-- **Production-ready features** like delta updates and time-based operations
+- **Production-ready features** like keyed merge operations and time-based operations
 
 ## ✨ Key Features
 
@@ -28,7 +28,7 @@ PyDala2 provides a sophisticated dataset management system that combines:
 
 ### 📊 Data Operations
 - **Automatic Filter Pushdown**: Intelligently routes queries to the optimal engine
-- **Delta Updates**: Merge new data efficiently with change detection
+- **Keyed Merge Operations**: Explicit insert, update, and upsert strategies
 - **Schema Evolution**: Handle schema changes without breaking existing data
 - **Time-based Operations**: Built-in support for time series and temporal data
 
@@ -42,13 +42,13 @@ PyDala2 provides a sophisticated dataset management system that combines:
 
 ### Data Engineering
 ```python
-# Efficient ETL pipeline
-dataset = ParquetDataset("data/sales")
-dataset.write_to_dataset(
+# Keyed ETL merge
+result = dataset.merge(
     new_sales_data,
-    mode="delta",
+    strategy="upsert",
+    key_columns=["sale_id"],
     partition_by=["date", "region"],
-    sort_by="timestamp DESC"
+    sort_by="timestamp DESC",
 )
 ```
 
@@ -120,7 +120,7 @@ graph TD
     B --> I[Optimization]
     I --> J[Compaction]
     I --> K[Schema Evolution]
-    I --> L[Delta Updates]
+    I --> L[Keyed Merge Operations]
     B --> M[Catalog Integration]
     M --> N[YAML Configuration]
     M --> O[Namespace Management]
@@ -136,6 +136,7 @@ Our comprehensive documentation covers:
 
 ### User Guide
 - [Basic Usage](user-guide/basic-usage.md) - Core operations and patterns
+- [Merge and Delta Migration](user-guide/merge.md) - Insert, update, upsert, and delta migration
 - [Data Operations](user-guide/data-operations.md) - Filtering, aggregation, and transformations
 - [Performance Optimization](user-guide/performance.md) - Tuning for production workloads
 - [Catalog Management](user-guide/catalog-management.md) - Organizing datasets

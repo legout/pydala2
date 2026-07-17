@@ -90,6 +90,22 @@ revenue = catalog.load("finance.revenue")
 orders = catalog.load("sales.orders", reload=True)
 ```
 
+### Merging Catalog Datasets
+
+Catalog-loaded Parquet datasets expose the same keyed merge interface:
+
+```python
+orders = catalog.load("sales.orders", with_metadata=True)
+result = orders.merge(
+    incoming_orders,
+    strategy="upsert",
+    key_columns=["order_id"],
+    partition_by=["year", "month"],
+)
+```
+
+See [Merge and Delta Migration](merge.md) for strategy and migration details.
+
 ### Creating Tables
 
 ```python

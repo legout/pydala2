@@ -70,7 +70,7 @@ dataset.write_to_dataset(data)
 # Write with optimization options
 dataset.write_to_dataset(
     data,
-    mode="append",                    # append, delta, overwrite
+    mode="append",                    # append or overwrite
     partition_by=["category"],        # Hive-style partitioning
     max_rows_per_file=1000000,       # Control file size
     row_group_size=250000,           # Parquet row group size
@@ -109,10 +109,9 @@ dataset.write_to_dataset(
 #   │   │       └── data-0.parquet
 ```
 
-### Delta Updates
+### Keyed Merges
 
 ```python
-# Efficiently merge new data
 new_data = pl.DataFrame({
     'id': [101, 102],
     'category': ['A', 'B'],
@@ -120,14 +119,16 @@ new_data = pl.DataFrame({
     'updated_at': [datetime.now(), datetime.now()]
 })
 
-# Delta mode checks for existing data
-dataset.write_to_dataset(
+# Preserve matching rows and insert ids that are absent
+result = dataset.merge(
     new_data,
-    mode="delta",
-    delta_subset=["id"],             # Columns to check for duplicates
-    partition_by=["category"]
+    strategy="insert",
+    key_columns=["id"],
+    partition_by=["category"],
 )
 ```
+
+Use `strategy="update"` to change matching rows or `strategy="upsert"` to update matching rows and insert absent rows. See [Merge and Delta Migration](merge.md) for the complete contract.
 
 ## Reading Data
 
@@ -411,7 +412,7 @@ if not dataset.exists():
    - Use `optimize_dtypes()` to reduce storage
    - Compact partitions when files become too small
 
-5. **Use appropriate write modes**:
-   - `append` for adding new data
-   - `delta` for merging with change detection
+5. **Choose explicit write and merge operations**:
+   - `append` for unconditional additions
    - `overwrite` for complete replacement
+   - `merge(strategy="insert" | "update" | "upsert")` for keyed changes
