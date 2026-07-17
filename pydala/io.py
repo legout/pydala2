@@ -3,6 +3,7 @@ import datetime as dt
 import posixpath
 import time
 import uuid
+from collections.abc import Iterable
 
 # Third-party imports
 import duckdb
@@ -35,14 +36,13 @@ def strip_protocol(path: str) -> str:
     protocol, path = split_protocol(path)
     return path
 
+
 class PartialWriteError(RuntimeError):
     """Raised when Parquet files were written but dataset completion failed."""
 
     def __init__(self, message: str, metadata: list[dict[str, pq.FileMetaData]]):
         super().__init__(message)
         self.metadata = metadata
-
-
 
 
 def write_table(
@@ -92,17 +92,21 @@ def write_table(
     return path, metadata
 
 
+WriterSource = (
+    pa.Table
+    | pa.RecordBatch
+    | pl.DataFrame
+    | pl.LazyFrame
+    | pd.DataFrame
+    | duckdb.DuckDBPyRelation
+)
+"""Type alias for the source families a :class:`Writer` accepts and prepares."""
+
+
 class Writer:
     def __init__(
         self,
-        data: (
-            pa.Table
-            | pa.RecordBatch
-            | pl.DataFrame
-            | pl.LazyFrame
-            | pd.DataFrame
-            | duckdb.DuckDBPyRelation
-        ),
+        data: WriterSource,
         path: str,
         schema: pa.Schema | None,
         filesystem: AbstractFileSystem | None = None,
@@ -161,7 +165,16 @@ class Writer:
         elif isinstance(self.data, pd.DataFrame):
             self.data = pa.Table.from_pandas(self.data)
         elif isinstance(self.data, duckdb.DuckDBPyRelation):
-            self.data = self.data.arrow()
+            arrow_data = self.data.arrow()
+            # ``DuckDBPyRelation.arrow()`` returns a ``RecordBatchReader`` in
+            # recent duckdb releases; normalize to a concrete ``pa.Table`` so
+            # the rest of the pipeline (which expects ``column_names`` /
+            # ``schema``) keeps working.
+            self.data = (
+                arrow_data.read_all()
+                if isinstance(arrow_data, pa.RecordBatchReader)
+                else arrow_data
+            )
 
     def _set_schema(self) -> None:
         """
@@ -337,6 +350,97 @@ class Writer:
         self._to_polars()
         self.data = self.data.delta(other, subset=subset)
 
+    def prepare(
+        self,
+        *,
+        sort_by: str | list[str] | list[tuple[str, str]] | None = None,
+        unique: bool | str | list[str] = False,
+        ts_unit: str = "us",
+        tz: str | None = None,
+        remove_tz: bool = False,
+        alter_schema: bool = False,
+        partition_by: str | list[str] | None = None,
+        timestamp_column: str | None = None,
+    ) -> pa.Table:
+        """Run every source-normalization step and return the prepared Arrow table.
+
+        This is the reusable transformation seam shared by ordinary writes and
+        the (future) merge path. It performs -- in order -- input
+        normalization, sorting, optional uniqueness, schema cast/evolution,
+        derived date-part partition columns, and final Arrow conversion, then
+        returns the resulting ``pyarrow.Table``.
+
+        ``prepare`` performs *no* filesystem writes and *no* cache mutation:
+        it only transforms ``self.data`` in place and returns it.
+
+        Args:
+            sort_by: Column(s) to sort by; a list of ``[column, order]``
+                pairs controls per-column sort direction.
+            unique: When truthy, collapse duplicate rows; a string/list keys
+                the de-duplication on the given column(s).
+            ts_unit: Target timestamp unit. Defaults to ``"us"``.
+            tz: Target timezone for timestamp fields.
+            remove_tz: Strip timezone information from timestamps.
+            alter_schema: When ``False`` (default), enforce the Writer's
+                target schema, dropping columns absent from it; when ``True``
+                (and ``schema`` is unset), keep every data column.
+            partition_by: Date-part column(s) to derive from the timestamp.
+            timestamp_column: Timestamp column used for date-part derivation;
+                inferred from the data when omitted.
+
+        Returns:
+            The fully transformed ``pyarrow.Table``.
+        """
+        self.sort_data(by=sort_by)
+        if unique:
+            self.unique(columns=unique)
+        self.cast_schema(
+            ts_unit=ts_unit,
+            tz=tz,
+            remove_tz=remove_tz,
+            alter_schema=alter_schema,
+        )
+        if partition_by:
+            self.add_datepart_columns(
+                columns=partition_by,
+                timestamp_column=timestamp_column,
+            )
+        self._to_arrow()
+        return self.data
+
+    @classmethod
+    def prepare_many(
+        cls,
+        sources: Iterable[WriterSource],
+        *,
+        path: str,
+        schema: pa.Schema | None = None,
+        filesystem: AbstractFileSystem | None = None,
+        **prepare_kwargs,
+    ) -> list[pa.Table]:
+        """Prepare each source into an Arrow table without writing anything.
+
+        Mirrors how ``ParquetDataset.write_to_dataset`` fans a list of inputs
+        out into one ``Writer`` each, but stops short of any write or cache
+        side effect. Useful for callers (e.g. merge) that need the prepared
+        tables before deciding how to persist them.
+
+        Args:
+            sources: Iterable of supported source objects.
+            path: Base dataset path forwarded to each per-source ``Writer``.
+            schema: Optional target schema forwarded to each ``Writer``.
+            filesystem: Optional filesystem forwarded to each ``Writer``.
+            **prepare_kwargs: Keyword arguments forwarded to :meth:`prepare`.
+
+        Returns:
+            One fully transformed ``pyarrow.Table`` per source, in input order.
+        """
+        return [
+            cls(src, path=path, schema=schema, filesystem=filesystem).prepare(
+                **prepare_kwargs
+            )
+            for src in sources
+        ]
 
     def execute(
         self,
@@ -353,24 +457,32 @@ class Writer:
         delta_subset: str | list[str] | None = None,
         **write_options,
     ) -> list[dict[str, pq.FileMetaData]]:
-        """Execute the complete write plan behind Writer's interface."""
+        """Execute the complete write plan behind Writer's interface.
+
+        The transformation phase is delegated to :meth:`prepare`; this method
+        only adds the write-specific concerns layered on top: the optional
+        delta anti-join, the physical parquet write, and cache invalidation.
+        """
+        # Preserve the historical empty-source short-circuit: an empty input
+        # must return before any transformation runs (so e.g. an irrelevant
+        # ``sort_by`` cannot raise on an empty source). ``prepare`` itself
+        # still prepares empty sources into empty tables when called directly.
         if self.shape[0] == 0:
             return []
-
-        self.sort_data(by=sort_by)
-        if unique:
-            self.unique(columns=unique)
-        self.cast_schema(
+        # Transformation phase: prepare normalizes self.data in place
+        # (sorting, uniqueness, schema cast, date-part derivation, Arrow
+        # conversion). execute then layers write-only concerns on top.
+        self.prepare(
+            sort_by=sort_by,
+            unique=unique,
             ts_unit=ts_unit,
             tz=tz,
             remove_tz=remove_tz,
             alter_schema=alter_schema,
+            partition_by=partition_by,
+            timestamp_column=timestamp_column,
         )
-        if partition_by:
-            self.add_datepart_columns(
-                columns=partition_by,
-                timestamp_column=timestamp_column,
-            )
+
         if delta_other is not None:
             self._to_polars()
             other = delta_other(self.data, delta_subset)
@@ -390,6 +502,7 @@ class Writer:
                 metadata,
             ) from exc
         return metadata
+
     @property
     def shape(self) -> tuple[int, int]:
         if self.data is None:
