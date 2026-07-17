@@ -8,6 +8,7 @@ import posixpath
 import re
 import tempfile
 import typing as t
+from typing import Literal
 
 # Third-party imports
 import duckdb as _duckdb
@@ -21,9 +22,8 @@ from fsspec import AbstractFileSystem
 from fsspec.core import split_protocol
 from fsspec.implementations.dirfs import DirFileSystem
 from fsspeckit.datasets.pyarrow import collect_dataset_stats_pyarrow
+from fsspeckit.core.incremental import MergeResult
 
-# Initialize logger
-logger = logging.getLogger(__name__)
 
 # Local imports
 from .filesystem import FileSystem, clear_cache
@@ -35,10 +35,14 @@ from .helpers.security import (
     safe_join,
 )
 from .helpers.polars import pl as _pl
-from .io import PartialWriteError, Writer
+from .io import PartialMergeError, PartialWriteError, Writer, WriterSource
 from .metadata import PydalaDatasetMetadata
 from .schema import convert_large_types_to_normal, replace_schema
 from .table import PydalaTable
+from .adapters.fsspeckit import FsspeckitParquetAdapter
+
+# Initialize logger
+logger = logging.getLogger(__name__)
 
 
 def strip_protocol(path: str) -> str:
@@ -89,9 +93,7 @@ def _maintenance_plan_to_dict(plan: t.Any) -> dict[str, t.Any]:
         or getattr(plan, "dedup_groups", None)
         or ()
     )
-    result["planned_groups"] = [
-        [file.path for file in group.files] for group in groups
-    ]
+    result["planned_groups"] = [[file.path for file in group.files] for group in groups]
     return result
 
 
@@ -966,6 +968,11 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             **fs_kwargs,
         )
 
+        # Recovery surface for ``merge``: the last successful fsspeckit
+        # ``MergeResult`` is retained here even when the post-merge state
+        # refresh raises ``PartialMergeError``. ``None`` until a merge runs.
+        self.last_merge_result: MergeResult | None = None
+
         try:
             self.load()
         except Exception as e:
@@ -1100,9 +1107,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         # to self.files and callers (e.g. _optimize_dtypes) that delete
         # scan_files would remove every file in the dataset.
         if scan_files:
-            in_values = ", ".join(
-                "'" + f.replace("'", "''") + "'" for f in scan_files
-            )
+            in_values = ", ".join("'" + f.replace("'", "''") + "'" for f in scan_files)
             self._metadata_table_scanned = self._metadata_table.filter(
                 f"file_path IN ({in_values})"
             )
@@ -1255,6 +1260,190 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             #     _ = e
             #     self.load(reload_metadata=True, verbose=False)
             # self.update_metadata_table()
+
+    # ------------------------------------------------------------------ #
+    # Merge (insert / update / upsert) through fsspeckit
+    # ------------------------------------------------------------------ #
+    def merge(
+        self,
+        data: WriterSource | list[WriterSource],
+        *,
+        strategy: Literal["insert", "update", "upsert"],
+        key_columns: str | list[str],
+        partition_by: str | list[str] | None = None,
+        backend: Literal["pyarrow", "duckdb"] = "pyarrow",
+        compression: str = "zstd",
+        max_rows_per_file: int | None = None,
+        row_group_size: int | None = None,
+        sort_by: str | list[str] | list[tuple[str, str]] | None = None,
+        unique: bool | str | list[str] = False,
+        ts_unit: str = "us",
+        tz: str | None = None,
+        remove_tz: bool = False,
+        alter_schema: bool = False,
+        timestamp_column: str | None = None,
+        **merge_options: t.Any,
+    ) -> MergeResult:
+        """Merge ``data`` into the dataset via fsspeckit (insert/update/upsert).
+
+        Normalizes every supported source family through
+        :meth:`Writer.prepare`, treats list inputs as one logical source
+        batch, and delegates persistence strictly through
+        :meth:`FsspeckitParquetAdapter.merge`. After a successful physical
+        merge, pydala file/metadata/table/cache state is refreshed through
+        :meth:`_refresh_after_rewrite` so the same instance reads the merged
+        result immediately.
+
+        Supported source families (mirroring :meth:`write_to_dataset`):
+        Polars ``DataFrame``/``LazyFrame``, PyArrow ``Table``/``RecordBatch``,
+        pandas ``DataFrame``, and a DuckDB relation. A ``list``/``tuple`` of
+        any of these is merged as one logical source batch; duplicate source
+        keys resolve last-row-wins as required by fsspeckit.
+
+        Args:
+            data: Source(s) to merge; a list is one logical batch.
+            strategy: ``"insert"`` (new keys only), ``"update"`` (matched
+                keys only), or ``"upsert"`` (both).
+            key_columns: Non-empty column(s) uniquely identifying rows.
+                Required; null values in any key column are rejected before
+                persistence.
+            partition_by: Optional pydala-style partition column(s). Date-part
+                names (``year``/``month``/...) are derived from the timestamp
+                column; all named columns become hive partition directories.
+            backend: ``"pyarrow"`` (default; arbitrary fsspec filesystems) or
+                ``"duckdb"`` (limited to filesystems DuckDB can write to
+                natively).
+            compression: Compression codec forwarded to fsspeckit. Defaults
+                to ``"zstd"`` to match :meth:`write_to_dataset`.
+            max_rows_per_file / row_group_size: Optional fsspeckit
+                file/row-group sizing; ``None`` uses fsspeckit defaults.
+            sort_by / unique / ts_unit / tz / remove_tz / alter_schema /
+                timestamp_column: Source-preparation options forwarded to
+                :meth:`Writer.prepare`.
+            **merge_options: Additional fsspeckit merge tuning options
+                forwarded verbatim (e.g. ``merge_chunk_size_rows``,
+                ``enable_streaming_merge``, ``merge_max_memory_mb``).
+
+        Returns:
+            fsspeckit's typed :class:`~fsspeckit.core.incremental.MergeResult`.
+
+        Raises:
+            ValueError: If ``key_columns`` is empty, the strategy/backend is
+                unsupported, a key column is absent from the source, null key
+                values are present, or the backend cannot serve this
+                filesystem.
+            PartialMergeError: If the physical merge succeeded but the
+                post-merge state refresh failed; the successful
+                ``MergeResult`` is retained on :attr:`last_merge_result`
+                and ``PartialMergeError.merge_result``.
+        """
+        # --- key validation -------------------------------------------------
+        if isinstance(key_columns, str):
+            key_cols: list[str] = [key_columns]
+        else:
+            key_cols = list(key_columns) if key_columns is not None else []
+        if not key_cols:
+            raise ValueError(
+                "key_columns must be a non-empty string or list of strings"
+            )
+
+        # --- normalize sources to a list -----------------------------------
+        sources: list[WriterSource] = (
+            list(data) if isinstance(data, (list, tuple)) else [data]
+        )
+
+        # --- resolve target schema (mirrors write_to_dataset) --------------
+        if timestamp_column is not None:
+            self._timestamp_column = timestamp_column
+        if not partition_by and self.partition_names:
+            partition_by = self.partition_names
+        if alter_schema or partition_by:
+            # When ``alter_schema`` is set we keep every data column. When
+            # ``partition_by`` is set we must NOT enforce the on-disk physical
+            # schema either: hive partition columns live in the directory
+            # layout, not the file schema, so enforcing the file schema would
+            # drop them -- and fsspeckit requires partition columns to be
+            # physically present in the source. fsspeckit owns partition-aware
+            # schema handling on its side.
+            target_schema: pa.Schema | None = None
+        else:
+            target_schema = (
+                self.metadata.schema.to_arrow_schema() if self.metadata else None
+            )
+        if partition_by:
+            # fsspeckit writes hive partition directories; make the instance
+            # partition-aware immediately so the post-merge refresh (and any
+            # subsequent merge that does not repeat ``partition_by``) rebuilds
+            # a partition-aware table. Without this a dataset that started
+            # empty would keep ``_partitioning=None`` and read partition
+            # columns back as absent.
+            self._partitioning = "hive"
+
+        # --- prepare every source through the shared normalization seam ----
+        prepared = Writer.prepare_many(
+            sources,
+            path=self._path,
+            schema=target_schema,
+            filesystem=self._filesystem,
+            sort_by=sort_by,
+            unique=unique,
+            ts_unit=ts_unit,
+            tz=tz,
+            remove_tz=remove_tz,
+            alter_schema=alter_schema,
+            partition_by=partition_by,
+            timestamp_column=self._timestamp_column,
+        )
+
+        # --- reject null keys before persistence ---------------------------
+        for table in prepared:
+            missing = [col for col in key_cols if col not in table.column_names]
+            if missing:
+                raise ValueError(
+                    f"key column(s) {missing!r} not present in prepared merge source"
+                )
+            null_columns = [col for col in key_cols if table.column(col).null_count > 0]
+            if null_columns:
+                raise ValueError(
+                    f"merge source contains null values in key column(s) "
+                    f"{null_columns!r}; null keys are not allowed"
+                )
+
+        # --- delegate persistence to fsspeckit through the adapter ---------
+        # List inputs are one logical batch: fsspeckit concats and dedups
+        # source keys (last-row-wins) in a single typed MergeResult.
+        source_payload: pa.Table | list[pa.Table] = (
+            prepared if len(prepared) > 1 else prepared[0]
+        )
+        adapter = FsspeckitParquetAdapter(filesystem=self._filesystem)
+        try:
+            result = adapter.merge(
+                source_payload,
+                self._path,
+                strategy=strategy,
+                key_columns=key_cols,
+                partition_by=partition_by,
+                backend=backend,
+                compression=compression,
+                max_rows_per_file=max_rows_per_file,
+                row_group_size=row_group_size,
+                **merge_options,
+            )
+        finally:
+            adapter.close()
+
+        # --- refresh pydala state; retain the result for recovery ----------
+        self.last_merge_result = result
+        try:
+            self._refresh_after_rewrite()
+        except Exception as exc:
+            raise PartialMergeError(
+                "Merge physically succeeded but dataset state refresh "
+                "failed; the successful MergeResult is available on "
+                "ParquetDataset.last_merge_result.",
+                result,
+            ) from exc
+        return result
 
     # ------------------------------------------------------------------ #
     # Maintenance and optimization methods

@@ -4,6 +4,7 @@ import posixpath
 import time
 import uuid
 from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 # Third-party imports
 import duckdb
@@ -43,6 +44,24 @@ class PartialWriteError(RuntimeError):
     def __init__(self, message: str, metadata: list[dict[str, pq.FileMetaData]]):
         super().__init__(message)
         self.metadata = metadata
+
+
+if TYPE_CHECKING:
+    from fsspeckit.core.incremental import MergeResult
+
+
+class PartialMergeError(RuntimeError):
+    """Raised when a merge physically succeeded but dataset state refresh failed.
+
+    The successful fsspeckit ``MergeResult`` is preserved both on the
+    ``merge_result`` attribute and on ``ParquetDataset.last_merge_result`` so
+    callers can recover (e.g. by retrying ``_refresh_after_rewrite``) or
+    inspect what fsspeckit wrote.
+    """
+
+    def __init__(self, message: str, merge_result: "MergeResult"):
+        super().__init__(message)
+        self.merge_result = merge_result
 
 
 def write_table(
