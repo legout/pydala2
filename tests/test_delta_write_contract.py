@@ -1,47 +1,11 @@
-"""Characterization (contract) tests for ``mode="delta"`` insert-if-absent writes.
+"""Contracts for deprecated ``mode="delta"`` insert-if-absent writes.
 
-These tests freeze the *current* behavior of the public
-``ParquetDataset.write_to_dataset(..., mode="delta", delta_subset=...)`` API
-as an executable contract, *before* the ``mode="delta"`` implementation is
-replaced by the first-class ``merge(...)`` interface backed by fsspeckit
-(see epic #24, sibling issues #25/#27/#29/#30). Issue #28 is explicitly a
-TEST-ONLY ticket: no production behavior is changed here.
-
-Baseline captured at commit ``ef186d057f1622308736f29a228fa6f7f95a3812``.
-
-How ``mode="delta"`` works today
---------------------------------
-The delta path only runs when ``mode == "delta"`` *and* the dataset is already
-loaded into memory (``self.is_loaded`` is True, i.e. an ``_arrow_dataset`` has
-been materialised -- which happens when a ``ParquetDataset`` is constructed
-over existing files, or after an explicit ``load()``). For each incoming frame:
-
-1. ``_get_delta_other_df`` reads the *target* rows whose values fall within the
-   min/max range of the incoming frame on the relevant columns (plus any
-   null-valued target rows), producing the candidate ``other`` set.
-2. The incoming frame is anti-joined against ``other`` on ``delta_subset``
-   (fsspeckit ``delta`` / polars ``join(..., how="anti", join_nulls=True)``).
-3. Only the rows that survive the anti-join -- i.e. rows whose key is *absent*
-   from the target -- are appended. Existing target rows are never modified.
-   Hence "insert-if-absent", not an update.
-
-Expected changes under fsspeckit (NOT permanent compatibility requirements)
----------------------------------------------------------------------------
-The following current behaviors are documented here intentionally and **will**
-change once ``merge(...)`` lands. They are marked inline and via test names so
-the migration in #27/#29/#30 can update them deliberately rather than have a
-test silently encode a soon-to-be-wrong invariant:
-
-* ``test_delta_degrades_to_append_when_dataset_not_loaded`` -- today an
-  unloaded dataset silently appends everything. fsspeckit ``merge`` is
-  load-state independent (it reads the target itself).
-* ``test_duplicate_new_source_keys_are_appended_not_deduped`` -- today
-  duplicate *new* keys in the source are all appended (no de-duplication).
-  fsspeckit upsert is last-source-row-wins, so exactly one row survives.
-* ``test_null_source_key_matches_null_target_key`` -- today a null key in the
-  source anti-joins against a null key in the target (polars
-  ``join_nulls=True``), so the source row is suppressed. fsspeckit rejects
-  null keys outright.
+The public write API delegates delta operations to
+``ParquetDataset.merge(strategy="insert")``. Explicit ``delta_subset`` values
+become merge keys; when omitted, identity is inferred from common non-null
+source and target columns. The compatibility path is independent of dataset
+load state, rejects null source keys, and resolves duplicate source keys using
+the last row.
 """
 
 from __future__ import annotations
@@ -51,6 +15,7 @@ import pathlib
 
 import pyarrow as pa
 import pyarrow.dataset as pds
+import pytest
 
 from pydala import ParquetDataset
 from pydala.filesystem import FileSystem
@@ -92,14 +57,9 @@ def _rows(local_path: str) -> list[dict]:
 
 
 def _loaded_dataset(local_path: str) -> ParquetDataset:
-    """Return a ParquetDataset that is guaranteed to be loaded.
-
-    Constructing a ``ParquetDataset`` over existing files materialises the
-    in-memory ``_arrow_dataset`` (``is_loaded`` becomes True), which is the
-    precondition for the ``mode="delta"`` anti-join path to run.
-    """
+    """Return a ParquetDataset materialized over existing files."""
     ds = _dataset(local_path)
-    assert ds.is_loaded, "fixture invariant: dataset must be loaded for delta path"
+    assert ds.is_loaded, "fixture invariant: existing dataset is loaded"
     return ds
 
 
@@ -113,8 +73,8 @@ def test_delta_subset_key_preserves_target_and_appends_only_new_keys(
 ) -> None:
     """``delta_subset=[key]`` keeps matching target rows and appends new keys.
 
-    This is the verified example from issue #28:
-    target ``{1: old}``, source ``{1: new, 2: two}`` -> ``{1: old, 2: two}``.
+    Target ``{1: old}``, source ``{1: new, 2: two}`` produces
+    ``{1: old, 2: two}``.
     The existing key-1 row is untouched; only the absent key 2 is inserted.
     """
     ds = _dataset(local_path)
@@ -133,31 +93,20 @@ def test_delta_subset_key_preserves_target_and_appends_only_new_keys(
     ]
 
 
-def test_string_delta_subset_degrades_to_append(local_path: str) -> None:
-    """KNOWN QUIRK: a bare-string ``delta_subset`` does not key correctly today.
-
-    ``_get_delta_other_df`` intersects the candidate columns with
-    ``set(filter_columns)``; for a string that becomes ``set("id")`` ==
-    ``{'i', 'd'}``, whose intersection with the real column names is empty.
-    The anti-join candidate set is therefore empty and every source row is
-    appended, including the already-present key 1.
-
-    Callers must pass a list (``delta_subset=["id"]``) for key-based
-    insert-if-absent. fsspeckit ``merge(key_columns=...)`` normalises both
-    forms, so this quirk disappears under the migration.
-    """
+def test_string_delta_subset_is_normalized_as_explicit_key(local_path: str) -> None:
+    """A bare-string ``delta_subset`` behaves like a one-column key list."""
     ds = _dataset(local_path)
     ds.write_to_dataset(_table(id=[1], val=["old"]), mode="append")
 
     loaded = _loaded_dataset(local_path)
-    loaded.write_to_dataset(
-        _table(id=[1, 2], val=["new", "two"]),
-        mode="delta",
-        delta_subset="id",
-    )
+    with pytest.warns(DeprecationWarning):
+        loaded.write_to_dataset(
+            _table(id=[1, 2], val=["new", "two"]),
+            mode="delta",
+            delta_subset="id",
+        )
 
     assert _rows(local_path) == [
-        {"id": 1, "val": "new"},
         {"id": 1, "val": "old"},
         {"id": 2, "val": "two"},
     ]
@@ -238,7 +187,7 @@ def test_delta_subset_none_identity_uses_common_columns_only(
 
 
 # --------------------------------------------------------------------------- #
-# Loaded vs not loaded: the load-state dependency (KNOWN BUG / will change)
+# Loaded and unloaded dataset instances
 # --------------------------------------------------------------------------- #
 
 
@@ -261,32 +210,20 @@ def test_delta_runs_insert_if_absent_when_dataset_is_loaded(local_path: str) -> 
     ]
 
 
-def test_delta_degrades_to_append_when_dataset_not_loaded(local_path: str) -> None:
-    """KNOWN BUG / intentional migration change (issue #28).
-
-    A freshly-written dataset is *not* loaded into memory, so a subsequent
-    ``mode="delta"`` write on the same object takes the append path: the
-    ``delta_other`` callback is only wired up when ``self.is_loaded`` is True.
-    As a result the duplicate key 1 is appended verbatim instead of being
-    suppressed.
-
-    Under fsspeckit ``merge`` this becomes load-state independent -- the merge
-    reader loads the target itself -- so this test is expected to *flip* to the
-    insert-if-absent result ``{1: old, 2: two}`` once #27/#29 land.
-    """
+def test_delta_is_insert_if_absent_when_dataset_not_loaded(local_path: str) -> None:
+    """Delta delegates to merge independently of the dataset's load state."""
     ds = _dataset(local_path)
     ds.write_to_dataset(_table(id=[1], val=["old"]), mode="append")
     assert ds.is_loaded is False, "writing does not load the dataset"
 
-    ds.write_to_dataset(
-        _table(id=[1, 2], val=["new", "two"]),
-        mode="delta",
-        delta_subset=["id"],
-    )
+    with pytest.warns(DeprecationWarning):
+        ds.write_to_dataset(
+            _table(id=[1, 2], val=["new", "two"]),
+            mode="delta",
+            delta_subset=["id"],
+        )
 
-    # Today: degrades to a plain append (duplicate key 1 is kept).
     assert _rows(local_path) == [
-        {"id": 1, "val": "new"},
         {"id": 1, "val": "old"},
         {"id": 2, "val": "two"},
     ]
@@ -297,26 +234,21 @@ def test_delta_degrades_to_append_when_dataset_not_loaded(local_path: str) -> No
 # --------------------------------------------------------------------------- #
 
 
-def test_duplicate_new_source_keys_are_appended_not_deduped(local_path: str) -> None:
-    """WILL CHANGE under fsspeckit (issue #28).
-
-    Duplicate *new* keys in the source are all appended -- the current path
-    performs no intra-source de-duplication. fsspeckit upsert is
-    last-source-row-wins, so exactly one row for key 2 will survive.
-    """
+def test_duplicate_new_source_keys_use_the_last_source_row(local_path: str) -> None:
+    """The delegated merge resolves duplicate source keys last-row-wins."""
     ds = _dataset(local_path)
     ds.write_to_dataset(_table(id=[1], val=["old"]), mode="append")
 
     loaded = _loaded_dataset(local_path)
-    loaded.write_to_dataset(
-        _table(id=[2, 2], val=["x", "y"]),
-        mode="delta",
-        delta_subset=["id"],
-    )
+    with pytest.warns(DeprecationWarning):
+        loaded.write_to_dataset(
+            _table(id=[2, 2], val=["x", "y"]),
+            mode="delta",
+            delta_subset=["id"],
+        )
 
     assert _rows(local_path) == [
         {"id": 1, "val": "old"},
-        {"id": 2, "val": "x"},
         {"id": 2, "val": "y"},
     ]
 
@@ -345,53 +277,47 @@ def test_duplicate_existing_source_keys_are_all_dropped(local_path: str) -> None
 # --------------------------------------------------------------------------- #
 
 
-def test_null_source_key_appended_when_target_has_no_null(local_path: str) -> None:
-    """WILL CHANGE under fsspeckit (issue #28).
-
-    Today a null key absent from the target is inserted like any other new key.
-    fsspeckit rejects null keys outright, so under the migration the
-    ``(None, "n")`` source row will be rejected instead of appended.
-    """
+def test_null_source_key_is_rejected_when_target_has_no_null(
+    local_path: str,
+) -> None:
+    """Delta rejects null source keys before persistence."""
     ds = _dataset(local_path)
     ds.write_to_dataset(_table(id=[1], val=["old"]), mode="append")
 
     loaded = _loaded_dataset(local_path)
-    loaded.write_to_dataset(
-        _table(id=[None, 2], val=["n", "two"]),
-        mode="delta",
-        delta_subset=["id"],
-    )
+    with (
+        pytest.warns(DeprecationWarning),
+        pytest.raises(ValueError, match="null values in key"),
+    ):
+        loaded.write_to_dataset(
+            _table(id=[None, 2], val=["n", "two"]),
+            mode="delta",
+            delta_subset=["id"],
+        )
 
-    assert _rows(local_path) == [
-        {"id": 1, "val": "old"},
-        {"id": 2, "val": "two"},
-        {"id": None, "val": "n"},
-    ]
+    assert _rows(local_path) == [{"id": 1, "val": "old"}]
 
 
-def test_null_source_key_matches_null_target_key(local_path: str) -> None:
-    """WILL CHANGE under fsspeckit (issue #28).
-
-    The anti-join uses polars ``join_nulls=True``, so a null source key matches
-    a null target key and the source row is suppressed (the target null row is
-    kept). fsspeckit rejects null keys outright, so under the migration the
-    source null row will be rejected rather than silently matched against the
-    target null.
-    """
+def test_null_source_key_is_rejected_when_target_contains_null(
+    local_path: str,
+) -> None:
+    """Null source keys are rejected rather than matched to null target keys."""
     ds = _dataset(local_path)
     ds.write_to_dataset(_table(id=[1, None], val=["old", "tn"]), mode="append")
 
     loaded = _loaded_dataset(local_path)
-    loaded.write_to_dataset(
-        _table(id=[None, 2], val=["n", "two"]),
-        mode="delta",
-        delta_subset=["id"],
-    )
+    with (
+        pytest.warns(DeprecationWarning),
+        pytest.raises(ValueError, match="null values in key"),
+    ):
+        loaded.write_to_dataset(
+            _table(id=[None, 2], val=["n", "two"]),
+            mode="delta",
+            delta_subset=["id"],
+        )
 
-    # Today: source null row (None, "n") is suppressed by the null==null match.
     assert _rows(local_path) == [
         {"id": 1, "val": "old"},
-        {"id": 2, "val": "two"},
         {"id": None, "val": "tn"},
     ]
 

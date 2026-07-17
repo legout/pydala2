@@ -7,6 +7,7 @@ import os
 import posixpath
 import re
 import tempfile
+import warnings
 import typing as t
 from typing import Literal
 
@@ -682,6 +683,7 @@ class BaseDataset(_DatasetStorage):
             elif hasattr(self, "_arrow_dataset"):
                 self.ddb_con.register(f"{self.name}", self._arrow_dataset)
 
+    # TODO(next-major): remove with the legacy delta compatibility helpers.
     def _get_delta_other_df(
         self,
         df: _pl.DataFrame | _pl.LazyFrame,
@@ -768,6 +770,7 @@ class BaseDataset(_DatasetStorage):
         ts_unit: str = "us",
         tz: str | None = None,
         remove_tz: bool = False,
+        # TODO(next-major): remove delta_subset after the delta migration window.
         delta_subset: str | list[str] | None = None,
         alter_schema: bool = False,
         timestamp_column: str | None = None,
@@ -813,6 +816,11 @@ class BaseDataset(_DatasetStorage):
         None
         """
 
+        if mode not in {"append", "overwrite"}:
+            raise ValueError(
+                f"Unsupported write mode: {mode!r}. "
+                "Expected one of ('append', 'overwrite')."
+            )
         if "partitioning_columns" in kwargs:
             partition_by = kwargs.pop("partitioning_columns")
 
@@ -844,15 +852,6 @@ class BaseDataset(_DatasetStorage):
                 filesystem=self._filesystem,
                 schema=schema if not alter_schema else None,
             )
-            delta_other = None
-            if mode == "delta" and self.is_loaded:
-
-                def delta_other(frame, subset):
-                    return self._get_delta_other_df(
-                        frame,
-                        filter_columns=subset,
-                    )
-
             metadata.extend(
                 writer.execute(
                     sort_by=sort_by,
@@ -863,8 +862,6 @@ class BaseDataset(_DatasetStorage):
                     alter_schema=alter_schema,
                     partition_by=partition_by,
                     timestamp_column=self._timestamp_column,
-                    delta_other=delta_other,
-                    delta_subset=delta_subset,
                     row_group_size=row_group_size,
                     compression=compression,
                     max_rows_per_file=max_rows_per_file,
@@ -1133,6 +1130,104 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         else:
             return f"{self.path} is empty."
 
+    # TODO(next-major): remove with mode="delta" compatibility.
+    def _resolve_deprecated_delta_partition_by(
+        self,
+        partition_by: str | list[str] | None,
+    ) -> str | list[str] | None:
+        """Resolve existing hive partition columns without relying on load state."""
+        if partition_by:
+            return partition_by
+
+        partition_names = list(self.partition_names or [])
+        if partition_names:
+            return partition_names
+
+        target_files = self._filesystem.glob(
+            posixpath.join(self._path, "**", "*.parquet")
+        )
+        for file_path in target_files:
+            for part in file_path.split("/"):
+                if "=" not in part:
+                    continue
+                name = part.split("=", maxsplit=1)[0]
+                if name and name not in partition_names:
+                    partition_names.append(name)
+        return partition_names or None
+
+    # TODO(next-major): remove with mode="delta" compatibility.
+    def _infer_deprecated_delta_key_columns(
+        self,
+        data: WriterSource | list[WriterSource],
+        *,
+        partition_by: str | list[str] | None,
+        sort_by: str | list[str] | list[tuple[str, str]] | None,
+        unique: bool | str | list[str],
+        ts_unit: str,
+        tz: str | None,
+        remove_tz: bool,
+        alter_schema: bool,
+        timestamp_column: str | None,
+    ) -> list[str]:
+        """Infer legacy exact-row identity keys without relying on load state."""
+        sources = list(data) if isinstance(data, (list, tuple)) else [data]
+        prepared = Writer.prepare_many(
+            sources,
+            path=self._path,
+            schema=None,
+            filesystem=self._filesystem,
+            sort_by=sort_by,
+            unique=unique,
+            ts_unit=ts_unit,
+            tz=tz,
+            remove_tz=remove_tz,
+            alter_schema=True,
+            partition_by=partition_by,
+            timestamp_column=timestamp_column,
+        )
+        if not prepared:
+            raise ValueError(
+                "Cannot infer delta keys from an empty source list; "
+                "pass delta_subset explicitly."
+            )
+
+        key_columns = [
+            column
+            for column in prepared[0].column_names
+            if all(
+                column in table.column_names and table.column(column).null_count == 0
+                for table in prepared
+            )
+        ]
+        target_files = self._filesystem.glob(
+            posixpath.join(self._path, "**", "*.parquet")
+        )
+        if target_files:
+            dataset_options: dict[str, t.Any] = (
+                {"partitioning": "hive"} if partition_by else {}
+            )
+            target = pds.dataset(
+                self._path,
+                filesystem=self._filesystem,
+                format="parquet",
+                **dataset_options,
+            )
+            target_columns = set(target.schema.names)
+            key_columns = [column for column in key_columns if column in target_columns]
+            if key_columns:
+                target_table = target.to_table(columns=key_columns)
+                key_columns = [
+                    column
+                    for column in key_columns
+                    if target_table.column(column).null_count == 0
+                ]
+        if not key_columns:
+            raise ValueError(
+                "Cannot infer common non-null source/target columns for "
+                "mode='delta'; pass delta_subset explicitly."
+            )
+        return key_columns
+
     def write_to_dataset(
         self,
         data: (
@@ -1163,13 +1258,14 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         ts_unit: str = "us",
         tz: str | None = None,
         remove_tz: bool = False,
+        # TODO(next-major): remove delta_subset after the delta migration window.
         delta_subset: str | list[str] | None = None,
         update_metadata: bool = True,
         alter_schema: bool = False,
         timestamp_column: str | None = None,
         verbose: bool = False,
         **kwargs,
-    ):
+    ) -> MergeResult | None:
         """
         Writes the given data to the dataset.
 
@@ -1208,6 +1304,67 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         None
         """
 
+        if "partitioning_columns" in kwargs:
+            partition_by = kwargs.pop("partitioning_columns")
+
+        valid_modes = ("append", "overwrite", "delta")
+        if mode not in valid_modes:
+            raise ValueError(
+                f"Unsupported write mode: {mode!r}. Expected one of {valid_modes}."
+            )
+
+        if mode == "delta":
+            if isinstance(data, pa.RecordBatchReader):
+                data = data.read_all()
+            partition_by = self._resolve_deprecated_delta_partition_by(partition_by)
+
+            if delta_subset is None:
+                inferred_keys = self._infer_deprecated_delta_key_columns(
+                    data,
+                    partition_by=partition_by,
+                    sort_by=sort_by,
+                    unique=unique,
+                    ts_unit=ts_unit,
+                    tz=tz,
+                    remove_tz=remove_tz,
+                    alter_schema=alter_schema,
+                    timestamp_column=timestamp_column,
+                )
+                warning = (
+                    "delta_subset=None infers key columns from common non-null "
+                    "source/target columns for compatibility; explicit keys "
+                    "will be required after mode='delta' is removed. "
+                )
+                key_columns: str | list[str] = inferred_keys
+            else:
+                warning = ""
+                key_columns = delta_subset
+
+            warning += (
+                "mode='delta' is deprecated and now delegates to "
+                "merge(strategy='insert'). Migration behavior: null keys are "
+                "rejected; duplicate source keys use the last row; execution "
+                "is independent of load state; the return value is a typed "
+                "MergeResult."
+            )
+            warnings.warn(warning, DeprecationWarning, stacklevel=2)
+            return self.merge(
+                data,
+                strategy="insert",
+                key_columns=key_columns,
+                partition_by=partition_by,
+                compression=compression,
+                max_rows_per_file=max_rows_per_file,
+                row_group_size=row_group_size,
+                sort_by=sort_by,
+                unique=unique,
+                ts_unit=ts_unit,
+                tz=tz,
+                remove_tz=remove_tz,
+                alter_schema=alter_schema,
+                timestamp_column=timestamp_column,
+                **kwargs,
+            )
         metadata = BaseDataset.write_to_dataset(
             self,
             data=data,
@@ -1264,6 +1421,20 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
     # ------------------------------------------------------------------ #
     # Merge (insert / update / upsert) through fsspeckit
     # ------------------------------------------------------------------ #
+    def _finalize_merge_result(self, result: MergeResult) -> MergeResult:
+        """Retain a successful merge result and refresh dataset state."""
+        self.last_merge_result = result
+        try:
+            self._refresh_after_rewrite()
+        except Exception as exc:
+            raise PartialMergeError(
+                "Merge succeeded but dataset state refresh failed; the "
+                "successful MergeResult is available on "
+                "ParquetDataset.last_merge_result.",
+                result,
+            ) from exc
+        return result
+
     def merge(
         self,
         data: WriterSource | list[WriterSource],
@@ -1351,6 +1522,46 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         sources: list[WriterSource] = (
             list(data) if isinstance(data, (list, tuple)) else [data]
         )
+        if not sources:
+            valid_strategies = ("insert", "update", "upsert")
+            if strategy not in valid_strategies:
+                raise ValueError(
+                    f"Unsupported merge strategy: {strategy!r}. "
+                    f"Expected one of {valid_strategies}."
+                )
+            valid_backends = ("pyarrow", "duckdb")
+            if backend not in valid_backends:
+                raise ValueError(
+                    f"Unsupported merge backend: {backend!r}. "
+                    f"Expected one of {valid_backends}."
+                )
+
+            target_files = sorted(
+                self._filesystem.glob(posixpath.join(self._path, "**", "*.parquet"))
+            )
+            target_count = (
+                pds.dataset(
+                    target_files,
+                    filesystem=self._filesystem,
+                    format="parquet",
+                ).count_rows()
+                if target_files
+                else 0
+            )
+            result = MergeResult(
+                strategy=strategy,
+                source_count=0,
+                target_count_before=target_count,
+                target_count_after=target_count,
+                inserted=0,
+                updated=0,
+                deleted=0,
+                files=[],
+                rewritten_files=[],
+                inserted_files=[],
+                preserved_files=target_files,
+            )
+            return self._finalize_merge_result(result)
 
         # --- resolve target schema (mirrors write_to_dataset) --------------
         if timestamp_column is not None:
@@ -1432,18 +1643,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         finally:
             adapter.close()
 
-        # --- refresh pydala state; retain the result for recovery ----------
-        self.last_merge_result = result
-        try:
-            self._refresh_after_rewrite()
-        except Exception as exc:
-            raise PartialMergeError(
-                "Merge physically succeeded but dataset state refresh "
-                "failed; the successful MergeResult is available on "
-                "ParquetDataset.last_merge_result.",
-                result,
-            ) from exc
-        return result
+        return self._finalize_merge_result(result)
 
     # ------------------------------------------------------------------ #
     # Maintenance and optimization methods

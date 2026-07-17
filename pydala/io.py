@@ -352,6 +352,7 @@ class Writer:
         )
         self.schema = self.data.schema
 
+    # TODO(next-major): remove Writer.delta after the delta migration window.
     def delta(
         self,
         other: pl.DataFrame | pl.LazyFrame,
@@ -472,15 +473,12 @@ class Writer:
         alter_schema: bool = False,
         partition_by: str | list[str] | None = None,
         timestamp_column: str | None = None,
-        delta_other=None,
-        delta_subset: str | list[str] | None = None,
         **write_options,
     ) -> list[dict[str, pq.FileMetaData]]:
         """Execute the complete write plan behind Writer's interface.
 
         The transformation phase is delegated to :meth:`prepare`; this method
-        only adds the write-specific concerns layered on top: the optional
-        delta anti-join, the physical parquet write, and cache invalidation.
+        only adds the physical parquet write and cache invalidation.
         """
         # Preserve the historical empty-source short-circuit: an empty input
         # must return before any transformation runs (so e.g. an irrelevant
@@ -501,12 +499,6 @@ class Writer:
             partition_by=partition_by,
             timestamp_column=timestamp_column,
         )
-
-        if delta_other is not None:
-            self._to_polars()
-            other = delta_other(self.data, delta_subset)
-            if other is not None:
-                self.delta(other=other, subset=delta_subset)
 
         metadata = self.write_to_dataset(
             partitioning_columns=partition_by,
