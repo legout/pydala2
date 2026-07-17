@@ -1,3 +1,4 @@
+import polars as pl
 from fsspeckit.datasets.polars import (
     cast_relaxed,
     delta,
@@ -5,7 +6,6 @@ from fsspeckit.datasets.polars import (
     explode_all,
     opt_dtype,
     partition_by,
-    pl,
     unify_schemas,
     unnest_all,
     with_datepart_columns,

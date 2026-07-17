@@ -6,7 +6,6 @@ from pydala.helpers.misc import (
     setattr_rec,
     delattr_rec,
     get_nested_keys,
-    unify_schemas_pl,
     get_partitions_from_path
 )
 
@@ -47,7 +46,7 @@ class TestMisc(unittest.TestCase):
 
         # Test invalid input type
         with self.assertRaises(ValueError):
-            humanized_size_to_bytes(1024)
+            humanized_size_to_bytes(1024)  # type: ignore[arg-type]
 
         # Test empty string
         with self.assertRaises(ValueError):
@@ -65,7 +64,7 @@ class TestMisc(unittest.TestCase):
         # Test simple attribute
         class TestObj:
             def __init__(self):
-                self.a = self.b
+                self.a = self
                 self.b = "value"
 
         obj = TestObj()
@@ -83,7 +82,7 @@ class TestMisc(unittest.TestCase):
         # Test setting nested attribute
         class TestObj:
             def __init__(self):
-                self.a = self.b
+                self.a = self
                 self.b = ""
 
         obj = TestObj()
@@ -98,7 +97,7 @@ class TestMisc(unittest.TestCase):
         # Test deleting nested attribute
         class TestObj:
             def __init__(self):
-                self.a = self.b
+                self.a = self
                 self.b = ""
 
         obj = TestObj()

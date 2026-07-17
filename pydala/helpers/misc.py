@@ -1,7 +1,7 @@
-from typing import Any
+from collections.abc import Callable
+from typing import Any, cast
 
 import functools
-import posixpath
 import re
 
 import pyarrow as pa
@@ -9,7 +9,8 @@ import pyarrow.parquet as pq
 from fsspec import filesystem as fsspec_filesystem, AbstractFileSystem
 from fsspeckit.common import get_partitions_from_path as _get_partitions_from_path
 from fsspeckit.common import run_parallel as _run_parallel
-from .polars import pl
+
+import polars as pl
 
 
 def read_table(
@@ -31,12 +32,15 @@ def read_table(
         pa.Table: Pyarrow table.
     """
     # sourcery skip: avoid-builtin-shadow
-    if filesystem is None:
-        filesystem = fsspec_filesystem("file")
+    fs = (
+        cast(AbstractFileSystem, fsspec_filesystem("file"))
+        if filesystem is None
+        else filesystem
+    )
 
-    filesystem.invalidate_cache()
+    fs.invalidate_cache()
 
-    table = pq.read_table(pa.BufferReader(filesystem.read_bytes(path)), schema=schema)
+    table = pq.read_table(pa.BufferReader(fs.read_bytes(path)), schema=schema)
 
     if partitioning is not None:
         partitions = get_partitions_from_path(path, partitioning=partitioning)
@@ -54,7 +58,7 @@ def read_table(
 
 
 def run_parallel(
-    func: callable,
+    func: Callable[..., Any],
     func_params: list[Any],
     *args,
     n_jobs: int = -1,
@@ -86,7 +90,7 @@ def run_parallel(
 
 
 def _call_with_first_and_args(
-    fp: Any, func: callable, args: tuple[Any, ...], kwargs: dict[str, Any]
+    fp: Any, func: Callable[..., Any], args: tuple[Any, ...], kwargs: dict[str, Any]
 ) -> Any:
     """Call ``func`` with the task parameter first, followed by bound extras."""
     return func(fp, *args, **kwargs)
@@ -106,15 +110,7 @@ def get_partitions_from_path(
     """
     if partitioning is None:
         # Preserve the legacy pydala contract that raises TypeError here.
-        return list(zip(partitioning, path.split("/")[-len(partitioning) :]))
-
-    if isinstance(partitioning, str) and partitioning != "hive":
-        # fsspeckit returns the last directory for a single-column string
-        # partitioning; pydala's legacy contract uses the first segment.
-        if "." in path:
-            path = posixpath.dirname(path)
-        parts = path.split("/")
-        return [(partitioning, parts[0])]
+        raise TypeError("partitioning must not be None")
 
     return _get_partitions_from_path(path, partitioning)
 
@@ -140,18 +136,8 @@ def humanize_size(size: int, unit: str = "MB") -> float:
     if unit not in valid_units:
         raise ValueError(f"unit must be one of {valid_units}")
 
-    if unit == "b":
-        return round(size, 1)
-    elif unit == "kb":
-        return round(size / 1024, 1)
-    elif unit == "mb":
-        return round(size / 1024**2, 1)
-    elif unit == "gb":
-        return round(size / 1024**3, 1)
-    elif unit == "tb":
-        return round(size / 1024**4, 1)
-    elif unit == "pb":
-        return round(size / 1024**5, 1)
+    powers = {"b": 0, "kb": 1, "mb": 2, "gb": 3, "tb": 4, "pb": 5}
+    return round(size / 1024 ** powers[unit], 1)
 
 
 def humanized_size_to_bytes(size: str) -> int:
@@ -178,7 +164,7 @@ def humanized_size_to_bytes(size: str) -> int:
     try:
         size_val = float(size_str)
     except ValueError:
-        raise ValueError("size must contain a valid numeric value")
+        raise ValueError("size must contain a valid numeric value") from None
 
     if size_val < 0:
         raise ValueError("size must be a non-negative number")
@@ -187,18 +173,11 @@ def humanized_size_to_bytes(size: str) -> int:
     if unit not in valid_units:
         raise ValueError(f"unit must be one of {valid_units}")
 
-    if unit == "b":
-        return int(size_val)
-    elif unit == "kb":
-        return int(size_val * 1024)
-    elif unit == "mb":
-        return int(size_val * 1024**2)
-    elif unit == "gb":
-        return int(size_val * 1024**3)
-    elif unit == "tb":
-        return int(size_val * 1024**4)
-    elif unit == "pb":
-        return int(size_val * 1024**5)
+    powers = {"b": 0, "kb": 1, "mb": 2, "gb": 3, "tb": 4, "pb": 5}
+    try:
+        return int(size_val * 1024 ** powers[unit])
+    except (OverflowError, ValueError) as exc:
+        raise ValueError("size must be a finite numeric value") from exc
 
 
 def getattr_rec(obj: Any, attr_str: str) -> Any:
@@ -379,7 +358,7 @@ def unify_schemas_pl(schemas: list[pa.Schema]) -> pl.Schema:
         pl.concat(
             [
                 # pl.from_arrow(pa.Table.from_pylist([], schema=schema))
-                pl.from_arrow(schema.empty_table())
+                cast(pl.DataFrame, pl.from_arrow(schema.empty_table()))
                 for schema in schemas
             ],
             how="diagonal_relaxed",

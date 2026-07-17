@@ -62,11 +62,11 @@ def escape_sql_literal(value: Any) -> str:
         escaped = value.replace("'", "''")
         return f"'{escaped}'"
 
-    if isinstance(value, (int, float)):
-        return str(value)
-
     if isinstance(value, bool):
         return "TRUE" if value else "FALSE"
+
+    if isinstance(value, (int, float)):
+        return str(value)
 
     # For other types, convert to string and escape
     escaped = str(value).replace("'", "''")
@@ -224,7 +224,7 @@ def sanitize_filename(filename: str) -> str:
         Sanitized filename
     """
     if not filename:
-        raise ValueError("Filename cannot be empty")
+        filename = ""
 
     # Remove path separators and dangerous characters
     sanitized = re.sub(r'[<>:"/\\|?*\x00-\x1F]', "", filename)

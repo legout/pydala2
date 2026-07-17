@@ -7,7 +7,7 @@ import psutil
 from fsspeckit import AbstractFileSystem, filesystem
 
 
-def get_credentials_from_fssspec(
+def get_credentials_from_fsspec(
     fs: AbstractFileSystem, redact_secrets: bool = True
 ) -> dict[str, str]:
     """
@@ -43,6 +43,10 @@ def get_credentials_from_fssspec(
             }
 
     return {}
+
+
+# Back-compat alias for the original misspelled public name.
+get_credentials_from_fssspec = get_credentials_from_fsspec
 
 
 def get_total_directory_size(directory: str) -> int:
