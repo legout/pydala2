@@ -1,6 +1,9 @@
 # Standard library imports
+import dataclasses
 import datetime as dt
+import enum
 import logging
+import os
 import posixpath
 import re
 import tempfile
@@ -17,11 +20,7 @@ import tqdm
 from fsspec import AbstractFileSystem
 from fsspec.core import split_protocol
 from fsspec.implementations.dirfs import DirFileSystem
-from fsspeckit.datasets.pyarrow import (
-    collect_dataset_stats_pyarrow,
-    compact_parquet_dataset_pyarrow,
-    optimize_parquet_dataset_pyarrow,
-)
+from fsspeckit.datasets.pyarrow import collect_dataset_stats_pyarrow
 
 # Initialize logger
 logger = logging.getLogger(__name__)
@@ -52,6 +51,74 @@ def strip_protocol(path: str) -> str:
     """
     protocol, path = split_protocol(path)
     return path
+
+
+def _maintenance_to_plain(value: t.Any) -> t.Any:
+    """Recursively convert fsspeckit maintenance objects to plain data.
+
+    fsspeckit 0.25 returns frozen dataclasses (``MaintenanceResult``,
+    ``CompactionPlan``, ...) with enum fields from its filesystem maintenance
+    methods. pydala's public maintenance contract returns plain dicts, so the
+    dataclasses are unrolled recursively and enums are replaced by their
+    values. Non-dataclass leaves (e.g. ``pyarrow.Schema``) are kept as-is.
+    """
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return {
+            field.name: _maintenance_to_plain(getattr(value, field.name))
+            for field in dataclasses.fields(value)
+        }
+    if isinstance(value, enum.Enum):
+        return value.value
+    if isinstance(value, (list, tuple)):
+        return [_maintenance_to_plain(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _maintenance_to_plain(item) for key, item in value.items()}
+    return value
+
+
+def _maintenance_plan_to_dict(plan: t.Any) -> dict[str, t.Any]:
+    """Convert an fsspeckit maintenance plan to pydala's dry-run dict shape.
+
+    Adds a ``planned_groups`` convenience key (a list of file-path lists, one
+    per planned rewrite group) next to the fully unrolled plan fields.
+    """
+    result = _maintenance_to_plain(plan)
+    groups = (
+        getattr(plan, "compaction_groups", None)
+        or getattr(plan, "optimization_groups", None)
+        or getattr(plan, "dedup_groups", None)
+        or ()
+    )
+    result["planned_groups"] = [
+        [file.path for file in group.files] for group in groups
+    ]
+    return result
+
+
+def _resolve_maintenance_target(
+    filesystem: AbstractFileSystem, path: str
+) -> tuple[AbstractFileSystem, str]:
+    """Resolve the (filesystem, path) pair fsspeckit's maintenance expects.
+
+    fsspeckit's atomic-local maintenance lane reads and renames files through
+    plain OS calls (``open``/``os``/``shutil``) instead of the fsspec API, so
+    for local backends any ``DirFileSystem`` wrappers must be unwrapped to the
+    inner filesystem and ``path`` resolved to the real OS path. Non-local
+    backends keep the original pair; their best-effort lane routes all I/O
+    through ``filesystem.open``.
+    """
+    root_segments: list[str] = []
+    inner = filesystem
+    while isinstance(inner, DirFileSystem):
+        root_segments.append(inner.path)
+        inner = inner.fs
+    protocols = inner.protocol
+    if isinstance(protocols, str):
+        protocols = (protocols,)
+    if not any(protocol in {"local", "file", "os"} for protocol in protocols):
+        return filesystem, path
+    resolved = os.path.join(*reversed(root_segments), path) if root_segments else path
+    return inner, os.path.abspath(resolved)
 
 
 class _DatasetStorage:
@@ -1221,14 +1288,23 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         dry_run: bool = False,
         partition_filter: list[str] | None = None,
     ) -> dict[str, t.Any]:
-        return compact_parquet_dataset_pyarrow(
-            path=path,
-            filesystem=filesystem,
+        # fsspeckit >= 0.25 exposes maintenance as filesystem methods: a dry
+        # run is the immutable plan, a real run plans and executes in one call.
+        if dry_run:
+            plan = filesystem.plan_parquet_compaction(
+                path,
+                target_rows_per_file=max_rows_per_file,
+                partition_filter=partition_filter,
+                compression=compression,
+            )
+            return _maintenance_plan_to_dict(plan)
+        result = filesystem.compact_parquet_dataset(
+            path,
             target_rows_per_file=max_rows_per_file,
-            compression=compression,
-            dry_run=dry_run,
             partition_filter=partition_filter,
+            compression=compression,
         )
+        return _maintenance_to_plain(result)
 
     def _fsspeckit_optimize(
         self,
@@ -1237,6 +1313,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         max_rows_per_file: int | None = None,
         compression: str | None = None,
         unique: bool | list[str] = False,
+        dry_run: bool = False,
         partition_filter: list[str] | None = None,
     ) -> dict[str, t.Any]:
         if isinstance(unique, list):
@@ -1246,14 +1323,24 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         else:
             deduplicate_key_columns = None
 
-        return optimize_parquet_dataset_pyarrow(
-            path=path,
-            filesystem=filesystem,
-            target_rows_per_file=max_rows_per_file,
-            compression=compression,
+        if dry_run:
+            plan = filesystem.plan_parquet_optimization(
+                path,
+                deduplicate_key_columns=deduplicate_key_columns,
+                target_rows_per_file=max_rows_per_file,
+                partition_filter=partition_filter,
+                compression=compression,
+            )
+            return _maintenance_plan_to_dict(plan)
+
+        result = filesystem.optimize_parquet_dataset(
+            path,
             deduplicate_key_columns=deduplicate_key_columns,
+            target_rows_per_file=max_rows_per_file,
             partition_filter=partition_filter,
+            compression=compression,
         )
+        return _maintenance_to_plain(result)
 
     def _run_fsspeckit_rewrite(
         self,
@@ -1265,27 +1352,30 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         dry_run: bool = False,
         partition_filter: list[str] | None = None,
     ) -> dict[str, t.Any]:
-        """Run compaction (dry-run or real) or dedup+compaction (real only).
+        """Run compaction (dry-run or real) or dedup+compaction.
 
-        ``fsspeckit.optimize_parquet_dataset_pyarrow`` does not expose a dry-run
-        mode, so dry-run plans are produced by the compaction planner even when
-        ``unique`` requests deduplication.
+        Dry runs return fsspeckit's immutable plan as a plain dict: a
+        compaction plan, or a coordinated dedup+compaction optimization plan
+        when ``unique`` requests deduplication. Real runs return the executed
+        ``MaintenanceResult`` as a plain dict.
         """
-        if dry_run or not unique:
+        fs, resolved_path = _resolve_maintenance_target(filesystem, path)
+        if not unique:
             return self._fsspeckit_compact(
-                path=path,
-                filesystem=filesystem,
+                path=resolved_path,
+                filesystem=fs,
                 max_rows_per_file=max_rows_per_file,
                 compression=compression,
                 dry_run=dry_run,
                 partition_filter=partition_filter,
             )
         return self._fsspeckit_optimize(
-            path=path,
-            filesystem=filesystem,
+            path=resolved_path,
+            filesystem=fs,
             max_rows_per_file=max_rows_per_file,
             compression=compression,
             unique=unique,
+            dry_run=dry_run,
             partition_filter=partition_filter,
         )
 
