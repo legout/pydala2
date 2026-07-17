@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import posixpath
 import re
-
+from typing import TYPE_CHECKING, Any, Literal
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.dataset as pds
@@ -41,6 +41,9 @@ from sqlglot import parse_one
 from fsspeckit.datasets.duckdb import DuckDBDatasetIO, create_duckdb_connection
 from fsspeckit.datasets.pyarrow import PyarrowDatasetIO
 from fsspeckit.sql.filters import sql2pyarrow_filter
+
+if TYPE_CHECKING:
+    from fsspeckit.core.incremental import MergeResult
 
 
 class FsspeckitParquetAdapter:
@@ -176,17 +179,22 @@ class FsspeckitParquetAdapter:
         Returns:
             A ``pyarrow.Table`` containing the filtered data.
         """
-        if backend not in {"pyarrow", "duckdb"}:
-            raise ValueError(f"Unsupported adapter backend: {backend!r}")
+        if backend not in self._BACKENDS:
+            raise ValueError(
+                f"Unsupported adapter backend: {backend!r}. "
+                f"Expected one of {self._BACKENDS}."
+            )
 
         adapter_path = self._adapter_path(path)
 
         # DuckDB cannot read from fsspec backends it does not register natively
         # (e.g. MemoryFileSystem). Route through the fsspeckit PyArrow IO
         # instead so the read still flows through fsspeckit's public adapter.
-        effective_backend = "pyarrow" if (
-            backend == "duckdb" and not self._uses_supported_fsspeckit_protocol
-        ) else backend
+        effective_backend = (
+            "pyarrow"
+            if (backend == "duckdb" and not self._uses_supported_fsspeckit_protocol)
+            else backend
+        )
 
         if effective_backend == "pyarrow":
             pa_filter: pc.Expression | None = None
@@ -209,6 +217,88 @@ class FsspeckitParquetAdapter:
         sql_filter = self._to_sql_string(filters) if filters is not None else None
         return self._duckdb.read_parquet(
             adapter_path, columns=columns, filters=sql_filter
+        )
+
+    _MERGE_STRATEGIES = ("insert", "update", "upsert")
+    _BACKENDS = ("pyarrow", "duckdb")
+
+    def merge(
+        self,
+        data: pa.Table | list[pa.Table],
+        path: str,
+        strategy: Literal["insert", "update", "upsert"],
+        key_columns: str | list[str],
+        *,
+        partition_by: str | list[str] | None = None,
+        backend: Literal["pyarrow", "duckdb"] = "pyarrow",
+        **merge_options: Any,
+    ) -> MergeResult:
+        """Merge prepared Arrow table(s) into a dataset through fsspeckit.
+
+        Performs an incremental merge (insert / update / upsert) of already
+        prepared PyArrow tables into the target dataset.  Source preparation
+        (input normalization, schema casting, derived partition columns) is
+        the caller's responsibility; this adapter only owns the transport
+        seam.
+
+        The adapter owns pydala-relative path conversion, filesystem and
+        credential reuse, backend construction and lifetime, and the
+        translation from pydala's ``partition_by`` name to fsspeckit's
+        ``partition_columns`` name.  fsspeckit's typed ``MergeResult`` is
+        forwarded unchanged.
+
+        Args:
+            data: Prepared PyArrow table or list of tables to merge.
+            path: pydala-relative dataset path understood by the filesystem.
+            strategy: Merge strategy (``"insert"``, ``"update"`` or
+                ``"upsert"``).
+            key_columns: Column(s) used as unique identifiers.
+            partition_by: Optional pydala-style partition column(s); passed
+                to fsspeckit as ``partition_columns``.
+            backend: ``"pyarrow"`` (the default, supports arbitrary fsspec
+                filesystems) or ``"duckdb"`` (explicit; limited to
+                filesystems DuckDB can write to natively).
+            **merge_options: Additional fsspeckit merge/write tuning options
+                forwarded verbatim (e.g. ``compression``, ``row_group_size``,
+                ``max_rows_per_file``, ``schema``).
+
+        Returns:
+            fsspeckit's typed ``MergeResult``.
+
+        Raises:
+            ValueError: If ``strategy`` or ``backend`` is unsupported, or if
+                the DuckDB backend is requested for a filesystem it cannot
+                serve (e.g. ``MemoryFileSystem``).  DuckDB cannot write to
+                fsspec backends it does not register natively, so the
+                limitation is encoded explicitly rather than silently
+                diverging to the PyArrow backend.
+        """
+        if strategy not in self._MERGE_STRATEGIES:
+            raise ValueError(
+                f"Unsupported merge strategy: {strategy!r}. "
+                f"Expected one of {self._MERGE_STRATEGIES}."
+            )
+        if backend not in self._BACKENDS:
+            raise ValueError(
+                f"Unsupported merge backend: {backend!r}. "
+                f"Expected one of {self._BACKENDS}."
+            )
+        if backend == "duckdb" and not self._uses_supported_fsspeckit_protocol:
+            protocol = self._adapter_filesystem.protocol
+            raise ValueError(
+                f"DuckDB merge backend cannot serve filesystem protocol "
+                f"{protocol!r}; use backend='pyarrow' instead."
+            )
+
+        adapter_path = self._adapter_path(path)
+        io = self._duckdb if backend == "duckdb" else self._pyarrow
+        return io.merge(
+            data,
+            adapter_path,
+            strategy=strategy,
+            key_columns=key_columns,
+            partition_columns=partition_by,
+            **merge_options,
         )
 
     def close(self) -> None:
