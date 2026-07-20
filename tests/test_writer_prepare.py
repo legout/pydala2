@@ -172,6 +172,36 @@ def test_prepare_alter_schema_true_preserves_all_data_columns(
 # --------------------------------------------------------------------------- #
 
 
+def test_prepare_non_date_hive_partitions_preserve_normalized_schema(
+    local_path: str,
+) -> None:
+    """Ordinary Hive partitions must not trigger whole-table dtype inference."""
+    data = pa.table(
+        {
+            "order_number": pa.array(["001", "002"], type=pa.large_string()),
+            "lot_size": pa.array([1, 2], type=pa.int16()),
+            "result_timestamp": pa.array([None, None], type=pa.timestamp("us")),
+            "inspection_date": pa.array([0, 1], type=pa.timestamp("us")),
+            "test_station": pa.array(["AP", "AP"], type=pa.large_string()),
+            "year_month": pa.array(["2026-06", "2026-06"], type=pa.large_string()),
+        }
+    )
+    writer = _writer(data, local_path)
+
+    table = writer.prepare(
+        alter_schema=True,
+        partition_by=["test_station", "year_month"],
+        timestamp_column="inspection_date",
+    )
+
+    assert table.schema.field("order_number").type == pa.string()
+    assert table.column("order_number").to_pylist() == ["001", "002"]
+    assert table.schema.field("lot_size").type == pa.int16()
+    assert table.schema.field("result_timestamp").type == pa.timestamp("us")
+    assert table.schema.field("test_station").type == pa.string()
+    assert table.schema.field("year_month").type == pa.string()
+
+
 def test_prepare_derives_datepart_partition_columns(local_path: str) -> None:
     """``partition_by`` derives integer date-part columns from the timestamp."""
     data = pa.table(

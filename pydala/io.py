@@ -283,7 +283,6 @@ class Writer:
 
         if timestamp_column is not None:
             self._set_schema()
-            self._to_polars()
             datepart_columns = {
                 col: True
                 for col in self.schema.names + columns
@@ -300,7 +299,16 @@ class Writer:
                     "minute",
                 ]
             }
+            # Ordinary Hive partition columns (for example ``station`` or
+            # ``year_month``) are not derived date parts.  Calling the helper
+            # with an empty selection delegates to ``opt_dtype(include=[])``;
+            # that historically inferred dtypes for every column, corrupting
+            # identifier strings and typed-null fields.  Preserve the schema
+            # produced by ``cast_schema`` when there is nothing to derive.
+            if not datepart_columns:
+                return
 
+            self._to_polars()
             self.data = self.data.with_datepart_columns(
                 timestamp_column=timestamp_column, **datepart_columns
             )
