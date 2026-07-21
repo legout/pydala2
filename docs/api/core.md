@@ -365,7 +365,7 @@ dataset.optimize.compact_by_rows(target_rows=1000000)
 ```python
 def repartition(
     self,
-    partitioning_columns: str | list[str] | None = None,
+    partitioning_columns: str | list[str],
     partitioning_falvor: str = "hive",
     max_rows_per_file: int | None = 10_000_000,
     sort_by: str | list[str] | list[tuple[str, str]] | None = None,

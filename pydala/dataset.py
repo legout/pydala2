@@ -2066,7 +2066,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
 
     def repartition(
         self,
-        partitioning_columns: str | list[str] | None = None,
+        partitioning_columns: str | list[str],
         partitioning_falvor: str = "hive",
         max_rows_per_file: int | None = 10_000_000,
         sort_by: str | list[str] | list[tuple[str, str]] | None = None,
@@ -2078,7 +2078,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         partition_timezone: str = "UTC",
         target_mb_per_file: int | None = None,
         memory_budget_mb: int | None = None,
-    ) -> dict[str, t.Any] | None:
+    ) -> dict[str, t.Any]:
         """Rewrite an unpartitioned dataset into a Hive partition layout.
 
         The pure fsspeckit repartition operation preserves every row, including
@@ -2107,8 +2107,6 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         """
         if partitioning_falvor != "hive":
             raise ValueError("fsspeckit repartition supports only Hive partitioning")
-        if partitioning_columns is None:
-            raise ValueError("partitioning_columns must be provided")
         if any(
             "=" in part
             for file_path in self.files
