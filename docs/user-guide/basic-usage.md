@@ -353,6 +353,25 @@ dataset.optimize_dtypes(
 # - string to categorical for low cardinality
 ```
 
+`optimize_dtypes()` first uses the selected sample to **propose** a physical
+PyArrow schema; it then asks fsspeckit to validate that approved schema across
+every data file and publish a coordinated rewrite. Hive partition columns stay
+in their directory layout and are not added to the physical schema. Use
+`dry_run=True` to inspect the proposed schema and `schema_rewrite_groups`
+without mutating data or metadata:
+
+```python
+plan = dataset.optimize_dtypes(exclude=["id"], dry_run=True)
+print(plan["target_schema"])
+```
+
+With the default `strict=True`, value-preserving narrowing is required for the
+full dataset. `strict=False` permits fsspeckit's broader `loose` policy: it
+still validates every value before publication and aborts on overflow or casts
+that produce new nulls, while potentially truncating casts may be published.
+Failures report fsspeckit's recovery details; the live dataset is not
+refreshed.
+
 ### Working with Large Datasets
 
 ```python

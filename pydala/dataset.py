@@ -24,7 +24,7 @@ from fsspec.core import split_protocol
 from fsspec.implementations.dirfs import DirFileSystem
 from fsspeckit.datasets.pyarrow import collect_dataset_stats_pyarrow
 from fsspeckit.core.incremental import MergeResult
-from fsspeckit.core.maintenance import SortKey
+from fsspeckit.core.maintenance import CastPolicy, SortKey
 
 # Local imports
 from .filesystem import FileSystem, clear_cache
@@ -38,7 +38,7 @@ from .helpers.security import (
 from .helpers.polars import pl as _pl
 from .io import PartialMergeError, PartialWriteError, Writer, WriterSource
 from .metadata import PydalaDatasetMetadata
-from .schema import convert_large_types_to_normal, replace_schema
+from .schema import convert_large_types_to_normal
 from .table import PydalaTable
 from .adapters.fsspeckit import FsspeckitParquetAdapter
 
@@ -155,7 +155,8 @@ def _maintenance_plan_to_dict(plan: t.Any) -> dict[str, t.Any]:
     """
     result = _maintenance_to_plain(plan)
     groups = (
-        getattr(plan, "compaction_groups", None)
+        getattr(plan, "schema_rewrite_groups", None)
+        or getattr(plan, "compaction_groups", None)
         or getattr(plan, "optimization_groups", None)
         or getattr(plan, "ordered_groups", None)
         or getattr(plan, "repartition_groups", None)
@@ -2280,55 +2281,65 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         self._refresh_after_rewrite()
         return plain_result
 
-    def _optimize_dtypes(
+    def _dtype_schema_proposal(
         self,
-        file_path: str,
-        optimized_schema: pa.Schema,
         exclude: str | list[str] | None = None,
         strict: bool = True,
         include: str | list[str] | None = None,
         ts_unit: str | None = None,
         tz: str | None = None,
-        **kwargs: t.Any,
-    ) -> None:
-        """Optimize data types for a specific file.
-
-        This method reads a file, optimizes its schema based on the actual
-        data types found, and rewrites it with the optimized schema.
-        """
-        escaped_file_path = file_path.replace("'", "''")
-        scan = self.scan(f"file_path='{escaped_file_path}'")
-        schema = scan.arrow_dataset.schema
-        schema = pa.schema(
-            [
-                field
-                for field in scan.arrow_dataset.schema
-                if field.name not in scan.arrow_dataset.partitioning.schema.names
-            ]
+        infer_schema_size: int = 10_000,
+    ) -> pa.Schema:
+        """Infer the approved physical schema before any maintenance mutation."""
+        if self.table is None:
+            self.load()
+        proposal = (
+            self.table.pl.drop(self.partition_names)
+            .head(infer_schema_size)
+            .opt_dtype(
+                strict=strict,
+                exclude=exclude,
+                include=include,
+                shrink_numerics=True,
+            )
+            .collect()
         )
-
-        if schema != optimized_schema:
-            table = replace_schema(
-                scan.pl.opt_dtype(strict=strict, exclude=exclude, include=include)
-                .collect(streaming=True)
-                .to_arrow(),
-                schema=optimized_schema,
-                ts_unit=ts_unit,
-                tz=tz,
+        target_schema = proposal.to_arrow().schema
+        target_schema = convert_large_types_to_normal(target_schema)
+        if ts_unit is not None or tz is not None:
+            target_schema = pa.schema(
+                [
+                    pa.field(
+                        field.name,
+                        pa.timestamp(
+                            ts_unit or field.type.unit,
+                            tz if tz is not None else field.type.tz,
+                        ),
+                        nullable=field.nullable,
+                        metadata=field.metadata,
+                    )
+                    if isinstance(field.type, pa.TimestampType)
+                    else field
+                    for field in target_schema
+                ],
+                metadata=target_schema.metadata,
             )
-            self.write_to_dataset(
-                table,
-                mode="append",
-                update_metadata=False,
-                ts_unit=ts_unit,
-                tz=tz,
-                alter_schema=True,
-                **kwargs,
-            )
-            self.delete_files(self.scan_files)
-            self.update_file_metadata()
+        return target_schema
 
-        self.reset_scan()
+    @staticmethod
+    def _dtype_cast_policy(strict: bool) -> CastPolicy:
+        """Map pydala's inference strictness to fsspeckit's cast guarantee."""
+        return CastPolicy.SAFE if strict else CastPolicy.LOOSE
+
+    @staticmethod
+    def _schema_rewrite_error(result: t.Any) -> str:
+        """Describe a failed coordinated rewrite and its retained recovery data."""
+        recovery = _maintenance_to_plain(getattr(result, "recovery", None))
+        return (
+            "fsspeckit schema rewrite did not succeed: "
+            f"{getattr(result, 'error', None) or 'unknown error'}. "
+            f"Live files were not refreshed; recovery details: {recovery!r}"
+        )
 
     def optimize_dtypes(
         self,
@@ -2338,34 +2349,64 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         ts_unit: str | None = None,
         tz: str | None = None,
         infer_schema_size: int = 10_000,
+        dry_run: bool = False,
+        compression: str | None = None,
+        target_rows_per_file: int | None = None,
+        memory_budget_mb: int | None = None,
         **kwargs: t.Any,
-    ) -> None:
-        """Optimize data types across all files in the dataset."""
-        optimized_schema = (
-            self.table.pl.drop(self.partition_names)
-            .head(infer_schema_size)
-            .opt_dtype(strict=strict, exclude=exclude, include=include)
-            .collect()
-            .to_arrow()
-            .schema
-        )
-        optimized_schema = convert_large_types_to_normal(optimized_schema)
+    ) -> dict[str, t.Any] | None:
+        """Propose dtypes with Polars, then publish them through one rewrite.
 
-        for file_path in tqdm.tqdm(self.files):
-            self._optimize_dtypes(
-                file_path=file_path,
-                optimized_schema=optimized_schema,
-                exclude=exclude,
-                strict=strict,
-                include=include,
-                ts_unit=ts_unit,
-                tz=tz,
-                **kwargs,
+        ``strict=True`` maps to fsspeckit's ``safe`` cast policy: every
+        narrowing must be value-preserving across the full physical dataset.
+        ``strict=False`` maps to ``loose``; fsspeckit still validates every
+        cast before publication and retains recovery artifacts on failure.
+        With ``dry_run=True``, return the immutable coordinated rewrite plan
+        without changing files or managed metadata.
+
+        The legacy ``max_rows_per_file`` spelling remains supported as an
+        alias for ``target_rows_per_file``. Other write-only keyword options
+        are rejected because coordinated schema publication cannot apply them
+        without reintroducing per-file writes.
+        """
+        if "max_rows_per_file" in kwargs:
+            if target_rows_per_file is not None:
+                raise TypeError(
+                    "Pass only one of target_rows_per_file or max_rows_per_file"
+                )
+            target_rows_per_file = kwargs.pop("max_rows_per_file")
+        if kwargs:
+            unsupported = ", ".join(sorted(kwargs))
+            raise TypeError(
+                "optimize_dtypes does not support write-only options during "
+                f"coordinated schema publication: {unsupported}"
             )
 
-        self.clear_cache()
-        self._update_metadata()
-        self.update_metadata_table()
+        target_schema = self._dtype_schema_proposal(
+            exclude=exclude,
+            strict=strict,
+            include=include,
+            ts_unit=ts_unit,
+            tz=tz,
+            infer_schema_size=infer_schema_size,
+        )
+        filesystem, path = _resolve_maintenance_target(self._filesystem, self._path)
+        rewrite_kwargs = {
+            "target_schema": target_schema,
+            "cast_policy": self._dtype_cast_policy(strict),
+            "target_rows_per_file": target_rows_per_file,
+            "compression": compression,
+            "memory_budget_mb": memory_budget_mb,
+        }
+        if dry_run:
+            plan = filesystem.plan_parquet_schema_rewrite(path, **rewrite_kwargs)
+            return _maintenance_plan_to_dict(plan)
+
+        result = filesystem.schema_rewrite_parquet_dataset(path, **rewrite_kwargs)
+        if not result.succeeded:
+            raise RuntimeError(self._schema_rewrite_error(result))
+        self._refresh_after_rewrite()
+        return _maintenance_to_plain(result)
 
 
 class PyarrowDataset(BaseDataset):

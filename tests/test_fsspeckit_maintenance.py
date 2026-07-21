@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 
 import pyarrow as pa
 
@@ -11,7 +13,7 @@ from pydala.filesystem import FileSystem
 import pyarrow.parquet as pq
 import pytest
 
-from pydala.dataset import _normalize_compaction_sort_by
+from pydala.dataset import _normalize_compaction_sort_by, _resolve_maintenance_target
 from tests.conftest import assert_metadata_invariants
 
 
@@ -88,6 +90,160 @@ def test_optimize_dtypes_preserves_rows_and_metadata(managed_dataset) -> None:
 
     assert managed_dataset.table.to_arrow().num_rows == rows_before
     assert_metadata_invariants(managed_dataset)
+
+
+def test_optimize_dtypes_dry_run_exposes_schema_rewrite_plan_without_mutation(
+    managed_dataset,
+) -> None:
+    """The Polars proposal is published only after an explicit coordinated plan."""
+    files_before = set(managed_dataset.files)
+    metadata_before = set(managed_dataset.files_in_metadata)
+
+    plan = managed_dataset.optimize_dtypes(exclude="name", dry_run=True)
+
+    assert plan["target_schema"].field("name").type == pa.string()
+    assert "schema_rewrite_groups" in plan
+    assert plan["planned_groups"]
+    assert set(managed_dataset.files) == files_before
+    assert set(managed_dataset.files_in_metadata) == metadata_before
+    assert_metadata_invariants(managed_dataset)
+
+
+def test_optimize_dtypes_publishes_one_target_schema_and_timestamp_options(
+    local_path: str,
+) -> None:
+    """Narrowing and timestamp conversion are coordinated across all files."""
+    dataset = ParquetDataset(
+        path="typed",
+        filesystem=FileSystem(bucket=local_path, cached=False),
+    )
+    table = pa.table(
+        {
+            "small_int": pa.array([1, 2], type=pa.int64()),
+            "integer_text": pa.array(["1", "2"], type=pa.string()),
+            "float_text": pa.array(["1.0", "2.0"], type=pa.string()),
+            "null_only": pa.nulls(2),
+            "excluded": pa.array([1, 2], type=pa.int64()),
+            "ts": pa.array(
+                [0, 1_000],
+                type=pa.timestamp("us", tz="UTC"),
+            ),
+        }
+    )
+    dataset.write_to_dataset(table, mode="append")
+    dataset.write_to_dataset(table, mode="append")
+    dataset.update()
+    dataset.load(update_metadata=True)
+
+    proposal = dataset.optimize_dtypes(
+        exclude="excluded",
+        ts_unit="ms",
+        tz="UTC",
+        dry_run=True,
+    )
+    assert proposal["target_schema"].field("excluded").type == pa.int64()
+    assert proposal["target_schema"].field("integer_text").type == pa.uint8()
+    assert proposal["target_schema"].field("float_text").type == pa.float32()
+    assert proposal["target_schema"].field("null_only").type == pa.null()
+    assert proposal["target_schema"].field("ts").type == pa.timestamp("ms", tz="UTC")
+    include_only = dataset.optimize_dtypes(
+        include="small_int", strict=False, dry_run=True
+    )
+    assert include_only["target_schema"].field("integer_text").type == pa.string()
+    assert include_only["cast_policy"] == "loose"
+
+    result = dataset.optimize_dtypes(
+        exclude="excluded",
+        ts_unit="ms",
+        tz="UTC",
+    )
+
+    assert result["succeeded"] is True
+    physical_schemas = [
+        pq.read_schema(f"{dataset.path}/{file_path}", filesystem=dataset.fs)
+        for file_path in dataset.files
+    ]
+    expected_fields = [
+        (field.name, field.type)
+        for field in proposal["target_schema"]
+        if field.name != "ts"
+    ]
+    assert all(
+        [(field.name, field.type) for field in schema if field.name != "ts"]
+        == expected_fields
+        for schema in physical_schemas
+    )
+    assert all(schema.field("ts").type.tz == "UTC" for schema in physical_schemas)
+    assert dataset.has_metadata
+    assert set(dataset.files_in_metadata) == set(dataset.files)
+    assert set(dataset.files_in_file_metadata) == set(dataset.files)
+
+
+def test_optimize_dtypes_partition_columns_are_not_in_physical_target(
+    local_path: str,
+) -> None:
+    """Hive partition values stay in paths rather than the rewrite schema."""
+    dataset = ParquetDataset(
+        path="partitioned-types",
+        filesystem=FileSystem(bucket=local_path, cached=False),
+    )
+    dataset.write_to_dataset(
+        pa.table({"id": pa.array([1, 2], type=pa.int64()), "region": ["north"] * 2}),
+        mode="append",
+        partition_by=["region"],
+    )
+    dataset.update()
+    dataset.load(update_metadata=True)
+
+    plan = dataset.optimize_dtypes(dry_run=True)
+    assert "region" not in plan["target_schema"].names
+
+    dataset.optimize_dtypes()
+
+    assert all(path.startswith("region=north/") for path in dataset.files)
+    assert all(
+        "region"
+        not in pq.read_schema(
+            f"{dataset.path}/{file_path}", filesystem=dataset.fs
+        ).names
+        for file_path in dataset.files
+    )
+    assert dataset.has_metadata
+    assert set(dataset.files_in_metadata) == set(dataset.files)
+    assert set(dataset.files_in_file_metadata) == set(dataset.files)
+
+
+def test_optimize_dtypes_failed_rewrite_preserves_live_state(
+    managed_dataset, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed cast exposes recovery details and must not refresh live state."""
+    files_before = list(managed_dataset.files)
+    refresh_called = False
+
+    def fake_refresh() -> None:
+        nonlocal refresh_called
+        refresh_called = True
+
+    failed = SimpleNamespace(
+        succeeded=False,
+        error="value 999 does not fit int8",
+        recovery=SimpleNamespace(workspace_path="/tmp/rewrite", backup_paths=("a",)),
+    )
+    filesystem, _ = _resolve_maintenance_target(
+        managed_dataset._filesystem, managed_dataset._path
+    )
+    monkeypatch.setattr(
+        filesystem,
+        "schema_rewrite_parquet_dataset",
+        lambda *args, **kwargs: failed,
+    )
+    monkeypatch.setattr(managed_dataset, "_refresh_after_rewrite", fake_refresh)
+
+    with pytest.raises(RuntimeError, match="value 999.*recovery details"):
+        managed_dataset.optimize_dtypes(exclude="name")
+
+    assert managed_dataset.files == files_before
+    assert not refresh_called
 
 
 def test_scan_files_returns_filtered_subset(managed_dataset) -> None:
