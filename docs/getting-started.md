@@ -6,7 +6,7 @@ This guide will help you install PyDala2 and set up your environment for working
 
 ### Prerequisites
 
-PyDala2 requires Python 3.8 or higher. Ensure you have a recent version of Python installed:
+PyDala2 requires Python 3.12 or higher. Ensure you have a recent version of Python installed:
 
 ```bash
 python --version
