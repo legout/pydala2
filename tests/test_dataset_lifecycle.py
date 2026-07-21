@@ -58,6 +58,21 @@ def assert_core_metadata_invariants(dataset: ParquetDataset) -> None:
     )
 
 
+def make_repartition_dataset(
+    local_path: str,
+    name: str,
+    table: pa.Table,
+    partition_by: list[str] | None = None,
+) -> ParquetDataset:
+    """Create a query-ready dataset for a focused repartition test."""
+    fs = FileSystem(bucket=str(local_path), cached=False)
+    dataset = ParquetDataset(path=name, filesystem=fs)
+    dataset.write_to_dataset(table, partition_by=partition_by, mode="append")
+    dataset.update()
+    dataset.load(update_metadata=True)
+    return dataset
+
+
 # --------------------------------------------------------------------------- #
 # Construction & query readiness
 # --------------------------------------------------------------------------- #
@@ -368,17 +383,13 @@ def test_repartition_locally_preserves_exact_duplicates_and_refreshes_metadata(
     local_path: str,
 ) -> None:
     """Pure fsspeckit repartition retains all rows and exact duplicates."""
-    fs = FileSystem(bucket=str(local_path), cached=False)
-    ds = ParquetDataset(path="repart_duplicates", filesystem=fs)
     source = pa.table(
         {
             "id": [1, 1, 2, 3],
             "year": pa.array([2023, 2023, 2024, 2024], type=pa.int64()),
         }
     )
-    ds.write_to_dataset(source, mode="append")
-    ds.update()
-    ds.load(update_metadata=True)
+    ds = make_repartition_dataset(local_path, "repart_duplicates", source)
 
     result = ds.repartition(
         partitioning_columns=["year"], max_rows_per_file=2, unique=False
@@ -410,14 +421,11 @@ def test_repartition_dry_run_returns_plain_plan_without_rewriting(
     local_path: str,
 ) -> None:
     """A pure repartition dry run exposes fsspeckit's plain review plan."""
-    fs = FileSystem(bucket=str(local_path), cached=False)
-    ds = ParquetDataset(path="repart_plan", filesystem=fs)
-    ds.write_to_dataset(
+    ds = make_repartition_dataset(
+        local_path,
+        "repart_plan",
         pa.table({"id": [1, 2], "year": pa.array([2023, 2024], type=pa.int64())}),
-        mode="append",
     )
-    ds.update()
-    ds.load(update_metadata=True)
     files_before = list(ds.files)
 
     plan = ds.repartition(partitioning_columns=["year"], dry_run=True)
@@ -433,14 +441,11 @@ def test_repartition_does_not_refresh_metadata_after_failed_result(
     local_path: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An unsuccessful maintenance result leaves same-instance state untouched."""
-    fs = FileSystem(bucket=str(local_path), cached=False)
-    ds = ParquetDataset(path="repart_failure", filesystem=fs)
-    ds.write_to_dataset(
+    ds = make_repartition_dataset(
+        local_path,
+        "repart_failure",
         pa.table({"id": [1], "year": pa.array([2023], type=pa.int64())}),
-        mode="append",
     )
-    ds.update()
-    ds.load(update_metadata=True)
     refresh_calls: list[None] = []
     maintenance_fs, _ = _resolve_maintenance_target(ds._filesystem, ds._path)
     monkeypatch.setattr(
@@ -463,15 +468,12 @@ def test_repartition_does_not_refresh_metadata_after_failed_result(
 
 def test_repartition_rejects_existing_hive_source(local_path: str) -> None:
     """fsspeckit 0.27 pure repartition must not ingest a Hive source layout."""
-    fs = FileSystem(bucket=str(local_path), cached=False)
-    ds = ParquetDataset(path="repart_hive_source", filesystem=fs)
-    ds.write_to_dataset(
+    ds = make_repartition_dataset(
+        local_path,
+        "repart_hive_source",
         pa.table({"id": [1, 2], "year": pa.array([2023, 2024], type=pa.int64())}),
         partition_by=["year"],
-        mode="append",
     )
-    ds.update()
-    ds.load(update_metadata=True)
 
     with pytest.raises(ValueError, match="already Hive-partitioned.*0.27"):
         ds.repartition(partitioning_columns=["id"])
