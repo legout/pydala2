@@ -2092,9 +2092,13 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             partitioning_columns: Columns used for the destination Hive layout.
             partitioning_falvor: Only ``"hive"`` is supported.
             max_rows_per_file: Maximum rows in each destination file.
+            sort_by: Reserved compatibility argument; fsspeckit does not sort
+                during repartitioning.
             unique: Deprecated. When true, deduplicate by all dataset columns
                 before repartitioning.
             compression: Destination Parquet compression codec.
+            row_group_size: Reserved compatibility argument; fsspeckit manages
+                output row groups.
             dry_run: Return the plain fsspeckit plan without modifying data.
             derived_partition_columns: Upstream derived partition definitions.
             partition_timezone: Timezone used for derived partitions.

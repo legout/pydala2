@@ -386,23 +386,23 @@ def test_repartition_locally_preserves_exact_duplicates_and_refreshes_metadata(
 
     assert result is not None
     assert result["succeeded"] is True
+    expected_rows = [
+        {"id": 1, "year": 2023},
+        {"id": 1, "year": 2023},
+        {"id": 2, "year": 2024},
+        {"id": 3, "year": 2024},
+    ]
     base = pathlib.Path(local_path) / "repart_duplicates"
     read_back = pds.dataset(str(base), format="parquet", partitioning="hive").to_table()
-    assert sorted(read_back.to_pylist(), key=lambda row: (row["id"], row["year"])) == [
-        {"id": 1, "year": 2023},
-        {"id": 1, "year": 2023},
-        {"id": 2, "year": 2024},
-        {"id": 3, "year": 2024},
-    ]
+    assert (
+        sorted(read_back.to_pylist(), key=lambda row: (row["id"], row["year"]))
+        == expected_rows
+    )
     assert ds.t is not None
-    assert sorted(
-        ds.t.to_arrow().to_pylist(), key=lambda row: (row["id"], row["year"])
-    ) == [
-        {"id": 1, "year": 2023},
-        {"id": 1, "year": 2023},
-        {"id": 2, "year": 2024},
-        {"id": 3, "year": 2024},
-    ]
+    assert (
+        sorted(ds.t.to_arrow().to_pylist(), key=lambda row: (row["id"], row["year"]))
+        == expected_rows
+    )
     assert_core_metadata_invariants(ds)
 
 
