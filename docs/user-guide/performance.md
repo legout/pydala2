@@ -69,13 +69,19 @@ if dataset.partitions is not None:
 ### Compacting Small Files
 
 ```python
-# Compact partitions with multiple small files
+# Ordinary compaction only combines files; it does not impose a business order.
+dataset.compact_partitions(
+    max_rows_per_file=1_000_000,
+    compression="zstd",
+    unique=True,  # Deduplicate without requesting an output sort.
+)
+
+# Ordered compaction applies the requested business order within each partition.
 dataset.compact_partitions(
     max_rows_per_file=1_000_000,
     sort_by="date DESC",
     compression="zstd",
-    row_group_size=100_000,
-    unique=True  # Remove duplicates
+    unique=False,
 )
 
 # Compact by time period (useful for time series)
@@ -93,6 +99,13 @@ dataset.compact_by_rows(
     unique=False
 )
 ```
+
+Ordinary compaction is unordered. Supplying `sort_by` selects ordered
+compaction, which preserves the requested business order within a partition
+and across its output files. Deduplication (`unique=True`) has its own winner
+semantics and cannot be combined with ordered compaction; choose the
+deduplication result first, then run a separate ordered compaction when
+business ordering matters.
 
 ### Repartitioning Data
 

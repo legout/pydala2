@@ -24,7 +24,7 @@ from fsspec.core import split_protocol
 from fsspec.implementations.dirfs import DirFileSystem
 from fsspeckit.datasets.pyarrow import collect_dataset_stats_pyarrow
 from fsspeckit.core.incremental import MergeResult
-
+from fsspeckit.core.maintenance import SortKey
 
 # Local imports
 from .filesystem import FileSystem, clear_cache
@@ -44,6 +44,71 @@ from .adapters.fsspeckit import FsspeckitParquetAdapter
 
 # Initialize logger
 logger = logging.getLogger(__name__)
+
+
+def _normalize_compaction_sort_by(
+    sort_by: str | list[str] | list[tuple[str, str]] | tuple[str, str] | None,
+    columns: t.Iterable[str],
+) -> list[SortKey]:
+    """Convert pydala's public sort syntax to fsspeckit's typed sort keys."""
+    if not sort_by:
+        return []
+
+    available_columns = set(columns)
+    specs: list[tuple[str, str]]
+    if isinstance(sort_by, str):
+        specs = []
+        for spec in sort_by.split(","):
+            parts = spec.strip().rsplit(" ", 1)
+            if not spec.strip():
+                raise ValueError("sort_by must not contain an empty sort column")
+            specs.append(
+                (parts[0], parts[1].lower() if len(parts) == 2 else "ascending")
+            )
+    elif isinstance(sort_by, (list, tuple)):
+        if not sort_by:
+            return []
+        if (
+            len(sort_by) == 2
+            and isinstance(sort_by[0], str)
+            and isinstance(sort_by[1], str)
+            and sort_by[1].lower() in {"asc", "ascending", "desc", "descending"}
+        ):
+            specs = [(sort_by[0], sort_by[1].lower())]
+        elif all(isinstance(spec, str) for spec in sort_by):
+            specs = [(spec, "ascending") for spec in sort_by]
+        elif all(
+            isinstance(spec, (list, tuple))
+            and len(spec) == 2
+            and all(isinstance(value, str) for value in spec)
+            for spec in sort_by
+        ):
+            specs = [(spec[0], spec[1].lower()) for spec in sort_by]
+        else:
+            raise ValueError(
+                "sort_by must be a string, a list of column names, or "
+                "a sequence of (column, direction) pairs."
+            )
+    else:
+        raise ValueError(
+            "sort_by must be a string, a list of column names, or "
+            "a sequence of (column, direction) pairs."
+        )
+
+    sort_keys = []
+    for column, direction in specs:
+        if column not in available_columns:
+            raise ValueError(f"Unknown sort column: {column!r}")
+        if direction in {"asc", "ascending"}:
+            descending = False
+        elif direction in {"desc", "descending"}:
+            descending = True
+        else:
+            raise ValueError(f"Invalid sort direction: {direction!r}")
+        sort_keys.append(
+            SortKey(column=column, descending=descending, nulls_first=False)
+        )
+    return sort_keys
 
 
 def strip_protocol(path: str) -> str:
@@ -91,6 +156,7 @@ def _maintenance_plan_to_dict(plan: t.Any) -> dict[str, t.Any]:
     groups = (
         getattr(plan, "compaction_groups", None)
         or getattr(plan, "optimization_groups", None)
+        or getattr(plan, "ordered_groups", None)
         or getattr(plan, "repartition_groups", None)
         or getattr(plan, "dedup_groups", None)
         or ()
@@ -1677,9 +1743,25 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         compression: str | None = None,
         dry_run: bool = False,
         partition_filter: list[str] | None = None,
+        sort_keys: list[SortKey] | None = None,
     ) -> dict[str, t.Any]:
         # fsspeckit >= 0.25 exposes maintenance as filesystem methods: a dry
         # run is the immutable plan, a real run plans and executes in one call.
+        if sort_keys:
+            ordered_kwargs = {
+                "sort_keys": sort_keys,
+                "target_rows_per_file": max_rows_per_file,
+                "partition_filter": partition_filter,
+                "compression": compression,
+            }
+            if dry_run:
+                plan = filesystem.plan_parquet_ordered_compaction(
+                    path, **ordered_kwargs
+                )
+                return _maintenance_plan_to_dict(plan)
+            result = filesystem.ordered_compact_parquet_dataset(path, **ordered_kwargs)
+            return _maintenance_to_plain(result)
+
         if dry_run:
             plan = filesystem.plan_parquet_compaction(
                 path,
@@ -1741,14 +1823,29 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         unique: bool | list[str] = False,
         dry_run: bool = False,
         partition_filter: list[str] | None = None,
+        sort_by: str
+        | list[str]
+        | list[tuple[str, str]]
+        | tuple[str, str]
+        | None = None,
     ) -> dict[str, t.Any]:
         """Run compaction (dry-run or real) or dedup+compaction.
 
-        Dry runs return fsspeckit's immutable plan as a plain dict: a
-        compaction plan, or a coordinated dedup+compaction optimization plan
-        when ``unique`` requests deduplication. Real runs return the executed
-        ``MaintenanceResult`` as a plain dict.
+        Ordered compaction is exclusive with fsspeckit's deduplication rewrite:
+        rejecting the combination preserves both the requested business order
+        and the existing dedup winner semantics.
         """
+        if sort_by:
+            self.load()
+            sort_keys = _normalize_compaction_sort_by(sort_by, self.schema.names)
+        else:
+            sort_keys = []
+        if sort_keys and unique:
+            raise ValueError(
+                "sort_by cannot be combined with unique: fsspeckit does not "
+                "support ordered compaction with deduplication."
+            )
+
         fs, resolved_path = _resolve_maintenance_target(filesystem, path)
         if not unique:
             return self._fsspeckit_compact(
@@ -1758,6 +1855,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
                 compression=compression,
                 dry_run=dry_run,
                 partition_filter=partition_filter,
+                sort_keys=sort_keys,
             )
         return self._fsspeckit_optimize(
             path=resolved_path,
@@ -1821,6 +1919,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             compression=compression,
             unique=unique,
             dry_run=dry_run,
+            sort_by=sort_by,
         )
         self.reset_scan()
         return result
@@ -1844,8 +1943,8 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
 
         Args:
             max_rows_per_file: Maximum number of rows per output file.
-            sort_by: Column(s) to sort by before writing (reserved; passed through
-                for API compatibility, but ``fsspeckit`` compaction does not sort).
+            sort_by: Column(s) for partition-ordered compaction. This cannot be
+                combined with ``unique`` because upstream does not support both.
             compression: Compression algorithm to use.
             row_group_size: Target size for row groups (reserved; fsspeckit-managed).
             unique: Whether to remove duplicate rows.
@@ -1957,6 +2056,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
                 unique=unique,
                 dry_run=dry_run,
                 partition_filter=rel_files,
+                sort_by=sort_by,
             )
         return period_results
 
@@ -2059,6 +2159,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             compression=compression,
             unique=unique,
             dry_run=dry_run,
+            sort_by=sort_by,
         )
         if not dry_run:
             self._refresh_after_rewrite()
@@ -2107,6 +2208,11 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         """
         if partitioning_falvor != "hive":
             raise ValueError("fsspeckit repartition supports only Hive partitioning")
+        if sort_by:
+            raise ValueError(
+                "sort_by is not supported by repartition; compact the rewritten "
+                "dataset with sort_by instead."
+            )
         if any(
             "=" in part
             for file_path in self.files
