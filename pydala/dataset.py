@@ -69,7 +69,8 @@ def _normalize_compaction_sort_by(
         if not sort_by:
             return []
         if (
-            len(sort_by) == 2
+            isinstance(sort_by, tuple)
+            and len(sort_by) == 2
             and isinstance(sort_by[0], str)
             and isinstance(sort_by[1], str)
             and sort_by[1].lower() in {"asc", "ascending", "desc", "descending"}
@@ -1955,18 +1956,28 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             List of per-partition fsspeckit result dicts when ``dry_run`` is
             ``True``; otherwise ``None``.
         """
-        partitions_to_compact = (
+        if sort_by:
+            self.load()
+            _normalize_compaction_sort_by(sort_by, self.schema.names)
+            if unique:
+                raise ValueError(
+                    "sort_by cannot be combined with unique: fsspeckit does not "
+                    "support ordered compaction with deduplication."
+                )
+
+        partition_groups = (
             self.metadata_table.pl()
             .group_by(list(self.partition_names), maintain_order=True)
             .agg(
                 _pl.n_unique("file_path").alias("num_partition_files"),
                 _pl.sum("num_rows"),
             )
-            .filter(_pl.col("num_partition_files") > 1)
-            .filter(_pl.col("num_rows") < max_rows_per_file)
-            .select(self.partition_names)
-            .to_dicts()
         )
+        if not sort_by:
+            partition_groups = partition_groups.filter(
+                _pl.col("num_partition_files") > 1
+            ).filter(_pl.col("num_rows") < max_rows_per_file)
+        partitions_to_compact = partition_groups.select(self.partition_names).to_dicts()
         results: list[dict[str, t.Any]] = []
         for partition in tqdm.tqdm(partitions_to_compact):
             result = self._compact_partition(

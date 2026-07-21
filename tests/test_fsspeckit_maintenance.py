@@ -116,6 +116,15 @@ def test_compaction_sort_by_normalizes_public_forms(sort_by, expected) -> None:
     assert all(key.nulls_first is False for key in keys)
 
 
+def test_compaction_sort_by_treats_list_strings_as_columns() -> None:
+    keys = _normalize_compaction_sort_by(["id", "desc"], ["id", "desc"])
+
+    assert [(key.column, key.descending) for key in keys] == [
+        ("id", False),
+        ("desc", False),
+    ]
+
+
 @pytest.mark.parametrize("sort_by", ["missing", "id sideways", [("id", "up")]])
 def test_compaction_sort_by_rejects_invalid_columns_and_directions(sort_by) -> None:
     with pytest.raises(ValueError):
@@ -197,16 +206,15 @@ def test_partitioned_compaction_keeps_ordered_output_in_its_partition(
         path="partitioned",
         filesystem=FileSystem(bucket=local_path, cached=False),
     )
-    for ids in ([4, 1], [3, 2]):
-        dataset.write_to_dataset(
-            pa.table({"id": ids, "region": ["north"] * len(ids)}),
-            mode="append",
-            partition_by=["region"],
-        )
+    dataset.write_to_dataset(
+        pa.table({"id": [4, 1, 3, 2], "region": ["north"] * 4}),
+        mode="append",
+        partition_by=["region"],
+    )
     dataset.update()
 
     dataset.compact_by_rows(
-        max_rows_per_file=10,
+        max_rows_per_file=2,
         sort_by="id",
         unique=False,
         compression="zstd",
@@ -214,7 +222,11 @@ def test_partitioned_compaction_keeps_ordered_output_in_its_partition(
 
     assert dataset.files
     assert all(path.startswith("region=north/") for path in dataset.files)
-    output = pq.ParquetFile(
-        dataset.fs.open(f"{dataset.path}/{dataset.files[0]}")
-    ).read()
-    assert output.column("id").to_pylist() == [1, 2, 3, 4]
+    file_values = [
+        pq.ParquetFile(dataset.fs.open(f"{dataset.path}/{path}"))
+        .read()
+        .column("id")
+        .to_pylist()
+        for path in sorted(dataset.files)
+    ]
+    assert file_values == [[1, 2], [3, 4]]

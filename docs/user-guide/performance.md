@@ -73,7 +73,14 @@ if dataset.partitions is not None:
 dataset.compact_partitions(
     max_rows_per_file=1_000_000,
     compression="zstd",
-    unique=True,  # Deduplicate without requesting an output sort.
+    unique=False,
+)
+
+# Deduplication chooses its own winner order; it is not a business-ordering tool.
+dataset.compact_partitions(
+    max_rows_per_file=1_000_000,
+    compression="zstd",
+    unique=True,
 )
 
 # Ordered compaction applies the requested business order within each partition.
@@ -102,10 +109,10 @@ dataset.compact_by_rows(
 
 Ordinary compaction is unordered. Supplying `sort_by` selects ordered
 compaction, which preserves the requested business order within a partition
-and across its output files. Deduplication (`unique=True`) has its own winner
-semantics and cannot be combined with ordered compaction; choose the
-deduplication result first, then run a separate ordered compaction when
-business ordering matters.
+and across its output files. Deduplication (`unique=True`) chooses winners
+without a business-ordering guarantee and cannot be combined with ordered
+compaction; choose the deduplication result first, then run a separate ordered
+compaction when business ordering matters.
 
 ### Repartitioning Data
 
