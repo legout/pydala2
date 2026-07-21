@@ -56,8 +56,6 @@ def assert_core_metadata_invariants(dataset: ParquetDataset) -> None:
     )
 
 
-
-
 # --------------------------------------------------------------------------- #
 # Construction & query readiness
 # --------------------------------------------------------------------------- #
@@ -362,8 +360,6 @@ def test_repartition_by_integer_column_reads_back_via_hive_discovery(
     assert result.schema.field("year").type == pa.int32()
     assert sorted(result.column("id").to_pylist()) == [1, 2, 3, 4, 5]
     assert sorted(result.column("year").to_pylist()) == [2023, 2023, 2023, 2024, 2024]
-
-
 
 
 # --------------------------------------------------------------------------- #

@@ -427,9 +427,7 @@ def _plan_schema_repair(
     ]
     if version is not None and file_versions is not None:
         files_to_repair.extend(
-            path
-            for path in snapshot
-            if file_versions.get(path) != version
+            path for path in snapshot if file_versions.get(path) != version
         )
 
     return {
@@ -452,6 +450,7 @@ def _execute_schema_repair(
     **kwargs,
 ) -> None:
     """Execute a prepared schema-repair plan without replanning it."""
+
     def _repair_schema(f, schema, filesystem):
         # pydala-specific coercions (missing fields, int->timestamp, str->bool)
         table = replace_schema(
@@ -567,6 +566,7 @@ def repair_schema(
         )
 
     if base_path is not None:
+
         def qualify(path: str) -> str:
             path = strip_protocol(path)
             return (
@@ -577,8 +577,7 @@ def repair_schema(
 
         files = [qualify(path) for path in files]
         file_schemas = {
-            qualify(path): file_schema
-            for path, file_schema in file_schemas.items()
+            qualify(path): file_schema for path, file_schema in file_schemas.items()
         }
 
     # Ignore any schema entries outside the requested physical-file snapshot.
@@ -590,7 +589,6 @@ def repair_schema(
             path: pq.read_metadata(path, filesystem=filesystem).format_version
             for path in file_schemas
         }
-
 
     plan = _plan_schema_repair(
         file_schemas=file_schemas,
@@ -619,8 +617,6 @@ def repair_schema(
         version=version,
         **kwargs,
     )
-
-
 
 
 def collect_file_schemas(

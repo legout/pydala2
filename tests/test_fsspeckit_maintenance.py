@@ -4,7 +4,6 @@ from __future__ import annotations
 import datetime as dt
 
 
-
 import pyarrow as pa
 
 from pydala import ParquetDataset
@@ -217,7 +216,9 @@ def test_optimize_dtypes_publishes_explicit_float64_to_float32_proposal(
         pq.read_schema(
             f"{dataset.path}/_metadata",
             filesystem=dataset.fs,
-        ).field("value").type
+        )
+        .field("value")
+        .type
         == pa.float32()
     )
 
@@ -290,9 +291,7 @@ def test_optimize_dtypes_unsafe_target_schema_preserves_live_files_and_metadata(
     }
     metadata_before = set(managed_dataset.files_in_metadata)
     sidecars_before = {
-        metadata_file: managed_dataset.fs.cat(
-            f"{managed_dataset.path}/{metadata_file}"
-        )
+        metadata_file: managed_dataset.fs.cat(f"{managed_dataset.path}/{metadata_file}")
         for metadata_file in ("_metadata", "_file_metadata")
     }
 
@@ -336,6 +335,7 @@ def test_optimize_dtypes_unsafe_target_schema_preserves_live_files_and_metadata(
         managed_dataset.fs.cat(f"{managed_dataset.path}/{metadata_file}") == contents
         for metadata_file, contents in sidecars_before.items()
     )
+
 
 def test_scan_files_returns_filtered_subset(managed_dataset) -> None:
     """scan() must populate _metadata_table_scanned so scan_files is scoped."""

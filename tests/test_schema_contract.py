@@ -340,7 +340,9 @@ class TestSchemaRepairPlanner(unittest.TestCase):
 
         self.assertEqual(plan["schema"], schema)
         self.assertEqual(plan["files"], ["legacy.parquet"])
-        self.assertEqual(snapshots, {"current.parquet": schema, "legacy.parquet": schema})
+        self.assertEqual(
+            snapshots, {"current.parquet": schema, "legacy.parquet": schema}
+        )
 
 
 class TestRepairSchemaDryRun(unittest.TestCase):
