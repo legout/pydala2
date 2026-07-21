@@ -1897,11 +1897,11 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         dry_run: bool = False,
         **kwargs: t.Any,
     ) -> dict[str, t.Any]:
-        """Compact files within a specific partition.
+        """Compact every file in one physical partition.
 
-        Delegates the actual rewrite to ``fsspeckit``. A partition-relative
-        filesystem is used so that generated parquet files stay inside the
-        partition directory, preserving the hive layout.
+        The dataset-root filesystem and file paths are retained for ordered
+        compaction so fsspeckit plans against the complete Hive layout rather
+        than a schema-less partition subtree.
         """
         for name, value in partition.items():
             if not validate_partition_name(name):
@@ -1910,16 +1910,19 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
                 raise ValueError(f"Invalid partition value: {value}")
 
         partition_prefix = "/".join(f"{k}={v}" for k, v in partition.items())
-        part_path = posixpath.join(self._path, partition_prefix)
-        part_fs = DirFileSystem(path=part_path, fs=self._filesystem)
-
+        partition_files = [
+            file_path
+            for file_path in self.files
+            if file_path.startswith(f"{partition_prefix}/")
+        ]
         result = self._run_fsspeckit_rewrite(
-            path=".",
-            filesystem=part_fs,
+            path=self._path,
+            filesystem=self._filesystem,
             max_rows_per_file=max_rows_per_file,
             compression=compression,
             unique=unique,
             dry_run=dry_run,
+            partition_filter=partition_files,
             sort_by=sort_by,
         )
         self.reset_scan()
@@ -1935,12 +1938,11 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         dry_run: bool = False,
         **kwargs: t.Any,
     ) -> list[dict[str, t.Any]] | None:
-        """Compact partitions with multiple small files.
+        """Compact partition files or fully order every physical partition.
 
-        Identifies candidate partitions using the metadata table and delegates
-        each rewrite to ``fsspeckit``. After a real run the dataset caches,
-        file metadata, aggregate metadata and DuckDB metadata table are
-        refreshed.
+        Without ``sort_by``, only small multi-file partitions are candidates.
+        Supplying ``sort_by`` performs a full rewrite of every partition so the
+        requested ordering covers all of each partition's output files.
 
         Args:
             max_rows_per_file: Maximum number of rows per output file.

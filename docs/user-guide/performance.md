@@ -114,6 +114,10 @@ without a business-ordering guarantee and cannot be combined with ordered
 compaction; choose the deduplication result first, then run a separate ordered
 compaction when business ordering matters.
 
+For partitioned datasets, ordered compaction rewrites every physical partition,
+including single-file or oversized partitions, so it can establish a complete
+order across each partition's output files.
+
 ### Repartitioning Data
 
 `repartition` delegates an unpartitioned dataset rewrite to fsspeckit. Its
