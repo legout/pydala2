@@ -1830,6 +1830,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         | list[tuple[str, str]]
         | tuple[str, str]
         | None = None,
+        sort_keys: list[SortKey] | None = None,
     ) -> dict[str, t.Any]:
         """Run compaction (dry-run or real) or dedup+compaction.
 
@@ -1837,11 +1838,12 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         rejecting the combination preserves both the requested business order
         and the existing dedup winner semantics.
         """
-        if sort_by:
-            self.load()
-            sort_keys = _normalize_compaction_sort_by(sort_by, self.schema.names)
-        else:
-            sort_keys = []
+        if sort_keys is None:
+            if sort_by:
+                self.load()
+                sort_keys = _normalize_compaction_sort_by(sort_by, self.schema.names)
+            else:
+                sort_keys = []
         if sort_keys and unique:
             raise ValueError(
                 "sort_by cannot be combined with unique: fsspeckit does not "
@@ -1891,7 +1893,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         self,
         partition: dict[str, t.Any],
         max_rows_per_file: int | None = 10_000_000,
-        sort_by: str | list[str] | list[tuple[str, str]] | None = None,
+        sort_keys: list[SortKey] | None = None,
         compression: str = "zstd",
         row_group_size: int | None = 256_000,
         unique: bool = True,
@@ -1924,7 +1926,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             unique=unique,
             dry_run=dry_run,
             partition_filter=partition_files,
-            sort_by=sort_by,
+            sort_keys=sort_keys,
         )
         self.reset_scan()
         return result
@@ -1959,9 +1961,10 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             List of per-partition fsspeckit result dicts when ``dry_run`` is
             ``True``; otherwise ``None``.
         """
+        sort_keys: list[SortKey] | None = None
         if sort_by:
-            self.load()
-            _normalize_compaction_sort_by(sort_by, self.schema.names)
+            self.load(update_metadata=True)
+            sort_keys = _normalize_compaction_sort_by(sort_by, self.schema.names)
             if unique:
                 raise ValueError(
                     "sort_by cannot be combined with unique: fsspeckit does not "
@@ -1986,7 +1989,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             result = self._compact_partition(
                 partition=partition,
                 max_rows_per_file=max_rows_per_file,
-                sort_by=sort_by,
+                sort_keys=sort_keys,
                 compression=compression,
                 row_group_size=row_group_size,
                 unique=unique,
@@ -2091,7 +2094,21 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         Divides the dataset's time range into intervals and delegates each
         interval rewrite to ``fsspeckit``. After a real run the full metadata
         lifecycle is refreshed.
+        When ``sort_by`` is supplied, ordering requires every file in a physical
+        partition, so this method delegates to ``compact_partitions`` rather
+        than applying the time-range filter.
         """
+
+        if sort_by:
+            return self.compact_partitions(
+                max_rows_per_file=max_rows_per_file,
+                sort_by=sort_by,
+                compression=compression,
+                row_group_size=row_group_size,
+                unique=unique,
+                dry_run=dry_run,
+                **kwargs,
+            )
         timestamp_column = timestamp_column or self._timestamp_column
 
         min_max_ts = self.t.sql(

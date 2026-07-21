@@ -1,6 +1,8 @@
 """Focused contracts for fsspeckit-backed managed Parquet maintenance."""
 
 from __future__ import annotations
+import datetime as dt
+
 
 from types import SimpleNamespace
 
@@ -386,3 +388,58 @@ def test_partitioned_compaction_keeps_ordered_output_in_its_partition(
         for path in sorted(dataset.files)
     ]
     assert file_values == [[1, 2], [3, 4]]
+
+
+def test_timeperiod_ordered_compaction_rewrites_full_physical_partition(
+    local_path: str,
+) -> None:
+    dataset = ParquetDataset(
+        path="timepartitioned",
+        partitioning="hive",
+        filesystem=FileSystem(bucket=local_path, cached=False),
+    )
+    dataset.write_to_dataset(
+        pa.table(
+            {
+                "id": [4, 1],
+                "ts": [dt.datetime(2024, 1, 1), dt.datetime(2024, 1, 2)],
+                "region": ["north"] * 2,
+            }
+        ),
+        mode="append",
+        partition_by=["region"],
+    )
+    dataset.write_to_dataset(
+        pa.table(
+            {
+                "id": [3, 2],
+                "ts": [dt.datetime(2024, 1, 3), dt.datetime(2024, 1, 4)],
+                "region": ["north"] * 2,
+            }
+        ),
+        mode="append",
+        partition_by=["region"],
+    )
+    dataset.update()
+
+    dataset.compact_by_timeperiod(
+        interval="1d",
+        timestamp_column="ts",
+        max_rows_per_file=1,
+        sort_by="id",
+        unique=False,
+        compression="zstd",
+    )
+
+    file_values = [
+        pq.ParquetFile(dataset.fs.open(f"{dataset.path}/{path}"))
+        .read()
+        .column("id")
+        .to_pylist()
+        for path in sorted(dataset.files)
+    ]
+    flattened = [value for values in file_values for value in values]
+
+    assert all(path.startswith("region=north/") for path in dataset.files)
+    assert file_values == [[1], [2], [3], [4]]
+    assert flattened == sorted(flattened)
