@@ -120,31 +120,16 @@ order across each partition's output files.
 
 ### Repartitioning Data
 
-`repartition` delegates an unpartitioned dataset rewrite to fsspeckit. Its
-pure operation preserves every row, including exact duplicates, and can be
-reviewed before execution with `dry_run=True`.
-
 ```python
-# Change an unpartitioned dataset to a Hive partition layout.
-plan = dataset.repartition(
+# Change partitioning scheme
+dataset.repartition(
     partitioning_columns=["year", "quarter", "region"],
     max_rows_per_file=1_000_000,
+    sort_by=["region", "date"],
     compression="zstd",
-    dry_run=True,
-)
-
-# Apply the reviewed plan.
-result = dataset.repartition(
-    partitioning_columns=["year", "quarter", "region"],
-    max_rows_per_file=1_000_000,
-    compression="zstd",
+    unique=True
 )
 ```
-
-Already Hive-partitioned sources are rejected: fsspeckit 0.27 cannot safely
-ingest them with pure repartition. `unique=True` is deprecated; it explicitly
-uses the upstream deduplicate-and-repartition operation. Prefer an explicit
-deduplication step before pure repartitioning.
 
 ## Data Type Optimization
 
