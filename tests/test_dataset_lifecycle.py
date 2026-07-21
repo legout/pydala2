@@ -19,10 +19,12 @@ writing (commit ccb1a7b9e251731aca9e76778c3fa87323b7aea4):
 from __future__ import annotations
 
 import datetime
+import pathlib
 import posixpath
 
 import duckdb
 import pyarrow as pa
+import pyarrow.dataset as pds
 import pyarrow.parquet as pq
 import pytest
 
@@ -314,6 +316,50 @@ def test_optimize_can_optimize_dtypes(local_path: str) -> None:
     ds.load(update_metadata=True)
     assert ds.t.to_arrow().num_rows == rows_before
     assert_metadata_invariants(ds)
+
+
+# --------------------------------------------------------------------------- #
+# Repartition by integer column stays Hive-discoverable
+# --------------------------------------------------------------------------- #
+
+
+def test_repartition_by_integer_column_reads_back_via_hive_discovery(
+    local_path: str,
+) -> None:
+    """Repartitioning by an integer column must stay Hive-discoverable.
+
+    Path-derived Hive partitions infer int32 from the directory value, so a
+    destination partition column that is also written into the file schema
+    (as int64) makes ``pyarrow.dataset`` crash on an int64-vs-int32 merge.
+    The column must live in the directory layout only.
+    """
+    fs = FileSystem(bucket=str(local_path), cached=False)
+    ds = ParquetDataset(path="repart_int", filesystem=fs)
+    table = pa.table(
+        {
+            "id": [1, 2, 3, 4, 5],
+            "year": pa.array([2023, 2024, 2023, 2024, 2023], type=pa.int64()),
+        }
+    )
+    ds.write_to_dataset(table, mode="append")
+    ds.update()
+    ds.load(update_metadata=True)
+    assert all("=" not in f for f in ds.files), "precondition: source is unpartitioned"
+
+    ds.repartition(partitioning_columns=["year"])
+
+    assert all(f.startswith("year=") for f in ds.files), (
+        f"expected hive-prefixed files, got {ds.files}"
+    )
+    assert_core_metadata_invariants(ds)
+
+    base = pathlib.Path(local_path) / "repart_int"
+    discovered = pds.dataset(str(base), format="parquet", partitioning="hive")
+    result = discovered.to_table()
+    assert result.column_names == ["id", "year"]
+    assert result.schema.field("year").type == pa.int32()
+    assert sorted(result.column("id").to_pylist()) == [1, 2, 3, 4, 5]
+    assert sorted(result.column("year").to_pylist()) == [2023, 2023, 2023, 2024, 2024]
 
 
 # --------------------------------------------------------------------------- #
