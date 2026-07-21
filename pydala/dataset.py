@@ -38,7 +38,7 @@ from .helpers.security import (
 from .helpers.polars import pl as _pl
 from .io import PartialMergeError, PartialWriteError, Writer, WriterSource
 from .metadata import PydalaDatasetMetadata
-from .schema import convert_large_types_to_normal
+from .schema import convert_large_types_to_normal, convert_timestamp
 from .table import PydalaTable
 from .adapters.fsspeckit import FsspeckitParquetAdapter
 
@@ -2324,22 +2324,10 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         target_schema = proposal.to_arrow().schema
         target_schema = convert_large_types_to_normal(target_schema)
         if ts_unit is not None or tz is not None:
-            target_schema = pa.schema(
-                [
-                    pa.field(
-                        field.name,
-                        pa.timestamp(
-                            ts_unit or field.type.unit,
-                            tz if tz is not None else field.type.tz,
-                        ),
-                        nullable=field.nullable,
-                        metadata=field.metadata,
-                    )
-                    if isinstance(field.type, pa.TimestampType)
-                    else field
-                    for field in target_schema
-                ],
-                metadata=target_schema.metadata,
+            target_schema = convert_timestamp(
+                target_schema,
+                unit=ts_unit,
+                tz=tz,
             )
         return target_schema
 
@@ -2351,10 +2339,10 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
     @staticmethod
     def _schema_rewrite_error(result: t.Any) -> str:
         """Describe a failed coordinated rewrite and its retained recovery data."""
-        recovery = _maintenance_to_plain(getattr(result, "recovery", None))
+        recovery = _maintenance_to_plain(result.recovery)
         return (
             "fsspeckit schema rewrite did not succeed: "
-            f"{getattr(result, 'error', None) or 'unknown error'}. "
+            f"{result.error or 'unknown error'}. "
             f"Live files were not refreshed; recovery details: {recovery!r}"
         )
 

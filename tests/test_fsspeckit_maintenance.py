@@ -4,8 +4,6 @@ from __future__ import annotations
 import datetime as dt
 
 
-from types import SimpleNamespace
-
 
 import pyarrow as pa
 
@@ -15,7 +13,7 @@ from pydala.filesystem import FileSystem
 import pyarrow.parquet as pq
 import pytest
 
-from pydala.dataset import _normalize_compaction_sort_by, _resolve_maintenance_target
+from pydala.dataset import _normalize_compaction_sort_by
 from tests.conftest import assert_metadata_invariants
 
 
@@ -121,7 +119,6 @@ def test_optimize_dtypes_publishes_one_target_schema_and_timestamp_options(
     )
     table = pa.table(
         {
-            "small_int": pa.array([1, 2], type=pa.int64()),
             "integer_text": pa.array(["1", "2"], type=pa.string()),
             "float_text": pa.array(["1.0", "2.0"], type=pa.string()),
             "null_only": pa.nulls(2),
@@ -181,6 +178,50 @@ def test_optimize_dtypes_publishes_one_target_schema_and_timestamp_options(
     assert set(dataset.files_in_file_metadata) == set(dataset.files)
 
 
+def test_optimize_dtypes_publishes_explicit_float64_to_float32_proposal(
+    local_path: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A value-preserving proposal publishes float64 values as float32."""
+    dataset = ParquetDataset(
+        path="float-narrowing",
+        filesystem=FileSystem(bucket=local_path, cached=False),
+    )
+    dataset.write_to_dataset(
+        pa.table({"value": pa.array([1.5, 2.25], type=pa.float64())}),
+        mode="append",
+    )
+    dataset.update()
+    dataset.load(update_metadata=True)
+    target_schema = pa.schema([pa.field("value", pa.float32())])
+    monkeypatch.setattr(dataset, "_dtype_schema_proposal", lambda **_: target_schema)
+
+    result = dataset.optimize_dtypes()
+
+    assert result["succeeded"] is True
+    assert all(
+        pq.read_schema(f"{dataset.path}/{file_path}", filesystem=dataset.fs)
+        == target_schema
+        for file_path in dataset.files
+    )
+    assert all(
+        pq.read_table(f"{dataset.path}/{file_path}", filesystem=dataset.fs)
+        .column("value")
+        .to_pylist()
+        == [1.5, 2.25]
+        for file_path in dataset.files
+    )
+    assert dataset.has_metadata
+    assert set(dataset.files_in_metadata) == set(dataset.files)
+    assert set(dataset.files_in_file_metadata) == set(dataset.files)
+    assert (
+        pq.read_schema(
+            f"{dataset.path}/_metadata",
+            filesystem=dataset.fs,
+        ).field("value").type
+        == pa.float32()
+    )
+
+
 def test_optimize_dtypes_partition_columns_are_not_in_physical_target(
     local_path: str,
 ) -> None:
@@ -215,38 +256,86 @@ def test_optimize_dtypes_partition_columns_are_not_in_physical_target(
     assert set(dataset.files_in_file_metadata) == set(dataset.files)
 
 
-def test_optimize_dtypes_failed_rewrite_preserves_live_state(
+def test_optimize_dtypes_unsafe_target_schema_preserves_live_files_and_metadata(
     managed_dataset, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A failed cast exposes recovery details and must not refresh live state."""
+    """LOOSE validates every value and aborts an overflowing supplied target."""
+    managed_dataset.write_to_dataset(
+        pa.table(
+            {
+                "id": pa.array([999], type=pa.int64()),
+                "name": ["overflow"],
+                "value": pa.array([1.5], type=pa.float64()),
+                "timestamp": pa.array([0], type=pa.timestamp("us")),
+            }
+        ),
+        mode="append",
+    )
+    managed_dataset.update()
+    managed_dataset.load(update_metadata=True)
     files_before = list(managed_dataset.files)
-    refresh_called = False
+    schemas_before = {
+        file_path: pq.read_schema(
+            f"{managed_dataset.path}/{file_path}",
+            filesystem=managed_dataset.fs,
+        )
+        for file_path in files_before
+    }
+    values_before = {
+        file_path: pq.read_table(
+            f"{managed_dataset.path}/{file_path}",
+            filesystem=managed_dataset.fs,
+        ).to_pydict()
+        for file_path in files_before
+    }
+    metadata_before = set(managed_dataset.files_in_metadata)
+    sidecars_before = {
+        metadata_file: managed_dataset.fs.cat(
+            f"{managed_dataset.path}/{metadata_file}"
+        )
+        for metadata_file in ("_metadata", "_file_metadata")
+    }
 
-    def fake_refresh() -> None:
-        nonlocal refresh_called
-        refresh_called = True
-
-    failed = SimpleNamespace(
-        succeeded=False,
-        error="value 999 does not fit int8",
-        recovery=SimpleNamespace(workspace_path="/tmp/rewrite", backup_paths=("a",)),
-    )
-    filesystem, _ = _resolve_maintenance_target(
-        managed_dataset._filesystem, managed_dataset._path
-    )
     monkeypatch.setattr(
-        filesystem,
-        "schema_rewrite_parquet_dataset",
-        lambda *args, **kwargs: failed,
+        managed_dataset,
+        "_dtype_schema_proposal",
+        lambda **_: pa.schema(
+            [
+                pa.field("id", pa.int8()),
+                pa.field("name", pa.string()),
+                pa.field("value", pa.float64()),
+                pa.field("timestamp", pa.timestamp("us")),
+            ]
+        ),
     )
-    monkeypatch.setattr(managed_dataset, "_refresh_after_rewrite", fake_refresh)
 
-    with pytest.raises(RuntimeError, match="value 999.*recovery details"):
-        managed_dataset.optimize_dtypes(exclude="name")
+    with pytest.raises(RuntimeError, match="would overflow.*recovery details"):
+        managed_dataset.optimize_dtypes(strict=False)
 
     assert managed_dataset.files == files_before
-    assert not refresh_called
+    assert set(managed_dataset.files_in_metadata) == metadata_before
+    assert all(
+        pq.read_schema(
+            f"{managed_dataset.path}/{file_path}",
+            filesystem=managed_dataset.fs,
+        )
+        == schema
+        for file_path, schema in schemas_before.items()
+    )
+    assert all(
+        pq.read_table(
+            f"{managed_dataset.path}/{file_path}",
+            filesystem=managed_dataset.fs,
+        ).to_pydict()
+        == values
+        for file_path, values in values_before.items()
+    )
+    assert_metadata_invariants(managed_dataset)
 
+    assert all(
+        managed_dataset.fs.cat(f"{managed_dataset.path}/{metadata_file}") == contents
+        for metadata_file, contents in sidecars_before.items()
+    )
 
 def test_scan_files_returns_filtered_subset(managed_dataset) -> None:
     """scan() must populate _metadata_table_scanned so scan_files is scoped."""

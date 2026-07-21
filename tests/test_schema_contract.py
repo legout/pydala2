@@ -609,6 +609,26 @@ class TestConvertTimestamp(unittest.TestCase):
         self.assertEqual(result.names, ["before", "ts", "after"])
         self.assertEqual(result.field("ts").type, pa.timestamp("us", tz="UTC"))
 
+    def test_preserves_timestamp_field_attributes(self):
+        schema = pa.schema(
+            [
+                pa.field(
+                    "ts",
+                    pa.timestamp("us"),
+                    nullable=False,
+                    metadata={b"source": b"ingest"},
+                )
+            ],
+            metadata={b"schema": b"metadata"},
+        )
+
+        result = convert_timestamp(schema, unit="ms", tz="UTC")
+
+        self.assertEqual(result.field("ts").type, pa.timestamp("ms", tz="UTC"))
+        self.assertFalse(result.field("ts").nullable)
+        self.assertEqual(result.field("ts").metadata, {b"source": b"ingest"})
+        self.assertEqual(result.metadata, {b"schema": b"metadata"})
+
 
 if __name__ == "__main__":
     unittest.main()

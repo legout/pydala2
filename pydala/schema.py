@@ -96,13 +96,12 @@ def convert_timestamp(
 
     for timestamp_field in timestamp_fields:
         timestamp_field_idx = schema.get_field_index(timestamp_field)
-        unit = unit or schema.field(timestamp_field).type.unit
-        tz = tz or schema.field(timestamp_field).type.tz
-        if remove_tz:
-            tz = None
+        field = schema.field(timestamp_field)
+        field_type = field.type
+        field_tz = None if remove_tz else (tz if tz is not None else field_type.tz)
         schema = schema.remove(timestamp_field_idx).insert(
             timestamp_field_idx,
-            pa.field(timestamp_field, pa.timestamp(unit=unit, tz=tz)),
+            field.with_type(pa.timestamp(unit=unit or field_type.unit, tz=field_tz)),
         )
 
     return schema
