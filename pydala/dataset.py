@@ -91,6 +91,7 @@ def _maintenance_plan_to_dict(plan: t.Any) -> dict[str, t.Any]:
     groups = (
         getattr(plan, "compaction_groups", None)
         or getattr(plan, "optimization_groups", None)
+        or getattr(plan, "repartition_groups", None)
         or getattr(plan, "dedup_groups", None)
         or ()
     )
@@ -2072,36 +2073,91 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         unique: bool = False,
         compression: str = "zstd",
         row_group_size: int | None = 256_000,
-        **kwargs: t.Any,
-    ) -> None:
-        """Repartition the dataset.
+        dry_run: bool = False,
+        derived_partition_columns: dict[str, tuple[str, ...]] | None = None,
+        partition_timezone: str = "UTC",
+        target_mb_per_file: int | None = None,
+        memory_budget_mb: int | None = None,
+    ) -> dict[str, t.Any] | None:
+        """Rewrite an unpartitioned dataset into a Hive partition layout.
 
-        Rewrites the entire dataset with a new partitioning scheme using the
-        existing pydala write path. Compression and partition flavor are passed
-        through to ``write_to_dataset``. After the rewrite the metadata table is
-        refreshed alongside per-file and aggregate metadata.
+        The pure fsspeckit repartition operation preserves every row, including
+        exact duplicates. ``unique=True`` remains available temporarily, but
+        explicitly selects fsspeckit's named global deduplication-and-
+        repartition operation and emits a deprecation warning. Existing Hive
+        source layouts are rejected because fsspeckit 0.27 cannot safely use
+        pure repartition to ingest them.
+
+        Args:
+            partitioning_columns: Columns used for the destination Hive layout.
+            partitioning_falvor: Only ``"hive"`` is supported.
+            max_rows_per_file: Maximum rows in each destination file.
+            unique: Deprecated. When true, deduplicate by all dataset columns
+                before repartitioning.
+            compression: Destination Parquet compression codec.
+            dry_run: Return the plain fsspeckit plan without modifying data.
+            derived_partition_columns: Upstream derived partition definitions.
+            partition_timezone: Timezone used for derived partitions.
+            target_mb_per_file: Optional target output size in MiB.
+            memory_budget_mb: Optional planning memory budget in MiB.
         """
-        batches = self.table.to_batch_reader(
-            sort_by=sort_by, distinct=unique, batch_size=max_rows_per_file
-        )
-
-        for batch in tqdm.tqdm(batches):
-            self.write_to_dataset(
-                pa.table(batch),
-                partition_by=partitioning_columns,
-                mode="append",
-                max_rows_per_file=max_rows_per_file,
-                row_group_size=min(max_rows_per_file, row_group_size),
-                compression=compression,
-                update_metadata=False,
-                unique=unique,
-                **kwargs,
+        if partitioning_falvor != "hive":
+            raise ValueError("fsspeckit repartition supports only Hive partitioning")
+        if partitioning_columns is None:
+            raise ValueError("partitioning_columns must be provided")
+        if any(
+            "=" in part
+            for file_path in self.files
+            for part in file_path.split("/")[:-1]
+        ):
+            raise ValueError(
+                "Cannot repartition an already Hive-partitioned dataset: "
+                "fsspeckit 0.27 pure repartition cannot safely ingest Hive sources."
             )
-        self.delete_files(self.files)
-        self.clear_cache()
-        self.update()
-        self.load()
-        self.update_metadata_table()
+
+        filesystem, path = _resolve_maintenance_target(self._filesystem, self._path)
+        repartition_kwargs: dict[str, t.Any] = {
+            "partition_columns": partitioning_columns,
+            "target_rows_per_file": max_rows_per_file,
+            "target_mb_per_file": target_mb_per_file,
+            "compression": compression,
+            "derived_partition_columns": derived_partition_columns,
+            "partition_timezone": partition_timezone,
+        }
+        if unique:
+            warnings.warn(
+                "unique=True is deprecated; it invokes fsspeckit's explicit "
+                "deduplicate-and-repartition operation. Use a named "
+                "deduplication step before repartitioning instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            repartition_kwargs["key_columns"] = list(self.schema.names)
+            if dry_run:
+                plan = filesystem.plan_parquet_global_repartition_deduplication(
+                    path, **repartition_kwargs
+                )
+                return _maintenance_plan_to_dict(plan)
+            result = filesystem.deduplicate_and_repartition_parquet_dataset(
+                path, **repartition_kwargs
+            )
+        else:
+            repartition_kwargs["memory_budget_mb"] = memory_budget_mb
+            if dry_run:
+                plan = filesystem.plan_parquet_repartition(path, **repartition_kwargs)
+                return _maintenance_plan_to_dict(plan)
+            result = filesystem.repartition_parquet_dataset(path, **repartition_kwargs)
+
+        plain_result = _maintenance_to_plain(result)
+        if not result.succeeded:
+            raise RuntimeError(
+                f"fsspeckit repartition did not succeed: {result.error or 'unknown error'}"
+            )
+        self._partitioning = "hive"
+        self.__dict__.pop("_partition_names", None)
+        self.__dict__.pop("_partitioning_schema", None)
+        self._refresh_after_rewrite()
+        return plain_result
 
     def _optimize_dtypes(
         self,

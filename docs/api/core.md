@@ -363,18 +363,29 @@ dataset.optimize.compact_by_rows(target_rows=1000000)
 
 #### repartition
 ```python
-def repartition(self, partition_cols: list[str]) -> None
+def repartition(
+    self,
+    partitioning_columns: str | list[str],
+    max_rows_per_file: int | None = 10_000_000,
+    compression: str = "zstd",
+    dry_run: bool = False,
+    derived_partition_columns: dict[str, tuple[str, ...]] | None = None,
+    partition_timezone: str = "UTC",
+    target_mb_per_file: int | None = None,
+    memory_budget_mb: int | None = None,
+) -> dict | None
 ```
-Repartition the dataset.
+Purely repartition an **unpartitioned** dataset into a Hive layout through
+fsspeckit. The operation preserves exact duplicates and refreshes the
+instance's managed metadata only after a successful result.
 
-**Parameters:**
-- `partition_cols` (list[str]): New partitioning columns
+`dry_run=True` returns the plain fsspeckit plan, including `repartition_groups`
+and `planned_groups`, without writing data. Existing Hive-partitioned source
+layouts are rejected because fsspeckit 0.27 cannot process them safely.
 
-**Example:**
-```python
-# Change partitioning
-dataset.optimize.repartition(partition_cols=['year', 'month', 'day'])
-```
+`unique=True` is deprecated. It explicitly selects fsspeckit's
+deduplicate-and-repartition operation; prefer an explicit deduplication step
+followed by pure repartitioning.
 
 #### optimize_dtypes
 ```python
