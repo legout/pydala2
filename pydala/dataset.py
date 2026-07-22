@@ -167,6 +167,56 @@ def _maintenance_plan_to_dict(plan: t.Any) -> dict[str, t.Any]:
     return result
 
 
+def _require_successful_maintenance(result: t.Any, operation: str) -> None:
+    """Raise with fsspeckit recovery data when a rewrite result failed.
+
+    Time-window and partitioned compaction return nested per-scope result
+    dictionaries, while a flat rewrite returns one result. Check both shapes
+    before refreshing Pydala's managed metadata.
+    """
+    result = _maintenance_to_plain(result)
+    if not isinstance(result, (dict, list)) and hasattr(result, "succeeded"):
+        result = {
+            "succeeded": result.succeeded,
+            "error": getattr(result, "error", None),
+            "recovery": _maintenance_to_plain(getattr(result, "recovery", None)),
+        }
+    if isinstance(result, list):
+        for item in result:
+            if isinstance(item, (dict, list)):
+                _require_successful_maintenance(item, operation)
+        return
+    if not isinstance(result, dict):
+        raise TypeError(f"Unexpected fsspeckit {operation} result: {result!r}")
+    if result.get("succeeded") is False:
+        recovery = result.get("recovery")
+        raise RuntimeError(
+            f"fsspeckit {operation} did not succeed: "
+            f"{result.get('error') or 'unknown error'}. "
+            f"Live files were not refreshed; recovery details: {recovery!r}"
+        )
+    if "succeeded" not in result:
+        for item in result.values():
+            if isinstance(item, (dict, list)):
+                _require_successful_maintenance(item, operation)
+
+
+def _validate_compaction_options(
+    row_group_size: int | None, options: dict[str, t.Any]
+) -> None:
+    """Make compaction options unsupported by fsspeckit explicit to callers."""
+    if row_group_size not in (None, 256_000):
+        warnings.warn(
+            "row_group_size is not supported by fsspeckit compaction and will "
+            "be ignored.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+    if options:
+        unsupported = ", ".join(sorted(options))
+        raise TypeError(f"Unsupported compaction options: {unsupported}")
+
+
 def _resolve_maintenance_target(
     filesystem: AbstractFileSystem, path: str
 ) -> tuple[AbstractFileSystem, str]:
@@ -1952,15 +2002,17 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             sort_by: Column(s) for partition-ordered compaction. This cannot be
                 combined with ``unique`` because upstream does not support both.
             compression: Compression algorithm to use.
-            row_group_size: Target size for row groups (reserved; fsspeckit-managed).
+            row_group_size: Reserved compatibility option. A non-default value
+                emits a deprecation warning because fsspeckit manages row groups.
             unique: Whether to remove duplicate rows.
             dry_run: When ``True``, return compaction plans without mutating files.
-            **kwargs: Additional arguments passed to _compact_partition.
+            **kwargs: Unsupported options raise ``TypeError``.
 
         Returns:
             List of per-partition fsspeckit result dicts when ``dry_run`` is
             ``True``; otherwise ``None``.
         """
+        _validate_compaction_options(row_group_size, kwargs)
         sort_keys: list[SortKey] | None = None
         if sort_by:
             self.load(update_metadata=True)
@@ -1996,6 +2048,8 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
                 dry_run=dry_run,
                 **kwargs,
             )
+            if not dry_run:
+                _require_successful_maintenance(result, "compaction")
             results.append(result)
 
         if not dry_run:
@@ -2109,6 +2163,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
                 dry_run=dry_run,
                 **kwargs,
             )
+        _validate_compaction_options(row_group_size, kwargs)
         timestamp_column = timestamp_column or self._timestamp_column
 
         min_max_ts = self.t.sql(
@@ -2152,6 +2207,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             )
             results.append(result)
             if not dry_run:
+                _require_successful_maintenance(result, "compaction")
                 self._refresh_after_rewrite()
 
         return results if dry_run else None
@@ -2183,6 +2239,8 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
                 **kwargs,
             )
 
+        _validate_compaction_options(row_group_size, kwargs)
+
         result = self._run_fsspeckit_rewrite(
             path=self._path,
             filesystem=self._filesystem,
@@ -2193,6 +2251,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             sort_by=sort_by,
         )
         if not dry_run:
+            _require_successful_maintenance(result, "compaction")
             self._refresh_after_rewrite()
         return result if dry_run else None
 
@@ -2286,15 +2345,13 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
                 path, **repartition_kwargs
             )
 
-        if not result.succeeded:
-            raise RuntimeError(
-                f"fsspeckit repartition did not succeed: {result.error or 'unknown error'}"
-            )
+        plain_result = _maintenance_to_plain(result)
+        _require_successful_maintenance(plain_result, "repartition")
         self._partitioning = "hive"
         self.__dict__.pop("_partition_names", None)
         self.__dict__.pop("_partitioning_schema", None)
         self._refresh_after_rewrite()
-        return _maintenance_to_plain(result)
+        return plain_result
 
     def _dtype_schema_proposal(
         self,

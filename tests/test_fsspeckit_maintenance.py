@@ -12,7 +12,7 @@ from pydala.filesystem import FileSystem
 import pyarrow.parquet as pq
 import pytest
 
-from pydala.dataset import _normalize_compaction_sort_by
+from pydala.dataset import _normalize_compaction_sort_by, _resolve_maintenance_target
 from tests.conftest import assert_metadata_invariants
 
 
@@ -48,6 +48,96 @@ def test_compaction_refreshes_managed_metadata_and_preserves_rows(
 
     assert managed_dataset.table.to_arrow().num_rows == rows_before
     assert_metadata_invariants(managed_dataset)
+
+
+def test_failed_compaction_does_not_refresh_metadata(managed_dataset, monkeypatch) -> None:
+    """A failed upstream rewrite surfaces recovery details without a refresh."""
+    maintenance_fs, _ = _resolve_maintenance_target(
+        managed_dataset._filesystem, managed_dataset._path
+    )
+    monkeypatch.setattr(
+        maintenance_fs,
+        "compact_parquet_dataset",
+        lambda *args, **kwargs: {
+            "succeeded": False,
+            "error": "publish failed",
+            "recovery": {"workspace_path": "/tmp/recovery"},
+        },
+    )
+    refresh_calls: list[None] = []
+    monkeypatch.setattr(
+        managed_dataset,
+        "_refresh_after_rewrite",
+        lambda: refresh_calls.append(None),
+    )
+
+    with pytest.raises(RuntimeError, match="publish failed.*recovery"):
+        managed_dataset.compact_by_rows(max_rows_per_file=100, unique=False)
+
+    assert refresh_calls == []
+    assert_metadata_invariants(managed_dataset)
+
+
+def test_failed_partitioned_compaction_does_not_refresh_metadata(
+    local_path: str, monkeypatch
+) -> None:
+    """Nested partition results are checked before metadata is refreshed."""
+    dataset = ParquetDataset(
+        path="failed_partitioned_compaction",
+        partitioning="hive",
+        filesystem=FileSystem(bucket=local_path, cached=False),
+    )
+    for ids in ([1, 2], [3, 4]):
+        dataset.write_to_dataset(
+            pa.table({"id": ids, "region": ["north"] * len(ids)}),
+            mode="append",
+            partition_by=["region"],
+        )
+    dataset.update()
+    dataset.load(update_metadata=True)
+    files_before = list(dataset.files)
+    metadata_before = set(dataset.files_in_metadata)
+    maintenance_fs, _ = _resolve_maintenance_target(
+        dataset._filesystem, dataset._path
+    )
+    monkeypatch.setattr(
+        maintenance_fs,
+        "compact_parquet_dataset",
+        lambda *args, **kwargs: {
+            "succeeded": False,
+            "error": "partition publish failed",
+            "recovery": {"workspace_path": "/tmp/recovery"},
+        },
+    )
+    refresh_calls: list[None] = []
+    monkeypatch.setattr(
+        dataset, "_refresh_after_rewrite", lambda: refresh_calls.append(None)
+    )
+
+    with pytest.raises(RuntimeError, match="partition publish failed.*recovery"):
+        dataset.compact_partitions(max_rows_per_file=100, unique=False)
+
+    assert refresh_calls == []
+    assert dataset.files == files_before
+    assert set(dataset.files_in_metadata) == metadata_before
+    assert set(dataset.files_in_file_metadata) == set(files_before)
+
+
+def test_compaction_does_not_silently_ignore_unsupported_options(managed_dataset) -> None:
+    """Reserved row groups warn and arbitrary maintenance options are rejected."""
+    with pytest.deprecated_call(match="row_group_size"):
+        managed_dataset.compact_by_rows(
+            max_rows_per_file=100,
+            row_group_size=128,
+            dry_run=True,
+        )
+
+    with pytest.raises(TypeError, match="Unsupported compaction options: unknown"):
+        managed_dataset.compact_by_rows(
+            max_rows_per_file=100,
+            dry_run=True,
+            unknown=True,
+        )
 
 
 def test_stats_are_collected_through_maintenance_adapter(managed_dataset) -> None:

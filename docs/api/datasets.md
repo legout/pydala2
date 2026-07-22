@@ -176,16 +176,26 @@ results = dataset.scan(
 
 #### optimize_dtypes
 ```python
-def optimize_dtypes(self) -> None
+def optimize_dtypes(
+    self,
+    exclude: str | list[str] | None = None,
+    strict: bool = True,
+    include: str | list[str] | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any] | None
 ```
-Optimize data types to reduce memory usage.
+Propose a schema with Polars, then validate and publish it through fsspeckit's
+coordinated schema-rewrite operation. `dry_run=True` returns the target schema
+and immutable plan without rewriting files.
 
-This method is accessed through the optimize attribute:
+With `strict=True`, every narrowing is value-preserving across the full
+dataset. Partition columns remain Hive path metadata. Failed validation leaves
+the live dataset and metadata unrefreshed while exposing recovery details.
 
 **Example:**
 ```python
 # Optimize data types
-dataset.optimize.optimize_dtypes()
+result = dataset.optimize_dtypes()
 ```
 
 #### compact_partitions

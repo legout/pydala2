@@ -118,6 +118,27 @@ For partitioned datasets, ordered compaction rewrites every physical partition,
 including single-file or oversized partitions, so it can establish a complete
 order across each partition's output files.
 
+### Coordinated Rewrite Guarantees
+
+Compaction, repartitioning, and dtype publication delegate physical rewrites to
+fsspeckit's plan → stage → validate → publish lifecycle. A `dry_run=True` plan
+shows the selected `guarantee_level` before mutation.
+
+- Native local/POSIX filesystems use `atomic_local` publication. Cooperating
+  fsspeckit readers and writers observe a completed rewrite rather than a
+  partially swapped dataset; direct external file readers are outside that
+  coordination guarantee.
+- Other fsspec filesystems use `best_effort_object_store` publication. Staged
+  output is validated before copying, but there is no generic distributed lock,
+  atomic reader visibility, or automatic rollback. Failed results retain
+  recovery details for operator cleanup.
+
+`repartition()` and `optimize_dtypes()` return a plain representation of the
+fsspeckit maintenance result, including validation, publication, recovery, and
+actual metrics. The compatibility compaction methods retain their `None`
+success return; on failure they raise an error with recovery details and do not
+refresh Pydala metadata as successful.
+
 ### Repartitioning Data
 
 `repartition` delegates the physical rewrite to fsspeckit's coordinated

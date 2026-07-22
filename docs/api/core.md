@@ -361,6 +361,16 @@ Compact data to achieve target row count per file.
 dataset.optimize.compact_by_rows(target_rows=1000000)
 ```
 
+#### Coordinated maintenance guarantees
+
+Physical Parquet rewrites use fsspeckit's plan → stage → validate → publish
+lifecycle. `dry_run=True` exposes a plain immutable plan with its
+`guarantee_level`. Native local/POSIX filesystems report `atomic_local` for
+cooperating fsspeckit access; other fsspec filesystems report
+`best_effort_object_store`, which has no portable distributed lock, atomic
+reader visibility, or automatic rollback. Failed rewrites do not refresh
+Pydala metadata as successful and include upstream recovery details.
+
 #### repartition
 ```python
 def repartition(
@@ -403,11 +413,27 @@ result = dataset.repartition(["year", "month", "day"])
 
 #### optimize_dtypes
 ```python
-def optimize_dtypes(self) -> None
+def optimize_dtypes(
+    self,
+    exclude: str | list[str] | None = None,
+    strict: bool = True,
+    include: str | list[str] | None = None,
+    dry_run: bool = False,
+    compression: str | None = None,
+    target_rows_per_file: int | None = None,
+) -> dict[str, Any] | None
 ```
-Optimize data types to reduce memory usage.
+Propose a target schema with Polars, then delegate its full-dataset validation
+and publication to fsspeckit's coordinated schema-rewrite operation.
 
-This method analyzes the data and converts columns to more efficient data types where possible.
+`dry_run=True` returns the target schema and immutable rewrite plan without
+mutation. The default `strict=True` uses value-preserving casts across the full
+dataset; `strict=False` uses fsspeckit's validated loose policy. Hive partition
+columns remain path metadata rather than physical file columns.
+
+Successful execution returns a plain maintenance result. Failed validation
+leaves the live dataset and managed metadata unrefreshed while exposing
+recovery details.
 
 **Example:**
 ```python
