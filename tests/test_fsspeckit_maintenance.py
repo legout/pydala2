@@ -123,6 +123,36 @@ def test_failed_partitioned_compaction_does_not_refresh_metadata(
     assert set(dataset.files_in_file_metadata) == set(files_before)
 
 
+def test_partitioned_compaction_deduplicates_without_hive_columns(
+    local_path: str,
+) -> None:
+    """Hive path columns are not physical Parquet fields used as dedup keys."""
+    dataset = ParquetDataset(
+        path="partitioned_dedup_compaction",
+        partitioning="hive",
+        filesystem=FileSystem(bucket=local_path, cached=False),
+    )
+    duplicate_batch = pa.table({"id": [1, 2], "region": ["north", "north"]})
+    dataset.write_to_dataset(
+        duplicate_batch,
+        mode="append",
+        partition_by=["region"],
+    )
+    dataset.write_to_dataset(
+        duplicate_batch,
+        mode="append",
+        partition_by=["region"],
+    )
+    dataset.update()
+    dataset.load(update_metadata=True)
+
+    dataset.compact_partitions(max_rows_per_file=100, unique=True)
+
+    dataset.load(update_metadata=True)
+    assert dataset.count_rows() == 2
+    assert all(file_path.startswith("region=north/") for file_path in dataset.files)
+
+
 def test_compaction_does_not_silently_ignore_unsupported_options(managed_dataset) -> None:
     """Reserved row groups warn and arbitrary maintenance options are rejected."""
     with pytest.deprecated_call(match="row_group_size"):

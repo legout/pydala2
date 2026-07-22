@@ -1847,6 +1847,24 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         else:
             deduplicate_key_columns = None
 
+        # Hive partition values belong to directory names rather than the
+        # Parquet file schema. Compaction optimizes one physical partition at a
+        # time, where each such value is constant anyway, so including it in
+        # fsspeckit's dedup keys both changes nothing and makes Arrow fail to
+        # resolve the field.
+        if deduplicate_key_columns is not None:
+            partition_columns = set(self.partition_names or [])
+            deduplicate_key_columns = [
+                column
+                for column in deduplicate_key_columns
+                if column not in partition_columns
+            ]
+            if not deduplicate_key_columns:
+                raise ValueError(
+                    "Deduplication requires at least one physical Parquet column; "
+                    "Hive partition columns are stored only in directory paths."
+                )
+
         if dry_run:
             plan = filesystem.plan_parquet_optimization(
                 path,
