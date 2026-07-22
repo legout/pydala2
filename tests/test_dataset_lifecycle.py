@@ -21,6 +21,7 @@ from __future__ import annotations
 import datetime
 import pathlib
 import posixpath
+from types import SimpleNamespace
 
 import duckdb
 import pyarrow as pa
@@ -29,7 +30,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from pydala import ParquetDataset
-from pydala.dataset import Optimize
+from pydala.dataset import Optimize, _resolve_maintenance_target
 from pydala.filesystem import FileSystem
 from pydala.table import PydalaTable
 from tests.conftest import (
@@ -360,6 +361,174 @@ def test_repartition_by_integer_column_reads_back_via_hive_discovery(
     assert result.schema.field("year").type == pa.int32()
     assert sorted(result.column("id").to_pylist()) == [1, 2, 3, 4, 5]
     assert sorted(result.column("year").to_pylist()) == [2023, 2023, 2023, 2024, 2024]
+
+
+def test_repartition_preserves_exact_duplicates_and_refreshes_metadata(
+    local_path: str,
+) -> None:
+    """Pure repartition preserves duplicate rows and refreshes this instance."""
+    fs = FileSystem(bucket=str(local_path), cached=False)
+    ds = ParquetDataset(path="repart_duplicates", filesystem=fs)
+    source = pa.table(
+        {
+            "id": [1, 1, 2, 3],
+            "year": pa.array([2023, 2023, 2024, 2024], type=pa.int64()),
+        }
+    )
+    ds.write_to_dataset(source, mode="append")
+    ds.update()
+    ds.load(update_metadata=True)
+
+    result = ds.repartition(
+        partitioning_columns=["year"], max_rows_per_file=2, unique=False
+    )
+
+    assert result["succeeded"] is True
+    assert sorted(
+        ds.t.to_arrow().to_pylist(), key=lambda row: (row["id"], row["year"])
+    ) == [
+        {"id": 1, "year": 2023},
+        {"id": 1, "year": 2023},
+        {"id": 2, "year": 2024},
+        {"id": 3, "year": 2024},
+    ]
+    assert_core_metadata_invariants(ds)
+
+
+def test_repartition_dry_run_returns_plan_without_rewriting(local_path: str) -> None:
+    """Dry-run exposes the fsspeckit plan without changing managed state."""
+    fs = FileSystem(bucket=str(local_path), cached=False)
+    ds = ParquetDataset(path="repart_plan", filesystem=fs)
+    ds.write_to_dataset(
+        pa.table({"id": [1, 2], "year": pa.array([2023, 2024], type=pa.int64())}),
+        mode="append",
+    )
+    ds.update()
+    ds.load(update_metadata=True)
+    files_before = list(ds.files)
+
+    plan = ds.repartition(partitioning_columns=["year"], dry_run=True)
+
+    assert plan["repartition_groups"]
+    assert plan["planned_groups"]
+    assert ds.files == files_before
+    assert_core_metadata_invariants(ds)
+
+
+def test_repartition_failure_does_not_refresh_managed_metadata(
+    local_path: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed upstream publish leaves the current dataset instance intact."""
+    fs = FileSystem(bucket=str(local_path), cached=False)
+    ds = ParquetDataset(path="repart_failure", filesystem=fs)
+    ds.write_to_dataset(
+        pa.table({"id": [1], "year": pa.array([2023], type=pa.int64())}),
+        mode="append",
+    )
+    ds.update()
+    ds.load(update_metadata=True)
+    refresh_calls: list[None] = []
+    maintenance_fs, _ = _resolve_maintenance_target(ds._filesystem, ds._path)
+    monkeypatch.setattr(
+        maintenance_fs,
+        "repartition_parquet_dataset",
+        lambda *args, **kwargs: SimpleNamespace(
+            succeeded=False, error="publish failed"
+        ),
+    )
+    monkeypatch.setattr(
+        ds, "_refresh_after_rewrite", lambda: refresh_calls.append(None)
+    )
+
+    with pytest.raises(RuntimeError, match="publish failed"):
+        ds.repartition(partitioning_columns=["year"])
+
+    assert refresh_calls == []
+    assert_core_metadata_invariants(ds)
+
+
+def test_repartition_changes_an_existing_hive_layout(local_path: str) -> None:
+    """Repartitioning an existing Hive layout preserves its source rows."""
+    fs = FileSystem(bucket=str(local_path), cached=False)
+    ds = ParquetDataset(path="repart_hive_source", filesystem=fs)
+    ds.write_to_dataset(
+        pa.table(
+            {
+                "id": [1, 2, 3, 4],
+                "year": pa.array([2023, 2023, 2024, 2024], type=pa.int64()),
+                "region": ["eu", "us", "eu", "us"],
+            }
+        ),
+        partition_by=["year"],
+        mode="append",
+    )
+    ds.update()
+    ds.load(update_metadata=True)
+
+    result = ds.repartition(partitioning_columns=["region"])
+
+    assert result["succeeded"] is True
+    assert all(path.startswith(("region=eu/", "region=us/")) for path in ds.files)
+    assert sorted(ds.t.to_arrow().column("id").to_pylist()) == [1, 2, 3, 4]
+    assert_core_metadata_invariants(ds)
+
+
+def test_repartition_unique_uses_explicit_deduplication_compatibility_mode(
+    local_path: str,
+) -> None:
+    """The legacy unique option maps to explicit global deduplication."""
+    fs = FileSystem(bucket=str(local_path), cached=False)
+    ds = ParquetDataset(path="repart_unique", filesystem=fs)
+    ds.write_to_dataset(
+        pa.table(
+            {
+                "id": [1, 1, 2],
+                "year": pa.array([2023, 2023, 2024], type=pa.int64()),
+            }
+        ),
+        mode="append",
+    )
+    ds.update()
+    ds.load(update_metadata=True)
+
+    with pytest.deprecated_call(match="unique=True"):
+        result = ds.repartition(partitioning_columns=["year"], unique=True)
+
+    assert result["succeeded"] is True
+    assert ds.t.to_arrow().num_rows == 2
+    assert_core_metadata_invariants(ds)
+
+
+def test_repartition_rejects_unsupported_sorting(local_path: str) -> None:
+    """Repartition does not silently ignore an unsupported sort request."""
+    fs = FileSystem(bucket=str(local_path), cached=False)
+    ds = ParquetDataset(path="repart_sort", filesystem=fs)
+    ds.write_to_dataset(
+        pa.table({"id": [1], "year": pa.array([2023], type=pa.int64())}),
+        mode="append",
+    )
+    ds.update()
+
+    with pytest.raises(ValueError, match="sort_by is not supported"):
+        ds.repartition(partitioning_columns=["year"], sort_by="id")
+
+
+def test_repartition_warns_when_row_group_size_cannot_be_applied(
+    local_path: str,
+) -> None:
+    """A non-default row-group request is visible instead of silently ignored."""
+    fs = FileSystem(bucket=str(local_path), cached=False)
+    ds = ParquetDataset(path="repart_row_groups", filesystem=fs)
+    ds.write_to_dataset(
+        pa.table({"id": [1], "year": pa.array([2023], type=pa.int64())}),
+        mode="append",
+    )
+    ds.update()
+
+    with pytest.deprecated_call(match="row_group_size"):
+        ds.repartition(
+            partitioning_columns=["year"], row_group_size=128, dry_run=True
+        )
 
 
 # --------------------------------------------------------------------------- #

@@ -120,16 +120,32 @@ order across each partition's output files.
 
 ### Repartitioning Data
 
+`repartition` delegates the physical rewrite to fsspeckit's coordinated
+maintenance operation. It preserves every row, including exact duplicates, and
+refreshes the same dataset instance only after a successful publication.
+
 ```python
-# Change partitioning scheme
-dataset.repartition(
+# Review the immutable repartition plan without writing data.
+plan = dataset.repartition(
     partitioning_columns=["year", "quarter", "region"],
     max_rows_per_file=1_000_000,
-    sort_by=["region", "date"],
     compression="zstd",
-    unique=True
+    dry_run=True,
+)
+
+# Apply the repartition after reviewing the plan.
+result = dataset.repartition(
+    partitioning_columns=["year", "quarter", "region"],
+    max_rows_per_file=1_000_000,
+    compression="zstd",
 )
 ```
+
+Only Hive layouts are supported. `sort_by` is rejected rather than silently
+ignored; use ordered compaction after repartitioning. `unique=True` is a
+deprecated compatibility mode that performs explicit global deduplication
+before repartitioning—prefer a named deduplication step when that behavior is
+intended.
 
 ## Data Type Optimization
 

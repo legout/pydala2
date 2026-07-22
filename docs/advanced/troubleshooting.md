@@ -193,7 +193,7 @@ dataset.enable_cache(max_size=1024*1024*1024)  # 1GB
 dataset.compact_small_files(min_file_size=10*1024*1024)
 
 # Repartition for better pruning
-dataset.repartition(partition_cols=['year', 'month', 'day'])
+dataset.repartition(["year", "month", "day"])
 ```
 
 3. **Use appropriate compression:**

@@ -363,17 +363,42 @@ dataset.optimize.compact_by_rows(target_rows=1000000)
 
 #### repartition
 ```python
-def repartition(self, partition_cols: list[str]) -> None
+def repartition(
+    self,
+    partitioning_columns: str | list[str],
+    max_rows_per_file: int | None = 10_000_000,
+    compression: str = "zstd",
+    dry_run: bool = False,
+    derived_partition_columns: dict[str, tuple[str, ...]] | None = None,
+    partition_timezone: str = "UTC",
+    target_mb_per_file: int | None = None,
+    memory_budget_mb: int | None = None,
+) -> dict[str, Any]
 ```
-Repartition the dataset.
+Repartition through fsspeckit's coordinated Hive maintenance operation. The
+default operation preserves every row, including exact duplicates. A real run
+returns a plain representation of the typed maintenance result; `dry_run=True`
+returns the immutable plan without mutating the dataset.
 
 **Parameters:**
-- `partition_cols` (list[str]): New partitioning columns
+- `partitioning_columns`: New Hive partition columns.
+- `max_rows_per_file`: Hard output row bound per destination partition file.
+- `compression`: Destination Parquet codec.
+- `derived_partition_columns` / `partition_timezone`: Optional fsspeckit
+  derived partition definitions.
+- `target_mb_per_file` / `memory_budget_mb`: Optional upstream planning hints.
+
+`sort_by` is not supported and raises `ValueError`; use ordered compaction
+after repartitioning. `unique=True` is deprecated and selects explicit global
+deduplication before repartitioning.
 
 **Example:**
 ```python
-# Change partitioning
-dataset.optimize.repartition(partition_cols=['year', 'month', 'day'])
+# Review before mutation
+plan = dataset.repartition(["year", "month", "day"], dry_run=True)
+
+# Apply the approved plan
+result = dataset.repartition(["year", "month", "day"])
 ```
 
 #### optimize_dtypes

@@ -202,7 +202,7 @@ This method is accessed through the optimize attribute:
 **Example:**
 ```python
 # Compact partitions
-dataset.optimize.compact_partitions(target_file_size=100 * 1024 * 1024)
+dataset.compact_partitions(max_rows_per_file=1_000_000)
 ```
 
 #### compact_by_timeperiod
@@ -226,9 +226,9 @@ This method is accessed through the optimize attribute:
 **Example:**
 ```python
 # Compact by month
-dataset.optimize.compact_by_timeperiod(
+dataset.compact_by_timeperiod(
+    interval="1 month",
     timestamp_column="date",
-    timeperiod="month"
 )
 ```
 
@@ -251,19 +251,29 @@ dataset.optimize.compact_by_rows(target_rows=1000000)
 
 #### repartition
 ```python
-def repartition(self, partition_cols: list[str]) -> None
+def repartition(
+    self,
+    partitioning_columns: str | list[str],
+    max_rows_per_file: int | None = 10_000_000,
+    compression: str = "zstd",
+    dry_run: bool = False,
+) -> dict[str, Any]
 ```
-Repartition the dataset.
+Repartition through fsspeckit's coordinated Hive maintenance operation. It
+preserves exact duplicates by default and returns a plain maintenance result;
+`dry_run=True` returns the immutable plan without rewriting files.
 
-This method is accessed through the optimize attribute:
+`sort_by` is rejected because repartitioning does not sort output. Use ordered
+compaction afterward when physical order is required. `unique=True` is
+deprecated and explicitly selects global deduplication before repartitioning.
 
 **Parameters:**
-- `partition_cols` (list[str]): New partitioning columns
+- `partitioning_columns`: New Hive partition columns.
 
 **Example:**
 ```python
-# Change partitioning
-dataset.optimize.repartition(partition_cols=['year', 'month', 'day'])
+plan = dataset.repartition(["year", "month", "day"], dry_run=True)
+result = dataset.repartition(["year", "month", "day"])
 ```
 
 ## PyarrowDataset
@@ -487,10 +497,10 @@ dataset.optimize.compact_by_timeperiod(
 )
 
 # Optimize data types
-dataset.optimize.optimize_dtypes()
+dataset.optimize_dtypes()
 
 # Repartition dataset
-dataset.optimize.repartition(partition_cols=['year', 'month', 'day'])
+dataset.repartition(["year", "month", "day"])
 ```
 
 ## Dataset Selection Guide
