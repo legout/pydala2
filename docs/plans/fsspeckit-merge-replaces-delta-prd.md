@@ -4,7 +4,7 @@
 >
 > **Repository:** `legout/pydala2`
 >
-> **Dependency:** `fsspeckit>=0.25.0` (already declared)
+> **Dependency:** `fsspeckit>=0.27.1`
 
 ## Summary
 
@@ -98,7 +98,11 @@ result: MergeResult = dataset.merge(
 
 Interface requirements:
 
-- `key_columns` is required for new `merge()` calls.
+- `key_columns` is optional for new `merge()` calls. When omitted, infer
+  whole-row identity from source columns that are present in every prepared
+  source table. Key equality is null-safe: null matches null and differs from
+  every non-null value. Callers should pass explicit business keys when a
+  changed value must update an existing row.
 - `partition_by` defaults to the dataset's existing partition columns.
 - `backend="pyarrow"` is the default because it supports arbitrary fsspec
   filesystems; DuckDB remains an explicit alternative.
@@ -218,7 +222,7 @@ must:
 5. refresh pydala file, metadata, table, and cache state after completion.
 
 If `delta_subset` is omitted, preserve the old exact-row behavior for the
-compatibility release by deriving keys from common, non-null source/target
+compatibility release by deriving keys from common source/target
 columns. Emit a stronger warning that explicit `key_columns` will be required
 when `mode="delta"` is removed.
 
@@ -235,9 +239,9 @@ A future major release removes:
 | Area | Existing delta | fsspeckit-backed merge |
 | --- | --- | --- |
 | Dataset load state | delta only if `self.is_loaded`; otherwise append | always inspects target files |
-| Null keys | Polars anti-join treats nulls as equal | null merge keys rejected |
+| Null keys | Polars anti-join treats nulls as equal | null-safe equality; null matches null only |
 | Duplicate source keys | retained unless `unique=` | last source row wins |
-| Missing key specification | all common non-null columns | compatibility inference only; new interface requires keys |
+| Missing key specification | all common columns | all common prepared source columns |
 | Outcome | metadata list / docs claim `None` | typed `MergeResult` |
 | Existing row changes | impossible | explicit `update` / `upsert` |
 
@@ -258,7 +262,7 @@ new completion error that retains the `MergeResult` for recovery and auditing.
 ## Non-Goals
 
 - Reimplement merge logic in pydala.
-- Preserve undocumented source-duplicate or null-key behavior.
+- Preserve undocumented source-duplicate behavior.
 - Add delete semantics; fsspeckit merge currently reports `deleted=0`.
 - Replace `append` or `overwrite`.
 - Change compaction, deduplication, or repartition maintenance interfaces.
@@ -311,7 +315,7 @@ new completion error that retains the `MergeResult` for recovery and auditing.
 - Add a merge guide with insert/update/upsert semantics.
 - Add a delta migration guide.
 - Replace docs that call delta an update or show it as an upsert.
-- Document null-key rejection, last-source-row-wins, return-type change, and
+- Document null-safe key equality, last-source-row-wins, return-type change, and
   explicit key requirements.
 
 ## Acceptance Criteria
@@ -325,7 +329,7 @@ new completion error that retains the `MergeResult` for recovery and auditing.
 - Existing append/overwrite tests remain unchanged and green.
 - Metadata and table state are correct immediately after merge.
 - Partitioned merges preserve hive layout and partition immutability.
-- New merge calls require explicit non-null keys.
+- Explicit merge keys may contain null values and use null-safe equality.
 - Documentation no longer claims delta updates existing rows.
 - The old anti-join implementation is unreachable from active write paths.
 - Layering, typing, and test suites pass.
@@ -338,10 +342,12 @@ fsspeckit deduplicates incoming merge keys with last-row-wins semantics.
 Mitigation: document and test it; callers needing another winner must sort the
 source before merge.
 
-### Null-key workloads break
+### Nullable-key behavior diverges across layers
 
-fsspeckit rejects null merge keys. Mitigation: fail at preparation with a clear
-message naming key columns and null counts.
+pydala must not filter or reject nullable key columns before delegating to
+fsspeckit. Mitigation: require fsspeckit 0.27.1, keep pydala's adapter as a
+pass-through, and cover explicit, inferred, and delta-compatible nullable keys
+at the public dataset seam.
 
 ### Mixed-schema inserted files
 

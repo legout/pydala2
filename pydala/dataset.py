@@ -1313,10 +1313,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         key_columns = [
             column
             for column in prepared[0].column_names
-            if all(
-                column in table.column_names and table.column(column).null_count == 0
-                for table in prepared
-            )
+            if all(column in table.column_names for table in prepared)
         ]
         target_files = self._filesystem.glob(
             posixpath.join(self._path, "**", "*.parquet")
@@ -1333,16 +1330,9 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             )
             target_columns = set(target.schema.names)
             key_columns = [column for column in key_columns if column in target_columns]
-            if key_columns:
-                target_table = target.to_table(columns=key_columns)
-                key_columns = [
-                    column
-                    for column in key_columns
-                    if target_table.column(column).null_count == 0
-                ]
         if not key_columns:
             raise ValueError(
-                "Cannot infer common non-null source/target columns for "
+                "Cannot infer common source/target columns for "
                 "mode='delta'; pass delta_subset explicitly."
             )
         return key_columns
@@ -1450,7 +1440,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
                     timestamp_column=timestamp_column,
                 )
                 warning = (
-                    "delta_subset=None infers key columns from common non-null "
+                    "delta_subset=None infers key columns from common "
                     "source/target columns for compatibility; explicit keys "
                     "will be required after mode='delta' is removed. "
                 )
@@ -1461,10 +1451,10 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
 
             warning += (
                 "mode='delta' is deprecated and now delegates to "
-                "merge(strategy='insert'). Migration behavior: null keys are "
-                "rejected; duplicate source keys use the last row; execution "
-                "is independent of load state; the return value is a typed "
-                "MergeResult."
+                "merge(strategy='insert'). Migration behavior: key equality "
+                "is null-safe; duplicate source keys use the last row; "
+                "execution is independent of load state; the return value is "
+                "a typed MergeResult."
             )
             warnings.warn(warning, DeprecationWarning, stacklevel=2)
             return self.merge(
@@ -1559,7 +1549,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         data: WriterSource | list[WriterSource],
         *,
         strategy: Literal["insert", "update", "upsert"],
-        key_columns: str | list[str],
+        key_columns: str | list[str] | None = None,
         partition_by: str | list[str] | None = None,
         backend: Literal["pyarrow", "duckdb"] = "pyarrow",
         compression: str = "zstd",
@@ -1594,9 +1584,12 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             data: Source(s) to merge; a list is one logical batch.
             strategy: ``"insert"`` (new keys only), ``"update"`` (matched
                 keys only), or ``"upsert"`` (both).
-            key_columns: Non-empty column(s) uniquely identifying rows.
-                Required; null values in any key column are rejected before
-                persistence.
+            key_columns: Column(s) uniquely identifying rows. When omitted or
+                ``None``, every source column that is present in every prepared
+                source table is used. Pass explicit keys for stable business-key
+                update/upsert semantics; an all-column key treats a changed
+                value as a new row. Key equality is null-safe: null matches
+                null and differs from every non-null value.
             partition_by: Optional pydala-style partition column(s). Date-part
                 names (``year``/``month``/...) are derived from the timestamp
                 column; all named columns become hive partition directories.
@@ -1618,21 +1611,22 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             fsspeckit's typed :class:`~fsspeckit.core.incremental.MergeResult`.
 
         Raises:
-            ValueError: If ``key_columns`` is empty, the strategy/backend is
-                unsupported, a key column is absent from the source, null key
-                values are present, or the backend cannot serve this
-                filesystem.
+            ValueError: If explicit ``key_columns`` is empty, keys cannot be
+                inferred from the source, the strategy/backend is unsupported,
+                a key column is absent from the source, or the backend cannot
+                serve this filesystem.
             PartialMergeError: If the physical merge succeeded but the
                 post-merge state refresh failed; the successful
                 ``MergeResult`` is retained on :attr:`last_merge_result`
                 and ``PartialMergeError.merge_result``.
         """
         # --- key validation -------------------------------------------------
+        infer_key_columns = key_columns is None
         if isinstance(key_columns, str):
             key_cols: list[str] = [key_columns]
         else:
             key_cols = list(key_columns) if key_columns is not None else []
-        if not key_cols:
+        if not infer_key_columns and not key_cols:
             raise ValueError(
                 "key_columns must be a non-empty string or list of strings"
             )
@@ -1642,6 +1636,11 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             list(data) if isinstance(data, (list, tuple)) else [data]
         )
         if not sources:
+            if infer_key_columns:
+                raise ValueError(
+                    "Cannot infer merge key columns from an empty source; "
+                    "pass key_columns explicitly."
+                )
             valid_strategies = ("insert", "update", "upsert")
             if strategy not in valid_strategies:
                 raise ValueError(
@@ -1725,18 +1724,29 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             timestamp_column=self._timestamp_column,
         )
 
-        # --- reject null keys before persistence ---------------------------
+        if infer_key_columns:
+            if not prepared:
+                raise ValueError(
+                    "Cannot infer merge key columns from an empty prepared source; "
+                    "pass key_columns explicitly."
+                )
+            key_cols = [
+                column
+                for column in prepared[0].column_names
+                if all(column in table.column_names for table in prepared)
+            ]
+            if not key_cols:
+                raise ValueError(
+                    "Cannot infer merge key columns: no source column is "
+                    "present in every prepared source table."
+                )
+
+        # --- validate key presence before persistence ----------------------
         for table in prepared:
             missing = [col for col in key_cols if col not in table.column_names]
             if missing:
                 raise ValueError(
                     f"key column(s) {missing!r} not present in prepared merge source"
-                )
-            null_columns = [col for col in key_cols if table.column(col).null_count > 0]
-            if null_columns:
-                raise ValueError(
-                    f"merge source contains null values in key column(s) "
-                    f"{null_columns!r}; null keys are not allowed"
                 )
 
         # --- delegate persistence to fsspeckit through the adapter ---------

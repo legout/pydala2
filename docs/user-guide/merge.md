@@ -22,7 +22,16 @@ initial_result = dataset.merge(
 )
 ```
 
-`key_columns` is required and must identify non-null values in every source row. Composite keys use a list such as `key_columns=["tenant_id", "customer_id"]`.
+Pass explicit `key_columns` for stable business-key identity. Composite keys use
+a list such as `key_columns=["tenant_id", "customer_id"]`. Key equality is
+null-safe: null matches null and differs from every non-null value.
+
+When `key_columns` is omitted or set to `None`, pydala uses every prepared
+source column that is present in every source table. This is whole-row identity,
+not a business-key upsert: changing any value, including changing between null
+and non-null, makes a new key, so an `upsert` inserts that changed row rather
+than replacing the old one. Use explicit keys whenever an incoming row should
+update an existing one.
 
 ## Insert rows whose keys are absent
 
@@ -87,7 +96,7 @@ print(upsert_result.updated)   # 1
 print(upsert_result.inserted)  # 1
 ```
 
-A list of sources is merged as one logical batch. If a key occurs more than once in the source batch, the last source row wins. Null values in any key column are rejected before files are changed.
+A list of sources is merged as one logical batch. If a key occurs more than once in the source batch, the last source row wins. This includes keys with null components: two nulls in the same key position match, while null never matches a non-null value.
 
 ## Partition and backend rules
 
@@ -125,7 +134,7 @@ Do not repeat the merge: its file changes already succeeded. Record the retained
 | Deprecated call | Replacement | Meaning |
 | --- | --- | --- |
 | `write_to_dataset(data, mode="delta", delta_subset=keys)` | `merge(data, strategy="insert", key_columns=keys)` | Preserve matching rows and insert absent keys. |
-| `write_to_dataset(data, mode="delta", delta_subset=None)` | Choose explicit keys and call `merge(data, strategy="insert", key_columns=keys)` | Replace temporary common non-null source/target-column inference. |
+| `write_to_dataset(data, mode="delta", delta_subset=None)` | Choose explicit keys and call `merge(data, strategy="insert", key_columns=keys)` | Replace temporary common source/target-column inference. |
 
 The compatibility form still delegates to `merge(strategy="insert")` and returns `MergeResult`:
 
@@ -147,7 +156,7 @@ replacement_result = dataset.merge(
 )
 ```
 
-During the compatibility release, delta emits `DeprecationWarning`, rejects null keys, resolves duplicate source keys with the last row, works independently of load state, and returns a typed result. When `delta_subset=None`, pydala temporarily infers common non-null source and target columns and warns that explicit keys will be required.
+During the compatibility release, delta emits `DeprecationWarning`, uses null-safe key equality, resolves duplicate source keys with the last row, works independently of load state, and returns a typed result. When `delta_subset=None`, pydala temporarily infers common source and target columns and warns that explicit keys will be required.
 
 `mode="delta"`, `delta_subset`, `Writer.delta`, and `_get_delta_other_df` are scheduled for removal in the next major release. Migrate callers before that release.
 

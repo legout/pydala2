@@ -2,10 +2,10 @@
 
 The public write API delegates delta operations to
 ``ParquetDataset.merge(strategy="insert")``. Explicit ``delta_subset`` values
-become merge keys; when omitted, identity is inferred from common non-null
-source and target columns. The compatibility path is independent of dataset
-load state, rejects null source keys, and resolves duplicate source keys using
-the last row.
+become merge keys; when omitted, identity is inferred from common source and
+target columns. The compatibility path is independent of dataset
+load state, uses null-safe key equality, and resolves duplicate source keys
+using the last row.
 """
 
 from __future__ import annotations
@@ -113,14 +113,14 @@ def test_string_delta_subset_is_normalized_as_explicit_key(local_path: str) -> N
 
 
 # --------------------------------------------------------------------------- #
-# delta_subset=None: exact-row identity on common non-null columns
+# delta_subset=None: exact-row identity on common columns
 # --------------------------------------------------------------------------- #
 
 
 def test_delta_subset_none_suppresses_exact_duplicate_rows(local_path: str) -> None:
     """With ``delta_subset=None`` an exact row already present is suppressed.
 
-    Identity is over the common non-null columns: the source row ``(1, "a")``
+    Identity is over the common columns: the source row ``(1, "a")``
     exists verbatim in the target, so it is dropped; the genuinely new row
     ``(3, "c")`` is appended.
     """
@@ -163,7 +163,7 @@ def test_delta_subset_none_appends_row_with_same_key_but_different_values(
 def test_delta_subset_none_identity_uses_common_columns_only(
     local_path: str,
 ) -> None:
-    """``delta_subset=None`` keys on the *common* non-null columns only.
+    """``delta_subset=None`` keys on the common columns only.
 
     The source carries an extra ``note`` column absent from the target. Identity
     is computed over the intersection of source and target columns, so
@@ -277,47 +277,54 @@ def test_duplicate_existing_source_keys_are_all_dropped(local_path: str) -> None
 # --------------------------------------------------------------------------- #
 
 
-def test_null_source_key_is_rejected_when_target_has_no_null(
+def test_null_source_key_is_inserted_when_target_has_no_null(
     local_path: str,
 ) -> None:
-    """Delta rejects null source keys before persistence."""
+    """A null key differs from every existing non-null key."""
     ds = _dataset(local_path)
     ds.write_to_dataset(_table(id=[1], val=["old"]), mode="append")
 
     loaded = _loaded_dataset(local_path)
-    with (
-        pytest.warns(DeprecationWarning),
-        pytest.raises(ValueError, match="null values in key"),
-    ):
+    with pytest.warns(DeprecationWarning):
         loaded.write_to_dataset(
             _table(id=[None, 2], val=["n", "two"]),
             mode="delta",
             delta_subset=["id"],
         )
 
-    assert _rows(local_path) == [{"id": 1, "val": "old"}]
+    rows = sorted(
+        _rows(local_path),
+        key=lambda row: (row["id"] is None, row["id"] or 0),
+    )
+    assert rows == [
+        {"id": 1, "val": "old"},
+        {"id": 2, "val": "two"},
+        {"id": None, "val": "n"},
+    ]
 
 
-def test_null_source_key_is_rejected_when_target_contains_null(
+def test_null_source_key_matches_null_target_key(
     local_path: str,
 ) -> None:
-    """Null source keys are rejected rather than matched to null target keys."""
+    """A null source key matches a null target key and preserves its row."""
     ds = _dataset(local_path)
     ds.write_to_dataset(_table(id=[1, None], val=["old", "tn"]), mode="append")
 
     loaded = _loaded_dataset(local_path)
-    with (
-        pytest.warns(DeprecationWarning),
-        pytest.raises(ValueError, match="null values in key"),
-    ):
+    with pytest.warns(DeprecationWarning):
         loaded.write_to_dataset(
             _table(id=[None, 2], val=["n", "two"]),
             mode="delta",
             delta_subset=["id"],
         )
 
-    assert _rows(local_path) == [
+    rows = sorted(
+        _rows(local_path),
+        key=lambda row: (row["id"] is None, row["id"] or 0),
+    )
+    assert rows == [
         {"id": 1, "val": "old"},
+        {"id": 2, "val": "two"},
         {"id": None, "val": "tn"},
     ]
 

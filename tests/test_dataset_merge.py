@@ -16,6 +16,7 @@ Baseline captured at commit ``9012dfdce12130c1db557e84e9c8257d5a4acd24``.
 from __future__ import annotations
 
 import pathlib
+from typing import Literal
 
 import duckdb
 import pandas as pd
@@ -68,11 +69,27 @@ def _table(**columns: list) -> pa.Table:
 # --------------------------------------------------------------------------- #
 
 
-def test_merge_requires_explicit_key_columns(local_path: str) -> None:
-    """``key_columns`` is mandatory and must be non-empty."""
+def test_merge_infers_all_source_columns_when_keys_are_omitted(
+    local_path: str,
+) -> None:
+    """An omitted key makes whole rows the merge identity."""
     ds = _dataset(local_path)
-    with pytest.raises(ValueError):
-        ds.merge(_table(id=[1]), strategy="upsert", key_columns=None)
+    ds.merge(
+        _table(id=[1], value=["first"]),
+        strategy="upsert",
+        key_columns=None,
+    )
+    result = ds.merge(_table(id=[1], value=["changed"]), strategy="upsert")
+
+    assert result.inserted == 1
+    assert sorted(_rows(local_path), key=lambda row: row["value"]) == [
+        {"id": 1, "value": "changed"},
+        {"id": 1, "value": "first"},
+    ]
+
+
+def test_merge_rejects_explicitly_empty_key_columns(local_path: str) -> None:
+    ds = _dataset(local_path)
     with pytest.raises(ValueError):
         ds.merge(_table(id=[1]), strategy="upsert", key_columns=[])
 
@@ -94,17 +111,59 @@ def test_merge_rejects_invalid_backend(local_path: str) -> None:
         )
 
 
-def test_merge_rejects_null_key_values(local_path: str) -> None:
-    """Null source key values must be rejected before persistence."""
+@pytest.mark.parametrize("backend", ["pyarrow", "duckdb"])
+def test_merge_uses_null_safe_composite_key_identity(
+    local_path: str,
+    backend: Literal["pyarrow", "duckdb"],
+) -> None:
+    """Null key components match null but differ from non-null values."""
     ds = _dataset(local_path)
-    with pytest.raises(ValueError):
-        ds.merge(
-            _table(id=[1, None], v=["a", "b"]),
-            strategy="upsert",
-            key_columns=["id"],
-        )
-    # Nothing was written.
-    assert _rows(local_path) == []
+    ds.merge(
+        _table(id=[121221], value=["abc"]),
+        strategy="insert",
+        key_columns=["id", "value"],
+        backend=backend,
+    )
+
+    inserted = ds.merge(
+        _table(id=[121221], value=[None]),
+        strategy="insert",
+        key_columns=["id", "value"],
+        backend=backend,
+    )
+    duplicate = ds.merge(
+        _table(id=[121221], value=[None]),
+        strategy="insert",
+        key_columns=["id", "value"],
+        backend=backend,
+    )
+
+    assert inserted.inserted == 1
+    assert duplicate.inserted == 0
+    assert sorted(_rows(local_path), key=lambda row: row["value"] is None) == [
+        {"id": 121221, "value": "abc"},
+        {"id": 121221, "value": None},
+    ]
+
+
+def test_merge_inferred_keys_include_nullable_columns(local_path: str) -> None:
+    """Whole-row key inference retains nullable columns."""
+    ds = _dataset(local_path)
+    ds.merge(
+        _table(id=[121221], value=["abc"]),
+        strategy="insert",
+    )
+
+    inserted = ds.merge(
+        _table(id=[121221], value=[None]),
+        strategy="insert",
+    )
+
+    assert inserted.inserted == 1
+    assert sorted(_rows(local_path), key=lambda row: row["value"] is None) == [
+        {"id": 121221, "value": "abc"},
+        {"id": 121221, "value": None},
+    ]
 
 
 def test_merge_rejects_unsupported_source_type(local_path: str) -> None:

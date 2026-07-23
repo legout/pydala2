@@ -50,7 +50,9 @@ def test_compaction_refreshes_managed_metadata_and_preserves_rows(
     assert_metadata_invariants(managed_dataset)
 
 
-def test_failed_compaction_does_not_refresh_metadata(managed_dataset, monkeypatch) -> None:
+def test_failed_compaction_does_not_refresh_metadata(
+    managed_dataset, monkeypatch
+) -> None:
     """A failed upstream rewrite surfaces recovery details without a refresh."""
     maintenance_fs, _ = _resolve_maintenance_target(
         managed_dataset._filesystem, managed_dataset._path
@@ -97,9 +99,7 @@ def test_failed_partitioned_compaction_does_not_refresh_metadata(
     dataset.load(update_metadata=True)
     files_before = list(dataset.files)
     metadata_before = set(dataset.files_in_metadata)
-    maintenance_fs, _ = _resolve_maintenance_target(
-        dataset._filesystem, dataset._path
-    )
+    maintenance_fs, _ = _resolve_maintenance_target(dataset._filesystem, dataset._path)
     monkeypatch.setattr(
         maintenance_fs,
         "compact_parquet_dataset",
@@ -153,7 +153,9 @@ def test_partitioned_compaction_deduplicates_without_hive_columns(
     assert all(file_path.startswith("region=north/") for file_path in dataset.files)
 
 
-def test_compaction_does_not_silently_ignore_unsupported_options(managed_dataset) -> None:
+def test_compaction_does_not_silently_ignore_unsupported_options(
+    managed_dataset,
+) -> None:
     """Reserved row groups warn and arbitrary maintenance options are rejected."""
     with pytest.deprecated_call(match="row_group_size"):
         managed_dataset.compact_by_rows(

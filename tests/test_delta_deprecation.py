@@ -58,7 +58,7 @@ def test_keyed_delta_warns_delegates_to_insert_and_returns_merge_result(
     message = str(warnings[0].message)
     assert "mode='delta' is deprecated" in message
     assert "merge(strategy='insert')" in message
-    assert "null keys are rejected" in message
+    assert "key equality is null-safe" in message
     assert "duplicate source keys use the last row" in message
     assert "independent of load state" in message
     assert "MergeResult" in message
@@ -91,7 +91,7 @@ def test_delta_without_subset_warns_explicit_keys_will_be_required(
 
     message = str(warnings[0].message)
     assert "delta_subset=None" in message
-    assert "common non-null source/target columns" in message
+    assert "common source/target columns" in message
     assert "explicit keys will be required" in message
     assert isinstance(result, MergeResult)
     assert result.inserted == 1
@@ -101,26 +101,35 @@ def test_delta_without_subset_warns_explicit_keys_will_be_required(
     ]
 
 
-def test_delta_without_subset_excludes_nullable_target_columns(
+def test_delta_without_subset_uses_null_safe_whole_row_identity(
     tmp_path: pathlib.Path,
 ) -> None:
     dataset = _dataset(tmp_path)
     dataset.write_to_dataset(
-        pa.table({"id": [1, 2], "value": ["old", None]}),
+        pa.table({"id": [121221], "value": ["abc"]}),
         mode="append",
     )
 
     with pytest.warns(DeprecationWarning):
-        dataset.write_to_dataset(
-            pa.table({"id": [1, 3], "value": ["new", "three"]}),
+        inserted = dataset.write_to_dataset(
+            pa.table({"id": [121221], "value": [None]}),
+            mode="delta",
+            delta_subset=None,
+        )
+    with pytest.warns(DeprecationWarning):
+        duplicate = dataset.write_to_dataset(
+            pa.table({"id": [121221], "value": [None]}),
             mode="delta",
             delta_subset=None,
         )
 
+    assert isinstance(inserted, MergeResult)
+    assert isinstance(duplicate, MergeResult)
+    assert inserted.inserted == 1
+    assert duplicate.inserted == 0
     assert _rows(tmp_path) == [
-        {"id": 1, "value": "old"},
-        {"id": 2, "value": None},
-        {"id": 3, "value": "three"},
+        {"id": 121221, "value": "abc"},
+        {"id": 121221, "value": None},
     ]
 
 
