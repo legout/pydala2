@@ -34,6 +34,28 @@ def test_compaction_dry_run_returns_plan_without_mutating_managed_metadata(
     assert_metadata_invariants(managed_dataset)
 
 
+def test_partitioned_compaction_dry_run_initializes_metadata_table(
+    local_path: str,
+) -> None:
+    """A fresh partitioned dataset can plan compaction without manual loading."""
+    dataset = ParquetDataset(
+        path="partitioned_dry_run",
+        partitioning="hive",
+        filesystem=FileSystem(bucket=local_path, cached=False),
+    )
+    for ids in ([1, 2], [3, 4]):
+        dataset.write_to_dataset(
+            pa.table({"id": ids, "region": ["north"] * len(ids)}),
+            mode="append",
+            partition_by=["region"],
+        )
+
+    plan = dataset.compact_by_rows(max_rows_per_file=100, dry_run=True)
+
+    assert isinstance(plan, list)
+    assert len(plan) == 1
+
+
 def test_compaction_refreshes_managed_metadata_and_preserves_rows(
     managed_dataset,
 ) -> None:

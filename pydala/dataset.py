@@ -2041,9 +2041,9 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             ``True``; otherwise ``None``.
         """
         _validate_compaction_options(row_group_size, kwargs)
+        self.load(update_metadata=bool(sort_by))
         sort_keys: list[SortKey] | None = None
         if sort_by:
-            self.load(update_metadata=True)
             sort_keys = _normalize_compaction_sort_by(sort_by, self.schema.names)
             if unique:
                 raise ValueError(

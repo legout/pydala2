@@ -3,7 +3,6 @@ import copy
 import json
 import pickle  # Only for backward compatibility
 import posixpath
-import re
 import tempfile
 import base64
 from collections import defaultdict
@@ -930,6 +929,7 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
             **fs_kwargs,
         )
         self.reset_scan()
+        self._metadata_table: Any = None
         self._partitioning = partitioning
 
         if ddb_con is None:
@@ -1043,6 +1043,8 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
 
     @property
     def metadata_table(self):
+        if self._metadata_table is None and self.has_metadata:
+            self.update_metadata_table()
         return self._metadata_table
 
     @property
