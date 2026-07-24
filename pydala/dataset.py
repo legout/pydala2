@@ -38,7 +38,11 @@ from .helpers.security import (
 from .helpers.polars import pl as _pl
 from .io import PartialMergeError, PartialWriteError, Writer, WriterSource
 from .metadata import PydalaDatasetMetadata
-from .schema import convert_large_types_to_normal, convert_timestamp
+from .schema import (
+    SchemaRepairPlan,
+    convert_large_types_to_normal,
+    convert_timestamp,
+)
 from .table import PydalaTable
 from .adapters.fsspeckit import FsspeckitParquetAdapter
 
@@ -1953,6 +1957,80 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         """Invalidate caches and rebuild per-file, aggregate and table state."""
         self.clear_cache()
         self.load(update_metadata=True, reload_metadata=True)
+
+    def repair_schema(
+        self,
+        schema: pa.Schema | None = None,
+        ts_unit: str | None = None,
+        tz: str | None = None,
+        format_version: str | None = None,
+        alter_schema: bool = True,
+        dry_run: bool = False,
+        verbose: bool = False,
+        **kwargs: t.Any,
+    ) -> SchemaRepairPlan | None:
+        """Repair physical Parquet schemas to pydala's canonical target.
+
+        This is the runtime façade. Per ADR 0001, planning, execution, and the
+        file/aggregate metadata sidecar refresh live in the metadata layer
+        (:meth:`PydalaDatasetMetadata.repair_schema`); this method rebuilds the
+        Arrow dataset/table state, the metadata-table view, and caches after a
+        successful real repair.
+
+        Candidate files are selected by comparing each file's *raw* physical
+        schema (rediscovered fresh from disk) against the canonical
+        large-type-normalized target, so real physical differences -- such as
+        ``large_string`` versus ``string`` -- are detected and repaired even
+        though both normalize to the same canonical type (issue #36). Casting
+        completes fully before a source file is replaced, so a failed cast
+        leaves the original intact and raises.
+
+        With ``dry_run=True`` no data or metadata is mutated: a plan
+        (``{"files": [...], "schema": schema}``) is returned. The ``files`` are
+        dataset-relative paths, consistent with :attr:`files`, and reflect the
+        *current* physical files on disk.
+
+        Note:
+            :meth:`update` (called automatically on the first load of a managed
+            dataset) already converges physical schemas to the canonical target.
+            Use this method to plan or force a repair against the current
+            physical state, for example after files are written by an external
+            tool.
+
+        Args:
+            schema: Explicit canonical target. If ``None`` the target is
+                derived from the unified raw physical schemas and normalized.
+            ts_unit: Timestamp unit applied to the target schema.
+            tz: Timezone applied to timestamp fields in the target schema.
+            format_version: Parquet format version for repair writes and
+                candidate selection. Files whose stored version differs are
+                also selected.
+            alter_schema: Whether to add missing fields while repairing files.
+            dry_run: Return a plan without mutating files or sidecars.
+            verbose: Log repair progress.
+            **kwargs: Additional options forwarded to the executor, including
+                ``n_jobs`` and ``backend``.
+
+        Returns:
+            A :class:`~pydala.schema.SchemaRepairPlan` when ``dry_run`` is
+            ``True``; otherwise ``None``.
+        """
+        result = PydalaDatasetMetadata.repair_schema(
+            self,
+            schema=schema,
+            ts_unit=ts_unit,
+            tz=tz,
+            format_version=format_version,
+            alter_schema=alter_schema,
+            dry_run=dry_run,
+            verbose=verbose,
+            **kwargs,
+        )
+        if not dry_run:
+            # Rebuild runtime Arrow dataset/table state, the metadata-table
+            # view, and caches from the refreshed sidecars.
+            self._refresh_after_rewrite()
+        return result
 
     def collect_stats(
         self, partition_filter: list[str] | None = None

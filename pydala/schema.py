@@ -1,5 +1,7 @@
 import functools
+import os
 import posixpath
+import typing as t
 
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -394,6 +396,13 @@ def _unify_repair_schemas(schemas: list[pa.Schema]) -> pa.Schema:
         return unified
 
 
+class SchemaRepairPlan(t.TypedDict):
+    """Immutable result of a schema-repair planning pass."""
+
+    files: list[str]
+    schema: pa.Schema
+
+
 def _plan_schema_repair(
     file_schemas: dict[str, pa.Schema],
     schema: pa.Schema | None = None,
@@ -401,20 +410,21 @@ def _plan_schema_repair(
     tz: str | None = None,
     file_versions: dict[str, str] | None = None,
     version: str | None = None,
-) -> dict[str, object]:
-    """Plan schema repair from one immutable snapshot of physical files.
+) -> SchemaRepairPlan:
+    """Plan schema repair from one immutable snapshot of raw physical schemas.
 
-    The input mapping is copied and each physical schema is normalized once for
-    this operation.  No state is retained between calls, so callers can take a
-    fresh snapshot after reconciling physical additions and removals.
+    The input mapping is treated as an immutable snapshot of the *raw* physical
+    schemas and is never mutated here. The canonical repair target is derived
+    using pydala's normalization policy (large types folded to standard types),
+    while repair candidates are selected by comparing the *raw* physical schema
+    against that canonical target. This keeps real physical differences -- such
+    as ``large_string`` versus ``string`` -- visible even though both normalize
+    to the same canonical type (issue #36).
     """
-    snapshot = {
-        path: convert_large_types_to_normal(file_schema)
-        for path, file_schema in file_schemas.items()
-    }
+    raw_schemas = dict(file_schemas)
 
     if schema is None:
-        target_schema = _unify_repair_schemas(list(snapshot.values()))
+        target_schema = _unify_repair_schemas(list(raw_schemas.values()))
     else:
         target_schema = schema
 
@@ -422,18 +432,68 @@ def _plan_schema_repair(
         target_schema = convert_timestamp(target_schema, unit=ts_unit, tz=tz)
     target_schema = convert_large_types_to_normal(target_schema)
 
+    # Candidate detection compares the RAW physical schema to the canonical
+    # target so that un-normalized physical differences are still detected.
     files_to_repair = [
-        path for path, file_schema in snapshot.items() if file_schema != target_schema
+        path
+        for path, file_schema in raw_schemas.items()
+        if file_schema != target_schema
     ]
     if version is not None and file_versions is not None:
         files_to_repair.extend(
-            path for path in snapshot if file_versions.get(path) != version
+            path for path in raw_schemas if file_versions.get(path) != version
         )
 
     return {
         "files": sorted(set(files_to_repair)),
         "schema": target_schema,
     }
+
+
+def _replace_file(
+    source: str,
+    target: str,
+    filesystem: AbstractFileSystem | pfs.FileSystem | None = None,
+) -> None:
+    """Atomically replace ``target`` with ``source``.
+
+    The replacement strategy adapts to the filesystem type so the destination
+    is never observed in a partially-written state. fsspec's ``mv`` overwrites
+    the destination (a copy followed by removing the source); pyarrow's
+    ``move`` and the local ``os.replace`` rename atomically.
+    """
+    if filesystem is None:
+        os.replace(source, target)
+    elif hasattr(filesystem, "mv"):
+        filesystem.mv(source, target)
+    elif hasattr(filesystem, "move"):
+        filesystem.move(source, target)
+    else:  # pragma: no cover - defensive for unknown filesystem types
+        raise NotImplementedError(
+            f"Cannot atomically replace {target!r}: filesystem "
+            f"{type(filesystem).__name__} exposes neither 'mv' nor 'move'."
+        )
+
+
+def _safe_remove(
+    path: str,
+    filesystem: AbstractFileSystem | pfs.FileSystem | None = None,
+) -> None:
+    """Remove ``path`` if it exists, swallowing errors (best-effort cleanup)."""
+    try:
+        if filesystem is None:
+            if os.path.exists(path):
+                os.remove(path)
+        elif (rm_file := getattr(filesystem, "rm_file", None)) is not None:
+            rm_file(path)
+        elif (rm := getattr(filesystem, "rm", None)) is not None and filesystem.exists(
+            path
+        ):
+            rm(path)
+        elif (delete_file := getattr(filesystem, "delete_file", None)) is not None:
+            delete_file(path)
+    except Exception:
+        pass
 
 
 def _execute_schema_repair(
@@ -449,7 +509,13 @@ def _execute_schema_repair(
     version: str | None = None,
     **kwargs,
 ) -> None:
-    """Execute a prepared schema-repair plan without replanning it."""
+    """Execute a prepared schema-repair plan without replanning it.
+
+    Each file is repaired in isolation: the source is read, coerced and cast to
+    the target schema entirely in memory, and only then written to a sibling
+    temporary file that atomically replaces the source. A cast or write
+    failure therefore leaves the original physical file intact (issue #36).
+    """
 
     def _repair_schema(f, schema, filesystem):
         # pydala-specific coercions (missing fields, int->timestamp, str->bool)
@@ -461,6 +527,10 @@ def _execute_schema_repair(
             alter_schema=alter_schema,
         )
         # Final fsspeckit cast to ensure that the table matches the target schema.
+        # Both coercions complete before any write, so a cast failure leaves the
+        # source file untouched.
+        table = _fsspeckit_cast_schema(table, schema)
+
         write_kwargs = kwargs.copy()
         if version is not None:
             write_kwargs["version"] = version
@@ -470,15 +540,27 @@ def _execute_schema_repair(
                 write_kwargs["compression"] = (
                     metadata.row_group(0).column(0).compression.lower()
                 )
-        table = _fsspeckit_cast_schema(table, schema)
-        pq.write_table(
-            table,
-            f,
-            filesystem=filesystem,
-            coerce_timestamps=ts_unit,
-            allow_truncated_timestamps=True,
-            **write_kwargs,
-        )
+
+        # Write the repaired table to a sibling temporary file, then atomically
+        # replace the source. The source is never opened for writing until the
+        # full replacement is ready.
+        directory = posixpath.dirname(f) or "."
+        tmp = posixpath.join(directory, f".{posixpath.basename(f)}.repair-tmp")
+        try:
+            pq.write_table(
+                table,
+                tmp,
+                filesystem=filesystem,
+                coerce_timestamps=ts_unit,
+                allow_truncated_timestamps=True,
+                **write_kwargs,
+            )
+            _replace_file(tmp, f, filesystem=filesystem)
+        except BaseException:
+            # Best-effort cleanup of the temporary file on any failure so a
+            # partial write cannot accumulate stray files.
+            _safe_remove(tmp, filesystem=filesystem)
+            raise
 
     if files:
         # Bind non-iterable arguments so fsspeckit's parallel runner only
@@ -513,7 +595,7 @@ def repair_schema(
     dry_run: bool = False,
     version: str | None = None,
     **kwargs,
-):
+) -> SchemaRepairPlan | None:
     """Repairs the pyarrow schema of a parquet or arrow dataset.
 
     This adapter delegates schema unification and parallel execution to public
@@ -541,15 +623,23 @@ def repair_schema(
         **kwargs: Additional keyword arguments for pyarrow.parquet.write_table.
 
     Returns:
-        dict | None: When ``dry_run`` is ``True``, returns ``{"files": [...], "schema": schema}``
-        describing the repair plan; otherwise ``None``.
+        When ``dry_run`` is ``True``, returns a :class:`SchemaRepairPlan`
+        (``{"files": [...], "schema": schema}``) describing the files that
+        would be rewritten and the target schema; otherwise ``None``.
     """
     base_path = strip_protocol(base_path) if base_path is not None else None
     if files is None:
         if file_schemas is not None:
             files = list(file_schemas.keys())
         elif base_path is not None:
-            files = filesystem.glob(base_path + "/**/*.parquet")
+            if filesystem is None:
+                raise ValueError(
+                    "filesystem must be provided when discovering files "
+                    "from base_path."
+                )
+            files = [
+                str(p) for p in filesystem.glob(base_path + "/**/*.parquet")
+            ]
         else:
             raise ValueError(
                 "Either files or file_schemas or base_path must be provided."

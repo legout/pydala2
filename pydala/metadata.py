@@ -27,8 +27,10 @@ from .helpers.metadata import (
 from .helpers.misc import get_partitions_from_path, run_parallel, unify_schemas_pl
 import brotli
 from .schema import (
+    SchemaRepairPlan,
     _execute_schema_repair,
     _plan_schema_repair,
+    collect_file_schemas,
     convert_large_types_to_normal,  # unify_schemas
 )
 
@@ -258,8 +260,10 @@ class ParquetDatasetMetadata:
 
         self._metadata_file = posixpath.join(path, "_metadata")
         self._file_metadata_file = posixpath.join(path, "_file_metadata")
-        self._metadata = self._read_metadata()
-        self._file_metadata = None  # self._read_file_metadata()
+        self._metadata: pq.FileMetaData | None = self._read_metadata()
+        self._file_metadata: dict[str, pq.FileMetaData] | None = (
+            None  # self._read_file_metadata()
+        )
         if update_metadata:
             self.update()
 
@@ -502,6 +506,32 @@ class ParquetDatasetMetadata:
 
         return unified_schema, schemas_equal
 
+    def _snapshot_physical_files(
+        self,
+    ) -> tuple[dict[str, pa.Schema], dict[str, str]]:
+        """Snapshot reconciled raw physical schemas and Parquet versions.
+
+        Returns a ``(raw_schemas, file_versions)`` tuple built from the
+        sidecar file-metadata restricted to files that physically exist on
+        disk. The raw schemas are *not* normalized, so callers can detect
+        physical differences such as ``large_string`` versus ``string``
+        (issue #36). Used by both the automatic ``_repair_file_schemas``
+        path and the dataset-level dry-run planner so they always agree.
+        """
+        physical_files = tuple(sorted(set(self._ls_files())))
+        file_metadata_snapshot = dict(self.file_metadata)
+        raw_schemas = {
+            file: metadata.schema.to_arrow_schema()
+            for file, metadata in file_metadata_snapshot.items()
+            if file in physical_files
+        }
+        file_versions = {
+            file: metadata.format_version
+            for file, metadata in file_metadata_snapshot.items()
+            if file in raw_schemas
+        }
+        return raw_schemas, file_versions
+
     def _repair_file_schemas(
         self,
         schema: pa.Schema | None = None,
@@ -530,18 +560,7 @@ class ParquetDatasetMetadata:
         # Track 2 reconciliation has already updated sidecars from physical
         # discovery in ``update``. Snapshot both views before planning so a
         # repair cannot select stale or physically absent files.
-        physical_files = tuple(sorted(set(self._ls_files())))
-        file_metadata_snapshot = dict(self.file_metadata)
-        file_schemas_snapshot = {
-            file: metadata.schema.to_arrow_schema()
-            for file, metadata in file_metadata_snapshot.items()
-            if file in physical_files
-        }
-        file_versions_snapshot = {
-            file: metadata.format_version
-            for file, metadata in file_metadata_snapshot.items()
-            if file in file_schemas_snapshot
-        }
+        file_schemas_snapshot, file_versions_snapshot = self._snapshot_physical_files()
 
         if not file_schemas_snapshot:
             self._update_metadata(reload=False, verbose=verbose)
@@ -603,6 +622,140 @@ class ParquetDatasetMetadata:
                 )
         else:
             self._update_metadata(reload=False, verbose=verbose)
+
+    def _plan_repair_schema(
+        self,
+        schema: pa.Schema | None = None,
+        ts_unit: str | None = None,
+        tz: str | None = None,
+        format_version: str | None = None,
+        n_jobs: int = -1,
+        backend: str = "threading",
+        verbose: bool = False,
+    ) -> SchemaRepairPlan:
+        """Plan a schema repair from a fresh raw physical snapshot.
+
+        Rediscover the physical files on disk, then read each file's *raw*
+        physical schema directly from its footer (not the sidecar). The plan
+        therefore reflects files added or changed since the last
+        :meth:`update` -- for example a ``large_string`` file written by an
+        external tool (issue #36). No files or sidecars are mutated.
+        """
+        self.clear_cache()
+        self.load_files()
+        relative_files = list(self.files)
+        if not relative_files:
+            return {
+                "files": [],
+                "schema": schema if schema is not None else pa.schema([]),
+            }
+
+        qualified = [posixpath.join(self._path, f) for f in relative_files]
+        file_schemas = collect_file_schemas(
+            files=qualified,
+            filesystem=self._filesystem,
+            n_jobs=n_jobs,
+            backend=backend,
+            verbose=verbose,
+        )
+        raw_schemas = {
+            relative_files[i]: file_schemas[qualified[i]]
+            for i in range(len(relative_files))
+        }
+
+        file_versions = None
+        if format_version is not None:
+            file_versions = {
+                relative_files[i]: pq.read_metadata(
+                    qualified[i], filesystem=self._filesystem
+                ).format_version
+                for i in range(len(relative_files))
+            }
+
+        return _plan_schema_repair(
+            file_schemas=raw_schemas,
+            schema=schema,
+            ts_unit=ts_unit,
+            tz=tz,
+            file_versions=file_versions,
+            version=format_version,
+        )
+
+    def repair_schema(
+        self,
+        schema: pa.Schema | None = None,
+        ts_unit: str | None = None,
+        tz: str | None = None,
+        format_version: str | None = None,
+        alter_schema: bool = True,
+        dry_run: bool = False,
+        verbose: bool = False,
+        **kwargs,
+    ) -> SchemaRepairPlan | None:
+        """Repair physical Parquet schemas to pydala's canonical target.
+
+        Plans and executes the repair from a fresh physical snapshot (see
+        :meth:`_plan_repair_schema`). Candidate files are selected by
+        comparing each file's raw physical schema against the canonical
+        large-type-normalized target, so differences such as ``large_string``
+        versus ``string`` are detected and repaired (issue #36). Casting
+        completes before a source file is replaced, so a failed cast leaves
+        the original intact and raises.
+
+        With ``dry_run=True`` no data or metadata is mutated; a plan is
+        returned. A real repair rewrites the selected files and refreshes the
+        file-metadata and aggregate-metadata sidecars.
+
+        Per ADR 0001, repair behavior lives in the metadata layer; runtime
+        Arrow dataset/table state is refreshed by the dataset façade.
+        """
+        n_jobs = kwargs.pop("n_jobs", -1)
+        backend = kwargs.pop("backend", "threading")
+
+        plan = self._plan_repair_schema(
+            schema=schema,
+            ts_unit=ts_unit,
+            tz=tz,
+            format_version=format_version,
+            n_jobs=n_jobs,
+            backend=backend,
+            verbose=verbose,
+        )
+        if dry_run:
+            return plan
+
+        files_to_repair = plan["files"]
+        if files_to_repair:
+            if verbose:
+                logger.info(
+                    f"Repairing schema for number of files: {len(files_to_repair)}"
+                )
+            repair_files = [
+                file
+                if file == self._path or file.startswith(self._path + "/")
+                else posixpath.join(self._path, file)
+                for file in files_to_repair
+            ]
+            _execute_schema_repair(
+                files=repair_files,
+                schema=plan["schema"],
+                filesystem=self._filesystem,
+                n_jobs=n_jobs,
+                backend=backend,
+                verbose=verbose,
+                version=format_version,
+                ts_unit=ts_unit,
+                tz=tz,
+                alter_schema=alter_schema,
+                **kwargs,
+            )
+            self.clear_cache()
+            # Refresh only the reconciled candidate set, then rebuild the
+            # aggregate metadata sidecar from the repaired files.
+            self.update_file_metadata(files=files_to_repair, verbose=verbose, **kwargs)
+            if any(f in self.files_in_metadata for f in files_to_repair):
+                self._update_metadata(reload=True, verbose=verbose)
+        return None
 
     def _update_metadata(self, reload: bool = False, verbose: bool = False, **kwargs):
         """
@@ -780,7 +933,7 @@ class ParquetDatasetMetadata:
         return self._file_metadata is not None
 
     @property
-    def file_metadata(self):
+    def file_metadata(self) -> dict[str, pq.FileMetaData]:
         """
         Returns the file metadata associated with the dataset.
 
@@ -791,15 +944,43 @@ class ParquetDatasetMetadata:
         """
         if not self.has_file_metadata:
             self.update_file_metadata()
+        assert self._file_metadata is not None  # ensured by update_file_metadata
         return self._file_metadata
 
     @property
     def file_schemas(self):
+        """Canonicalized per-file Arrow schema (large types normalized).
+
+        This is pydala's public schema view: ``large_string`` / ``large_binary``
+        are folded to ``string`` / ``binary`` so callers see a stable type set
+        even when the physical Parquet files differ. This is why
+        ``file_schemas`` can report equality for files that still need a
+        physical repair. For the raw physical schemas actually stored on disk,
+        use :attr:`raw_file_schemas`.
+        """
+        file_metadata = self.file_metadata
         return {
-            f: convert_large_types_to_normal(
-                self._file_metadata[f].schema.to_arrow_schema()
-            )
-            for f in self._file_metadata
+            f: convert_large_types_to_normal(md.schema.to_arrow_schema())
+            for f, md in file_metadata.items()
+        }
+
+    @property
+    def raw_file_schemas(self):
+        """Raw physical Arrow schema per file, from the file-metadata sidecar.
+
+        Unlike :attr:`file_schemas`, this exposes each file's schema *without*
+        folding large types to their standard variants, so physical
+        differences -- such as ``large_string`` versus ``string`` -- that
+        require an on-disk repair stay visible (issue #36).
+
+        This is a reconciled sidecar view over :attr:`file_metadata`, so it
+        reflects the footers captured at the last :meth:`update` rather than a
+        fresh read of the current disk state. For a fresh raw snapshot use the
+        repair planner (:meth:`repair_schema` with ``dry_run=True``).
+        """
+        file_metadata = self.file_metadata
+        return {
+            f: md.schema.to_arrow_schema() for f, md in file_metadata.items()
         }
 
     @property
@@ -811,7 +992,7 @@ class ParquetDatasetMetadata:
             A list of file paths in the file metadata of the dataset.
         """
         if self.has_file_metadata:
-            return sorted(set(self._file_metadata.keys()))
+            return sorted(set(self.file_metadata.keys()))
         else:
             return []
 
@@ -827,9 +1008,8 @@ class ParquetDatasetMetadata:
         """
         Returns True if the dataset has metadata, False otherwise.
         """
-        if self._metadata is None:
-            if self.has_metadata_file:
-                self._metadata = self._read_metadata()
+        if self._metadata is None and self.has_metadata_file:
+            self._metadata = self._read_metadata()
         return self._metadata is not None
 
     @property
@@ -867,8 +1047,9 @@ class ParquetDatasetMetadata:
         If metadata is not available, it returns an empty schema.
         """
         if not hasattr(self, "_file_schema"):
-            if self.has_metadata:
-                self._file_schema = self.metadata.schema.to_arrow_schema()
+            metadata = self.metadata
+            if metadata is not None:
+                self._file_schema = metadata.schema.to_arrow_schema()
             else:
                 self._file_schema = pa.schema([])
         return self._file_schema
@@ -1108,12 +1289,12 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
     def scan_files(self):
         if self.metadata_table_scanned is not None:
             return sorted(
-                set(
-                    map(
-                        lambda x: x[0],
-                        self.metadata_table_scanned.select("file_path").fetchall(),
-                    )
-                )
+                {
+                    x[0]
+                    for x in self.metadata_table_scanned.select(
+                        "file_path"
+                    ).fetchall()
+                }
             )
         else:
             return self.files

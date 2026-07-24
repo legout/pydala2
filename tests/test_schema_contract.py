@@ -632,5 +632,93 @@ class TestConvertTimestamp(unittest.TestCase):
         self.assertEqual(result.metadata, {b"schema": b"metadata"})
 
 
+class TestRepairSchemaLargeTypeDetection(unittest.TestCase):
+    """Raw physical schema differences must be detected for repair (issue #36).
+
+    The repair planner previously normalized every physical schema before both
+    target selection and candidate detection, hiding real differences such as
+    ``large_string`` versus ``string``. Candidate detection must now compare the
+    raw physical schema against the canonical (normalized) target.
+    """
+
+    _RUN_KW = dict(n_jobs=1, backend="sequential", verbose=False)
+
+    def test_dry_run_selects_raw_large_string_file_when_target_is_string(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            normal = f"{tmpdir}/normal.parquet"
+            large = f"{tmpdir}/large.parquet"
+            pq.write_table(pa.table({"x": pa.array(["a"], type=pa.string())}), normal)
+            pq.write_table(
+                pa.table({"x": pa.array(["b"], type=pa.large_string())}), large
+            )
+
+            plan = repair_schema(files=[normal, large], dry_run=True, **self._RUN_KW)
+
+            self.assertEqual(plan["files"], [large])
+            self.assertEqual(plan["schema"], pa.schema([("x", pa.string())]))
+
+    def test_dry_run_leaves_already_canonical_string_file_unselected(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            a = f"{tmpdir}/a.parquet"
+            b = f"{tmpdir}/b.parquet"
+            pq.write_table(pa.table({"x": pa.array(["a"], type=pa.string())}), a)
+            pq.write_table(pa.table({"x": pa.array(["b"], type=pa.string())}), b)
+
+            plan = repair_schema(files=[a, b], dry_run=True, **self._RUN_KW)
+
+            self.assertEqual(plan["files"], [])
+
+    def test_planner_compares_raw_schema_to_canonical_target_directly(self):
+        normal_schema = pa.schema([("x", pa.string())])
+        large_schema = pa.schema([("x", pa.large_string())])
+
+        plan = _plan_schema_repair(
+            {"normal.parquet": normal_schema, "large.parquet": large_schema}
+        )
+
+        self.assertEqual(plan["schema"], pa.schema([("x", pa.string())]))
+        self.assertEqual(plan["files"], ["large.parquet"])
+
+    def test_real_repair_rewrites_large_string_to_string_preserving_values(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            normal = f"{tmpdir}/normal.parquet"
+            large = f"{tmpdir}/large.parquet"
+            pq.write_table(pa.table({"x": pa.array(["a"], type=pa.string())}), normal)
+            pq.write_table(
+                pa.table({"x": pa.array(["hello"], type=pa.large_string())}), large
+            )
+
+            repair_schema(files=[normal, large], **self._RUN_KW)
+
+            self.assertEqual(
+                pq.read_schema(normal).field("x").type, pa.string()
+            )
+            self.assertEqual(
+                pq.read_schema(large).field("x").type, pa.string()
+            )
+            self.assertEqual(pq.read_table(large).column("x").to_pylist(), ["hello"])
+
+    def test_failed_cast_leaves_original_file_intact_and_raises(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = f"{tmpdir}/overflow.parquet"
+            # int64 value far outside int32 range; casting to int32 must fail.
+            pq.write_table(
+                pa.table({"id": pa.array([2**40], type=pa.int64())}), path
+            )
+            original_schema = pq.read_schema(path)
+            original_bytes = pq.read_table(path).to_pydict()
+
+            with self.assertRaises(Exception):
+                repair_schema(
+                    files=[path],
+                    schema=pa.schema([("id", pa.int32())]),
+                    **self._RUN_KW,
+                )
+
+            # The original file is untouched: same schema, same values.
+            self.assertEqual(pq.read_schema(path), original_schema)
+            self.assertEqual(pq.read_table(path).to_pydict(), original_bytes)
+
+
 if __name__ == "__main__":
     unittest.main()
