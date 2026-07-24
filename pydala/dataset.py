@@ -30,8 +30,6 @@ from fsspeckit.core.maintenance import CastPolicy, SortKey
 from .filesystem import FileSystem, clear_cache
 from .helpers.datetime import get_timestamp_column
 from .helpers.security import (
-    validate_partition_name,
-    validate_partition_value,
     sanitize_filter_expression,
     safe_join,
 )
@@ -2045,47 +2043,57 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
     # ------------------------------------------------------------------ #
     # Compaction methods
     # ------------------------------------------------------------------ #
-    def _compact_partition(
+    def _split_dry_run_plan_by_partition(
         self,
-        partition: dict[str, t.Any],
-        max_rows_per_file: int | None = 10_000_000,
-        sort_keys: list[SortKey] | None = None,
-        compression: str = "zstd",
-        row_group_size: int | None = 256_000,
-        unique: bool = True,
-        dry_run: bool = False,
-        **kwargs: t.Any,
-    ) -> dict[str, t.Any]:
-        """Compact every file in one physical partition.
+        plan: dict[str, t.Any],
+        partitions: list[dict[str, t.Any]],
+    ) -> list[dict[str, t.Any]]:
+        """Split a whole-dataset dry-run plan into per-partition plan dicts.
 
-        The dataset-root filesystem and file paths are retained for ordered
-        compaction so fsspeckit plans against the complete Hive layout rather
-        than a schema-less partition subtree.
+        Preserves the historical ``list[dict]`` dry-run shape of
+        :meth:`compact_partitions` -- one entry per candidate partition -- now
+        that the plan comes from a single fsspeckit call covering every
+        partition. Each entry is the plan with its group list and
+        ``planned_groups`` scoped to that partition, plus an additive
+        ``partition`` key. fsspeckit returns resolved (possibly absolute)
+        paths, so partition prefixes are recovered from ``k=v`` path segments
+        rather than assumed dataset-relative.
         """
-        for name, value in partition.items():
-            if not validate_partition_name(name):
-                raise ValueError(f"Invalid partition name: {name}")
-            if not validate_partition_value(value):
-                raise ValueError(f"Invalid partition value: {value}")
-
-        partition_prefix = "/".join(f"{k}={v}" for k, v in partition.items())
-        partition_files = [
-            file_path
-            for file_path in self.files
-            if file_path.startswith(f"{partition_prefix}/")
-        ]
-        result = self._run_fsspeckit_rewrite(
-            path=self._path,
-            filesystem=self._filesystem,
-            max_rows_per_file=max_rows_per_file,
-            compression=compression,
-            unique=unique,
-            dry_run=dry_run,
-            partition_filter=partition_files,
-            sort_keys=sort_keys,
+        groups_key = (
+            "ordered_groups" if "ordered_groups" in plan else "compaction_groups"
         )
-        self.reset_scan()
-        return result
+        all_groups = plan.get(groups_key) or []
+
+        def _prefix_of(group: dict[str, t.Any]) -> str:
+            files = group.get("files") or ()
+            if not files:
+                return ""
+            segments = str(files[0]["path"]).split("/")
+            found: list[str] = []
+            for name in self.partition_names or []:
+                marker = f"{name}="
+                for segment in segments:
+                    if segment.startswith(marker):
+                        found.append(segment)
+                        break
+            return "/".join(found)
+
+        buckets: dict[str, list[dict[str, t.Any]]] = {}
+        for group in all_groups:
+            buckets.setdefault(_prefix_of(group), []).append(group)
+
+        results: list[dict[str, t.Any]] = []
+        for partition in partitions:
+            prefix = "/".join(f"{k}={v}" for k, v in partition.items())
+            subset = buckets.get(prefix, [])
+            entry = dict(plan)
+            entry[groups_key] = subset
+            entry["planned_groups"] = [
+                [str(f["path"]) for f in (group.get("files") or ())] for group in subset
+            ]
+            entry["partition"] = partition
+            results.append(entry)
+        return results
 
     def compact_partitions(
         self,
@@ -2142,25 +2150,45 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
                 _pl.col("num_partition_files") > 1
             ).filter(_pl.col("num_rows") < max_rows_per_file)
         partitions_to_compact = partition_groups.select(self.partition_names).to_dicts()
-        results: list[dict[str, t.Any]] = []
-        for partition in tqdm.tqdm(partitions_to_compact):
-            result = self._compact_partition(
-                partition=partition,
-                max_rows_per_file=max_rows_per_file,
-                sort_keys=sort_keys,
-                compression=compression,
-                row_group_size=row_group_size,
-                unique=unique,
-                dry_run=dry_run,
-                **kwargs,
-            )
-            if not dry_run:
-                _require_successful_maintenance(result, "compaction")
-            results.append(result)
+        # Hand every candidate partition to fsspeckit as a single
+        # partition_filter over one dataset-root call. fsspeckit compaction is
+        # partition-local -- it groups files within each partition and publishes
+        # back to that partition's directory -- so this is equivalent to the
+        # former per-partition loop but performs one directory walk and one
+        # footer scan instead of one per partition (one call, not N).
+        partition_filter: list[str] = []
+        for partition in partitions_to_compact:
+            prefix = "/".join(f"{k}={v}" for k, v in partition.items())
+            if prefix:
+                partition_filter.extend(
+                    file_path
+                    for file_path in self.files
+                    if file_path.startswith(f"{prefix}/")
+                )
+            else:
+                # Non-partitioned single group: every file is a candidate.
+                partition_filter.extend(self.files)
 
+        if not partition_filter:
+            # No candidate partitions: nothing to plan or rewrite.
+            return [] if dry_run else None
+
+        result = self._run_fsspeckit_rewrite(
+            path=self._path,
+            filesystem=self._filesystem,
+            max_rows_per_file=max_rows_per_file,
+            compression=compression,
+            unique=unique,
+            dry_run=dry_run,
+            partition_filter=partition_filter,
+            sort_keys=sort_keys,
+        )
         if not dry_run:
+            _require_successful_maintenance(result, "compaction")
             self._refresh_after_rewrite()
-        return results if dry_run else None
+            return None
+
+        return self._split_dry_run_plan_by_partition(result, partitions_to_compact)
 
     def compact_small_files(self) -> None:
         """Placeholder for compacting small files across partitions."""

@@ -56,6 +56,47 @@ def test_partitioned_compaction_dry_run_initializes_metadata_table(
     assert len(plan) == 1
 
 
+def test_partitioned_compaction_dry_run_splits_single_call_by_partition(
+    local_path: str,
+) -> None:
+    """Multi-partition dry-run returns one plan entry per candidate partition.
+
+    compaction is delegated to fsspeckit as a single dataset-root call whose
+    partition_filter covers every candidate partition; the whole-dataset plan
+    is then split back into the historical per-partition ``list[dict]`` shape.
+    """
+    dataset = ParquetDataset(
+        path="partitioned_split",
+        partitioning="hive",
+        filesystem=FileSystem(bucket=local_path, cached=False),
+    )
+    # three partitions, each with two small files -> three compaction candidates
+    for region in ("north", "south", "east"):
+        for ids in ([1, 2], [3, 4]):
+            dataset.write_to_dataset(
+                pa.table({"id": ids, "region": [region] * len(ids)}),
+                mode="append",
+                partition_by=["region"],
+            )
+
+    plan = dataset.compact_partitions(max_rows_per_file=100, unique=False, dry_run=True)
+
+    assert isinstance(plan, list)
+    assert len(plan) == 3
+    # every entry is scoped to exactly one partition, and its planned files
+    # all live under that partition's directory.
+    for entry in plan:
+        assert entry["partition"]["region"] in {"north", "south", "east"}
+        partition_dir = f"region={entry['partition']['region']}"
+        assert entry["planned_groups"], "partition should be a compaction candidate"
+        for group in entry["planned_groups"]:
+            for file_path in group:
+                assert partition_dir in file_path
+    # no file is double-counted across partitions
+    all_files = [f for entry in plan for g in entry["planned_groups"] for f in g]
+    assert len(all_files) == len(set(all_files))
+
+
 def test_compaction_refreshes_managed_metadata_and_preserves_rows(
     managed_dataset,
 ) -> None:
