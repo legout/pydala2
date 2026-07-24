@@ -66,7 +66,9 @@ def test_file_schemas_is_canonicalized_while_raw_view_exposes_physical_types(
     base.mkdir(parents=True, exist_ok=True)
 
     # Construct with a canonical string file (init converges it harmlessly).
-    pq.write_table(pa.table({"x": pa.array(["a"], type=pa.string())}), str(base / "normal.parquet"))
+    pq.write_table(
+        pa.table({"x": pa.array(["a"], type=pa.string())}), str(base / "normal.parquet")
+    )
     ds = ParquetDataset(path=dataset_path, filesystem=fs)
 
     # Inject a large_string file *after* construction so the load-time repair
@@ -90,14 +92,18 @@ def test_file_schemas_is_canonicalized_while_raw_view_exposes_physical_types(
     assert raw[large_rel].field("x").type == pa.large_string()
 
 
-def test_dataset_repair_schema_dry_run_selects_large_string_file(local_path: str) -> None:
+def test_dataset_repair_schema_dry_run_selects_large_string_file(
+    local_path: str,
+) -> None:
     """Dry-run identifies the raw large_string file and mutates nothing."""
     dataset_path = "ds"
     fs = FileSystem(bucket=local_path, cached=False)
     base = pathlib.Path(local_path) / dataset_path
     base.mkdir(parents=True, exist_ok=True)
 
-    pq.write_table(pa.table({"x": pa.array(["a"], type=pa.string())}), str(base / "normal.parquet"))
+    pq.write_table(
+        pa.table({"x": pa.array(["a"], type=pa.string())}), str(base / "normal.parquet")
+    )
     ds = ParquetDataset(path=dataset_path, filesystem=fs)
 
     _write_large_string_file(fs, f"{dataset_path}/large.parquet", value="hello")
@@ -118,14 +124,18 @@ def test_dataset_repair_schema_dry_run_selects_large_string_file(local_path: str
     assert ds.has_file_metadata_file == file_meta_before
 
 
-def test_dataset_repair_schema_rewrites_and_refreshes_all_state(local_path: str) -> None:
+def test_dataset_repair_schema_rewrites_and_refreshes_all_state(
+    local_path: str,
+) -> None:
     """Real repair rewrites files, preserves values and refreshes all state."""
     dataset_path = "ds"
     fs = FileSystem(bucket=local_path, cached=False)
     base = pathlib.Path(local_path) / dataset_path
     base.mkdir(parents=True, exist_ok=True)
 
-    pq.write_table(pa.table({"x": pa.array(["a"], type=pa.string())}), str(base / "normal.parquet"))
+    pq.write_table(
+        pa.table({"x": pa.array(["a"], type=pa.string())}), str(base / "normal.parquet")
+    )
     ds = ParquetDataset(path=dataset_path, filesystem=fs)
     rows_before = ds.table.to_arrow().num_rows
 
@@ -138,7 +148,9 @@ def test_dataset_repair_schema_rewrites_and_refreshes_all_state(local_path: str)
     assert pq.read_schema(str(base / "normal.parquet")).field("x").type == pa.string()
     assert pq.read_schema(str(base / "large.parquet")).field("x").type == pa.string()
     # Values are preserved across the in-place rewrite.
-    assert pq.read_table(str(base / "large.parquet")).column("x").to_pylist() == ["keepme"]
+    assert pq.read_table(str(base / "large.parquet")).column("x").to_pylist() == [
+        "keepme"
+    ]
     # The injected row is now visible in the refreshed Arrow table.
     assert ds.table.to_arrow().num_rows == rows_before + 1
     assert ds.table.to_arrow().schema.field("x").type == pa.string()
@@ -157,7 +169,8 @@ def test_dataset_repair_schema_failed_cast_leaves_file_intact(local_path: str) -
     base.mkdir(parents=True, exist_ok=True)
 
     pq.write_table(
-        pa.table({"id": pa.array([2**40], type=pa.int64())}), str(base / "overflow.parquet")
+        pa.table({"id": pa.array([2**40], type=pa.int64())}),
+        str(base / "overflow.parquet"),
     )
     ds = ParquetDataset(path=dataset_path, filesystem=fs)
 

@@ -634,12 +634,9 @@ def repair_schema(
         elif base_path is not None:
             if filesystem is None:
                 raise ValueError(
-                    "filesystem must be provided when discovering files "
-                    "from base_path."
+                    "filesystem must be provided when discovering files from base_path."
                 )
-            files = [
-                str(p) for p in filesystem.glob(base_path + "/**/*.parquet")
-            ]
+            files = [str(p) for p in filesystem.glob(base_path + "/**/*.parquet")]
         else:
             raise ValueError(
                 "Either files or file_schemas or base_path must be provided."

@@ -979,9 +979,7 @@ class ParquetDatasetMetadata:
         repair planner (:meth:`repair_schema` with ``dry_run=True``).
         """
         file_metadata = self.file_metadata
-        return {
-            f: md.schema.to_arrow_schema() for f, md in file_metadata.items()
-        }
+        return {f: md.schema.to_arrow_schema() for f, md in file_metadata.items()}
 
     @property
     def files_in_file_metadata(self) -> list:
@@ -1241,9 +1239,7 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
         self._filter_expr_mod = _plan_metadata_predicate(
             self.metadata_table, filter_expr
         )
-        scan_files = _prune_metadata_files(
-            self.metadata_table, filter_expr, self.files
-        )
+        scan_files = _prune_metadata_files(self.metadata_table, filter_expr, self.files)
         if not scan_files:
             self._metadata_table_scanned = self._metadata_table.filter("1 = 0")
             return
@@ -1291,9 +1287,7 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
             return sorted(
                 {
                     x[0]
-                    for x in self.metadata_table_scanned.select(
-                        "file_path"
-                    ).fetchall()
+                    for x in self.metadata_table_scanned.select("file_path").fetchall()
                 }
             )
         else:

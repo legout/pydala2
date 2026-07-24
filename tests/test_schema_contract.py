@@ -690,21 +690,15 @@ class TestRepairSchemaLargeTypeDetection(unittest.TestCase):
 
             repair_schema(files=[normal, large], **self._RUN_KW)
 
-            self.assertEqual(
-                pq.read_schema(normal).field("x").type, pa.string()
-            )
-            self.assertEqual(
-                pq.read_schema(large).field("x").type, pa.string()
-            )
+            self.assertEqual(pq.read_schema(normal).field("x").type, pa.string())
+            self.assertEqual(pq.read_schema(large).field("x").type, pa.string())
             self.assertEqual(pq.read_table(large).column("x").to_pylist(), ["hello"])
 
     def test_failed_cast_leaves_original_file_intact_and_raises(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = f"{tmpdir}/overflow.parquet"
             # int64 value far outside int32 range; casting to int32 must fail.
-            pq.write_table(
-                pa.table({"id": pa.array([2**40], type=pa.int64())}), path
-            )
+            pq.write_table(pa.table({"id": pa.array([2**40], type=pa.int64())}), path)
             original_schema = pq.read_schema(path)
             original_bytes = pq.read_table(path).to_pydict()
 
