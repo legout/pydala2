@@ -64,7 +64,7 @@ def get_total_directory_size(directory: str) -> int:
     return sum(f.stat().st_size for f in Path(directory).glob("**/*") if f.is_file())
 
 
-class throttle(object):
+class throttle:
     """
     Decorator that prevents a function from being called more than once every
     time period.
@@ -196,6 +196,15 @@ def FileSystem(
     # same_names: bool = False,
     **kwargs,
 ) -> AbstractFileSystem:
+    if fs is None and bucket is None and protocol in (None, "file", "local"):
+        return filesystem(
+            protocol_or_path=protocol or "file",
+            dirfs=False,
+            cached=cached,
+            cache_storage=cache_storage,
+            **kwargs,
+        )
+
     if (
         fs is not None
         and not isinstance(fs, DirFileSystem)
