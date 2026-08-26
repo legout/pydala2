@@ -2441,7 +2441,7 @@ wheels = [
 
 [[package]]
 name = "pydala2"
-version = "0.28.1"
+version = "0.28.2"
 source = { editable = "." }
 dependencies = [
     { name = "brotli" },

@@ -31,16 +31,16 @@ from __future__ import annotations
 import posixpath
 import re
 from typing import TYPE_CHECKING, Any, Literal
+
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.dataset as pds
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
-from sqlglot import parse_one
-
 from fsspeckit.datasets.duckdb import DuckDBDatasetIO, create_duckdb_connection
 from fsspeckit.datasets.pyarrow import PyarrowDatasetIO
 from fsspeckit.sql.filters import sql2pyarrow_filter
+from sqlglot import parse_one
 
 if TYPE_CHECKING:
     from fsspeckit.core.incremental import MergeResult
@@ -78,10 +78,7 @@ class FsspeckitParquetAdapter:
         """Create a PyarrowDatasetIO, bypassing path validation for unsupported protocols."""
         io = PyarrowDatasetIO(filesystem=self._adapter_filesystem)
         if not self._uses_supported_fsspeckit_protocol:
-            adapter_root = self._adapter_root
-            io._normalize_path = lambda path, operation="other": posixpath.join(
-                adapter_root, path
-            )
+            io._normalize_path = lambda path, operation="other": path
         return io
 
     def _make_duckdb_io(self) -> DuckDBDatasetIO:
@@ -89,10 +86,7 @@ class FsspeckitParquetAdapter:
         conn = create_duckdb_connection(filesystem=self._adapter_filesystem)
         io = DuckDBDatasetIO(connection=conn)
         if not self._uses_supported_fsspeckit_protocol:
-            adapter_root = self._adapter_root
-            io._normalize_path = lambda path, operation="other": posixpath.join(
-                adapter_root, path
-            )
+            io._normalize_path = lambda path, operation="other": path
         return io
 
     @property

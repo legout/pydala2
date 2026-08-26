@@ -8,13 +8,14 @@ import uuid
 
 import pyarrow as pa
 import pyarrow.dataset as pds
-
-from pydala import ParquetDataset
-from pydala.filesystem import FileSystem
-from pydala.table import PydalaTable
+from fsspec import AbstractFileSystem
+from fsspec.implementations.memory import MemoryFileSystem
 from fsspeckit.core.incremental import MergeResult
 
+from pydala import ParquetDataset
 from pydala.adapters.fsspeckit import FsspeckitParquetAdapter
+from pydala.filesystem import FileSystem
+from pydala.table import PydalaTable
 
 
 class TestFsspeckitManagedParquetAdapter(unittest.TestCase):
@@ -100,6 +101,27 @@ class TestFsspeckitParquetAdapterMerge(unittest.TestCase):
             strategy="upsert",
             key_columns=["id"],
         )
+
+    def test_remote_pyarrow_path_is_rooted_once(self) -> None:
+        class _RootedMemoryFilesystem(AbstractFileSystem):
+            protocol = "rooted-memory"
+
+            def __init__(self, root: str) -> None:
+                super().__init__()
+                self.fs = MemoryFileSystem()
+                self.path = root
+
+        root = "bucket/data/ten=x"
+        adapter = FsspeckitParquetAdapter(
+            filesystem=_RootedMemoryFilesystem(root=root)
+        )
+        adapter_path = adapter._adapter_path("events")
+
+        normalized = adapter._make_pyarrow_io()._normalize_path(
+            adapter_path, operation="write"
+        )
+
+        self.assertEqual(normalized, f"{root}/events")
 
     # ----------------------------------------------------------------- #
     # Insert contract: verified result counts
