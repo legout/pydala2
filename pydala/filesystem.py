@@ -2,14 +2,16 @@ import threading
 from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
+from typing import Any, cast
 
 import psutil
+from fsspec.implementations.dirfs import DirFileSystem
 from fsspeckit import AbstractFileSystem, filesystem
 
 
 def get_credentials_from_fsspec(
     fs: AbstractFileSystem, redact_secrets: bool = True
-) -> dict[str, str]:
+) -> dict[str, str | None]:
     """
     Safely extract credentials from fsspec filesystem.
 
@@ -21,7 +23,8 @@ def get_credentials_from_fsspec(
         Dictionary with credential information (secrets redacted if redact_secrets=True)
     """
     if "s3" in fs.protocol:
-        credentials = fs.s3._get_credentials()
+        s3 = cast(Any, fs).s3
+        credentials = s3._get_credentials()
 
         if redact_secrets:
             # For logging and display purposes, redact actual secrets
@@ -31,7 +34,7 @@ def get_credentials_from_fsspec(
                 "session_token": f"REDACTED({len(credentials.token) if credentials.token else 0} chars)"
                 if credentials.token
                 else None,
-                "endpoint_override": fs.s3._endpoint.host if fs.s3._endpoint else None,
+                "endpoint_override": s3._endpoint.host if s3._endpoint else None,
             }
         else:
             # Only return actual credentials when explicitly requested
@@ -39,7 +42,7 @@ def get_credentials_from_fsspec(
                 "access_key": credentials.access_key,
                 "secret_key": credentials.secret_key,
                 "session_token": credentials.token,
-                "endpoint_override": fs.s3._endpoint.host if fs.s3._endpoint else None,
+                "endpoint_override": s3._endpoint.host if s3._endpoint else None,
             }
 
     return {}
@@ -193,6 +196,15 @@ def FileSystem(
     # same_names: bool = False,
     **kwargs,
 ) -> AbstractFileSystem:
+    if (
+        fs is not None
+        and not isinstance(fs, DirFileSystem)
+        and bucket is None
+        and protocol is None
+        and not cached
+    ):
+        return fs
+
     protocol_or_path = protocol
     if protocol is None:
         protocol_or_path = bucket or "file"
@@ -204,7 +216,7 @@ def FileSystem(
 
     return filesystem(
         protocol_or_path=protocol_or_path,
-        base_fs=fs,
+        base_fs=cast(AbstractFileSystem, fs),
         profile=profile,
         key=key,
         endpoint_url=endpoint_url,
@@ -223,5 +235,6 @@ def clear_cache(fs: AbstractFileSystem | None) -> None:
     fs.invalidate_cache()
     fs.clear_instance_cache()
     if hasattr(fs, "fs"):
-        fs.fs.invalidate_cache()
-        fs.fs.clear_instance_cache()
+        nested = cast(Any, fs).fs
+        nested.invalidate_cache()
+        nested.clear_instance_cache()

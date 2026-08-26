@@ -1,0 +1,12 @@
+{
+  "pythonVersion": "3.12",
+  "venvPath": ".",
+  "venv": ".venv",
+  "exclude": [
+    ".pi-subagents",
+    "dist",
+    "graphify-out",
+    "notebooks",
+    "scratch"
+  ]
+}
