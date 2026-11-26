@@ -15,27 +15,15 @@ import pyarrow.dataset as pds
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
 from fsspec import filesystem as fsspec_filesystem
-from fsspec.core import split_protocol
 from loguru import logger
 
 # Local imports
 from .filesystem import clear_cache
 from .helpers.datetime import get_timestamp_column
 from .helpers.polars import pl
+from .helpers.security import strip_protocol as strip_protocol  # noqa: PLC0414
 from .schema import convert_large_types_to_normal, convert_timestamp, replace_schema
 from .table import PydalaTable
-
-
-def strip_protocol(path: str) -> str:
-    """Strips the protocol from a given path.
-
-    Args:
-        path (str): The input path which may contain a protocol.
-    Returns:
-        str: The path without the protocol.
-    """
-    protocol, path = split_protocol(path)
-    return path
 
 
 class PartialWriteError(RuntimeError):

@@ -115,6 +115,9 @@ def get_partitions_from_path(
     return _get_partitions_from_path(path, partitioning)
 
 
+_SIZE_UNITS = ("b", "kb", "mb", "gb", "tb", "pb")
+
+
 def humanize_size(size: int, unit: str = "MB") -> float:
     """Convert bytes to human-readable size in specified unit.
 
@@ -132,12 +135,9 @@ def humanize_size(size: int, unit: str = "MB") -> float:
         raise ValueError("size must be a non-negative integer")
 
     unit = unit.lower()
-    valid_units = ["b", "kb", "mb", "gb", "tb", "pb"]
-    if unit not in valid_units:
-        raise ValueError(f"unit must be one of {valid_units}")
-
-    powers = {"b": 0, "kb": 1, "mb": 2, "gb": 3, "tb": 4, "pb": 5}
-    return round(size / 1024 ** powers[unit], 1)
+    if unit not in _SIZE_UNITS:
+        raise ValueError(f"unit must be one of {list(_SIZE_UNITS)}")
+    return round(size / 1024 ** _SIZE_UNITS.index(unit), 1)
 
 
 def humanized_size_to_bytes(size: str) -> int:
@@ -169,13 +169,10 @@ def humanized_size_to_bytes(size: str) -> int:
     if size_val < 0:
         raise ValueError("size must be a non-negative number")
 
-    valid_units = ["b", "kb", "mb", "gb", "tb", "pb"]
-    if unit not in valid_units:
-        raise ValueError(f"unit must be one of {valid_units}")
-
-    powers = {"b": 0, "kb": 1, "mb": 2, "gb": 3, "tb": 4, "pb": 5}
+    if unit not in _SIZE_UNITS:
+        raise ValueError(f"unit must be one of {list(_SIZE_UNITS)}")
     try:
-        return int(size_val * 1024 ** powers[unit])
+        return int(size_val * 1024 ** _SIZE_UNITS.index(unit))
     except (OverflowError, ValueError) as exc:
         raise ValueError("size must be a finite numeric value") from exc
 

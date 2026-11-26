@@ -20,7 +20,6 @@ import pyarrow as pa
 import pyarrow.dataset as pds
 import tqdm
 from fsspec import AbstractFileSystem
-from fsspec.core import split_protocol
 from fsspec.implementations.dirfs import DirFileSystem
 from fsspeckit.datasets.pyarrow import collect_dataset_stats_pyarrow
 from fsspeckit.core.incremental import MergeResult
@@ -32,6 +31,7 @@ from .helpers.datetime import get_timestamp_column
 from .helpers.security import (
     sanitize_filter_expression,
     safe_join,
+    strip_protocol as strip_protocol,  # noqa: PLC0414
 )
 from .helpers.polars import pl as _pl
 from .io import PartialMergeError, PartialWriteError, Writer, WriterSource
@@ -112,18 +112,6 @@ def _normalize_compaction_sort_by(
             SortKey(column=column, descending=descending, nulls_first=False)
         )
     return sort_keys
-
-
-def strip_protocol(path: str) -> str:
-    """Strips the protocol from a given path.
-
-    Args:
-        path (str): The input path which may contain a protocol.
-    Returns:
-        str: The path without the protocol.
-    """
-    protocol, path = split_protocol(path)
-    return path
 
 
 def _maintenance_to_plain(value: t.Any) -> t.Any:
@@ -391,14 +379,12 @@ class BaseDataset(_DatasetStorage):
         if partitioning is None:
             # try to infer partitioning
             try:
-                if any(["=" in obj for obj in self.fs.ls(self._path)]):
+                if any("=" in obj for obj in self.fs.ls(self._path)):
                     partitioning = "hive"
-            except FileNotFoundError as e:
-                _ = e
+            except FileNotFoundError:
                 partitioning = None
-        else:
-            if partitioning == "ignore":
-                partitioning = None
+        elif partitioning == "ignore":
+            partitioning = None
         self._partitioning = partitioning
 
         if type(self) is BaseDataset:
@@ -492,7 +478,6 @@ class BaseDataset(_DatasetStorage):
                 partitioning=self._partitioning,
             )
             self.table = PydalaTable(result=self._arrow_dataset, ddb_con=self.ddb_con)
-            # self.ddb_con.register("arrow__dataset", self._arrow_parquet_dataset)
 
             if self._timestamp_column is None:
                 self._timestamp_columns = get_timestamp_column(self.table.pl.head(10))
@@ -562,47 +547,18 @@ class BaseDataset(_DatasetStorage):
         return self.table
 
     def count_rows(self) -> int:
-        """
-        Returns the number of rows in the dataset.
-
-        If the dataset is not loaded, it prints an error message and returns 0.
-
-        Returns:
-            int: The number of rows in the dataset.
-        """
-        if self.is_loaded:
-            return self._arrow_dataset.count_rows()
-        else:
-            # print(f"No dataset loaded yet. Run {self}.load()")
-            return 0
+        """Return the row count, or zero if the dataset is not loaded."""
+        return self._arrow_dataset.count_rows() if self.is_loaded else 0
 
     @property
     def num_rows(self) -> int:
-        """
-        Returns the number of rows in the dataset.
-
-        If the dataset is not loaded, it prints an error message and returns 0.
-
-        Returns:
-            int: The number of rows in the dataset.
-        """
+        """Return the row count, or zero if the dataset is not loaded."""
         return self.count_rows()
 
     @property
     def num_columns(self) -> int:
-        """
-        Returns the number of columns in the dataset.
-
-        If the dataset is not loaded, it prints an error message and returns 0.
-
-        Returns:
-            int: The number of columns in the dataset.
-        """
-        if self.is_loaded:
-            return len(self.schema.names)
-        else:
-            # print(f"No dataset loaded yet. Run {self}.load()")
-            return 0
+        """Return the column count, or zero if the dataset is not loaded."""
+        return len(self.schema.names) if self.is_loaded else 0
 
     def delete_files(self, files: str | list[str]):
         """
@@ -616,13 +572,12 @@ class BaseDataset(_DatasetStorage):
         if self._path not in files[0]:
             files = [posixpath.join(self._path, fn) for fn in files]
         self._filesystem.rm(files, recursive=True)
-        # self.load(reload=True)
 
     def vacuum(self) -> None:
-        """Delete all data files in the dataset.
+        """Delete the listed data files and metadata sidecars.
 
-        Removes all parquet data files and metadata sidecars, preserving
-        the directory structure so writes can resume.
+        Call ``load_files()`` first to include files added since the listing
+        was cached. The directory structure is preserved.
         """
         if self.files:
             self.delete_files(self.files)
@@ -794,7 +749,6 @@ class BaseDataset(_DatasetStorage):
         Returns:
             None
         """
-        # self.ddb_con = _duckdb.connect()
         self.interrupt_duckdb()
 
         if f"{self.name}" not in self.registered_tables:
@@ -1104,13 +1058,15 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         schema: pa.Schema | None = None,
         ts_unit: str = "us",
         tz: str | None = None,
-        # use_large_types: bool = False,
         format_version: str = "2.6",
         verbose: bool = False,
         **kwargs,
     ):
         """
         Loads the data from the dataset.
+
+        Updating or rebuilding sidecars can also repair physical Parquet files.
+        This may happen on first load if sidecars are missing.
 
         Args:
             update_metadata (bool, optional): Whether to update the metadata. Defaults to False.
@@ -1150,7 +1106,6 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
 
         self._arrow_dataset = pds.parquet_dataset(
             self._metadata_file,
-            # schema=self._schema,
             partitioning=self._partitioning,
             filesystem=self._filesystem,
         )
@@ -1175,27 +1130,6 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             self._tz = None
 
         self.ddb_con.register(f"{self.name}", self._arrow_dataset)
-
-    # def gen_metadata_table(self):
-    #     """
-    #     Generate the metadata table for the dataset.
-
-    #     This function calls the `gen_metadata_table` method of the `pydala_dataset_metadata` object
-    #     to generate the metadata table for the dataset. It takes two parameters:
-
-    #     - `metadata`: The metadata object containing information about the dataset.
-    #     - `_partitioning`: The partitioning object containing information about the dataset partitioning.
-
-    #     This function does not return anything.
-
-    #     Example usage:
-    #     ```
-    #     self.gen_metadata_table()
-    #     ```
-    #     """
-    #     self.pydala_dataset_metadata.gen_metadata_table(
-    #         self.metadata, self._partitioning
-    #     )
 
     def scan(self, filter_expr: str | None = None) -> PydalaTable:
         """
@@ -1520,18 +1454,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
                     "Parquet files were written, but metadata completion failed.",
                     metadata,
                 ) from exc
-            # self._repair_file_schemas(alter_schema=alter_schema, verbose=verbose)
-            # self._update_metadata()
-            # try:
-            #     self.load(update_metadata=True, verbose=False)
-            # except Exception as e:
-            #     _ = e
-            #     self.load(reload_metadata=True, verbose=False)
-            # self.update_metadata_table()
 
-    # ------------------------------------------------------------------ #
-    # Merge (insert / update / upsert) through fsspeckit
-    # ------------------------------------------------------------------ #
     def _finalize_merge_result(self, result: MergeResult) -> MergeResult:
         """Retain a successful merge result and refresh dataset state."""
         self.last_merge_result = result
@@ -2110,6 +2033,8 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         Without ``sort_by``, only small multi-file partitions are candidates.
         Supplying ``sort_by`` performs a full rewrite of every partition so the
         requested ordering covers all of each partition's output files.
+        Loading metadata before planning can repair physical files, even with
+        ``dry_run=True``, notably when ``sort_by`` is set.
 
         Args:
             max_rows_per_file: Maximum number of rows per output file.
@@ -2119,7 +2044,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             row_group_size: Reserved compatibility option. A non-default value
                 emits a deprecation warning because fsspeckit manages row groups.
             unique: Whether to remove duplicate rows.
-            dry_run: When ``True``, return compaction plans without mutating files.
+            dry_run: When ``True``, return plans without publishing compaction.
             **kwargs: Unsupported options raise ``TypeError``.
 
         Returns:
@@ -2192,7 +2117,6 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
 
     def compact_small_files(self) -> None:
         """Placeholder for compacting small files across partitions."""
-        pass
 
     def _compact_by_timeperiod(
         self,
@@ -2496,7 +2420,7 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         tz: str | None = None,
         infer_schema_size: int = 10_000,
     ) -> pa.Schema:
-        """Infer the approved physical schema before any maintenance mutation."""
+        """Infer the target schema from the loaded table, loading it if needed."""
         if self.table is None:
             self.load()
         proposal = (
@@ -2555,8 +2479,9 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         narrowing must be value-preserving across the full physical dataset.
         ``strict=False`` maps to ``loose``; fsspeckit still validates every
         cast before publication and retains recovery artifacts on failure.
-        With ``dry_run=True``, return the immutable coordinated rewrite plan
-        without changing files or managed metadata.
+        With ``dry_run=True``, return the coordinated rewrite plan without
+        publishing it. If no table is loaded, preparing the plan calls
+        ``load()``, which can repair files when sidecars are missing.
 
         The legacy ``max_rows_per_file`` spelling remains supported as an
         alias for ``target_rows_per_file``. Other write-only keyword options
@@ -2766,7 +2691,6 @@ class JSONDataset(BaseDataset):
         self.table = PydalaTable(result=self._arrow_dataset, ddb_con=self.ddb_con)
 
         self.ddb_con.register(f"{self.name}", self._arrow_dataset)
-        # self.ddb_con.register("arrow__dataset", self._arrow_parquet_dataset)
 
         if self._timestamp_column is None:
             self._timestamp_columns = get_timestamp_column(self.table.pl.head(10))
@@ -2781,5 +2705,3 @@ class Optimize(ParquetDataset):
     :class:`ParquetDataset` per ADR 0001. This class is retained solely
     for backward-compatible imports (``from pydala.dataset import Optimize``).
     """
-
-    pass

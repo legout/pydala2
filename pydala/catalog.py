@@ -19,7 +19,6 @@ from .helpers.sql import get_table_names
 from .table import PydalaTable
 
 
-# @dataclass
 class Catalog:
     """A catalog for managing datasets and their configurations.
 
@@ -70,43 +69,22 @@ class Catalog:
         self._load_filesystems()
         self.table = {}
 
-    def load_catalog(self, namespace: str | None = None) -> Munch:
-        """Load catalog configuration from YAML file.
+    def load_catalog(self, namespace: str | None = None) -> None:
+        """Reload YAML into `self.params` without reloading filesystems or tables.
 
         Args:
-            namespace: If specified, loads only tables from this namespace.
-
-        Returns:
-            The loaded catalog configuration as a Munch object.
-
-        Raises:
-            FileNotFoundError: If the catalog file doesn't exist.
-            yaml.YAMLError: If the catalog file is invalid YAML.
-
-        Note:
-            The catalog structure should follow the format:
-                tables:
-                    namespace1:
-                        table1:
-                            path: /path/to/table1
-                            format: parquet
-                            options: {...}
-                    namespace2:
-                        ...
+            namespace: If supplied, scope `params.tables` to this namespace.
         """
         with self._catalog_filesystem.open(self._catalog_path, "r") as f:
             catalog = munchify(yaml.full_load(f))
 
-        for ns in catalog.tables.keys():
+        for ns in catalog.tables:
             if catalog.tables[ns] is None:
                 catalog.tables[ns] = Munch()
 
         self.params = catalog
-
         if namespace is not None:
             self.params.tables = self.params.tables[namespace]
-        else:
-            self.params.tables = self.params.tables
 
     def _write_catalog(self, delete_table: str = None) -> None:
         """Write the catalog configuration to disk.
@@ -164,23 +142,6 @@ class Catalog:
                 self.fs[name] = fs
         else:
             self.fs = None
-
-    # def _get_table_from_table_name(self, table_name: str) -> list[str]:
-    #    table_name_items = table_name.split(".")
-
-    # @staticmethod
-    # def _get_table_from_table_name(self, table_name: str) -> str:
-    #     table_name_items = table_name.split(".")
-
-    #     if table_name_items[0] in self.list_namespaces:
-    #         table_name_items.insert(1, "tables")
-    #         return ".".join(table_name_items)
-
-    #     if self._namespace is not None:
-    #         table_name_items = [self._namespace, "tables"] + table_name_items
-    #         return ".".join(table_name_items)
-
-    #     return ".".join(table_name_items)
 
     def _get_table_params(self, table_name: str) -> Munch:
         """Get parameters for a specific table.
@@ -510,13 +471,6 @@ class Catalog:
             if table_name not in self.table and not reload:
                 self.table[table_name] = self.load_json(table_name, **kwargs)
             return self.table[table_name]
-
-        # return None
-
-    # def _ddb_table_mapping(self, table_name: str):
-    #     params = getattr_rec(self._catalog, self._get_table_from_table_name(table_name=table_name))
-
-    #     return {table_name: [params.path, params.format, params.hive_partitioning]}
 
     @property
     def registered_tables(self) -> duckdb.DuckDBPyRelation:

@@ -8,7 +8,6 @@ import pyarrow.compute as pc
 import pyarrow.fs as pfs
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
-from fsspec.core import split_protocol
 from fsspeckit.datasets.schema import (
     cast_schema as _fsspeckit_cast_schema,
     convert_large_types_to_normal,
@@ -16,18 +15,7 @@ from fsspeckit.datasets.schema import (
 )
 from fsspeckit.common.parallel import run_parallel as _fsspeckit_run_parallel
 from .helpers.misc import read_table, unify_schemas_pl
-
-
-def strip_protocol(path: str) -> str:
-    """Strips the protocol from a given path.
-
-    Args:
-        path (str): The input path which may contain a protocol.
-    Returns:
-        str: The path without the protocol.
-    """
-    protocol, path = split_protocol(path)
-    return path
+from .helpers.security import strip_protocol as strip_protocol  # noqa: PLC0414
 
 
 def sort_schema(schema: pa.Schema, names: list[str] | None = None) -> pa.Schema:
@@ -48,23 +36,6 @@ def sort_schema(schema: pa.Schema, names: list[str] | None = None) -> pa.Schema:
     return pa.schema(
         [pa.field(name, type_) for name, type_ in sorted(zip(names, schema.types))]
     )
-
-
-# def shrink_large_string(schema: pa.Schema) -> pa.Schema:
-#     """Convert all large_string types to string in a pyarrow.schema.
-
-#     Args:
-#         schema (pa.Schema): pyarrow schema
-
-#     Returns:
-#         pa.Schema: converted pyarrow.schema
-#     """
-#     return pa.schema(
-#         [
-#             (n, pa.utf8()) if t == pa.large_string() else (n, t)
-#             for n, t in list(zip(schema.names, schema.types))
-#         ]
-#     )
 
 
 def convert_timestamp(
@@ -289,8 +260,6 @@ def replace_schema(
     table = cast_str2bool(table, schema=schema)
 
     return table.select(schema.names).cast(schema)
-
-    # return table.select(schema.names)
 
 
 _LEGACY_PROMOTION_TYPES_LIST = (

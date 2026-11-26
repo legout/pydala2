@@ -125,7 +125,13 @@ After a successful merge, the same `ParquetDataset` instance is refreshed and im
 
 A physical merge can succeed even if the following metadata refresh fails. In that case pydala raises `PartialMergeError` and preserves the successful result on both `error.merge_result` and `dataset.last_merge_result`.
 
-Do not repeat the merge: its file changes already succeeded. Record the retained result, then retry the dataset refresh with `dataset.load(update_metadata=True, reload_metadata=True)` or reconstruct the dataset instance from the same path and filesystem.
+Do not repeat the merge: its file changes already succeeded. Record the
+retained result and address the cause of the refresh error. If Parquet
+files remain, [rebuild the sidecars](metadata.md#refresh-after-external-changes)
+with `dataset.load(reload_metadata=True)` only if you can allow physical
+schema repair.
+Simply reopening the dataset can reuse stale sidecars. Verify the merged
+rows are visible before resuming reads or writes.
 
 ## Migrate from `mode="delta"`
 

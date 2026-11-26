@@ -191,9 +191,6 @@ def FileSystem(
     cached: bool = False,
     cache_storage="~/.tmp",
     check_files: bool = False,
-    # cache_check: int = 120,
-    # expire_time: int = 24 * 60 * 60,
-    # same_names: bool = False,
     **kwargs,
 ) -> AbstractFileSystem:
     if fs is None and bucket is None and protocol in (None, "file", "local"):
@@ -214,14 +211,12 @@ def FileSystem(
     ):
         return fs
 
-    protocol_or_path = protocol
     if protocol is None:
         protocol_or_path = bucket or "file"
+    elif bucket is None:
+        protocol_or_path = protocol
     else:
-        if bucket is None:
-            protocol_or_path = protocol
-        else:
-            protocol_or_path = f"{protocol}://{bucket}"
+        protocol_or_path = f"{protocol}://{bucket}"
 
     return filesystem(
         protocol_or_path=protocol_or_path,

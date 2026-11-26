@@ -1,525 +1,78 @@
 # Performance Optimization
 
-This guide covers techniques and best practices for optimizing PyDala2 performance based on the actual features available in the library.
-
-## Understanding Performance Factors
-
-PyDala2's performance depends on several factors:
-
-1. **Data Layout**: How your data is partitioned and organized
-2. **File Format**: Parquet compression and encoding settings
-3. **Caching**: Built-in filesystem caching for remote storage
-4. **Query Patterns**: How you filter and access data
-5. **Automatic Backend Selection**: Letting PyDala2 choose the optimal engine
+Start with the slow query or write. Measure elapsed time, files read or produced,
+and peak memory before changing the layout.
 
 ## Partitioning Strategies
 
-### Effective Partitioning with write_to_dataset
+Use Hive partitions for columns you filter on often. Supply the partition
+columns in the input, as shown in [Partitioned Writes](basic-usage.md#partitioned-writes).
+Avoid high-cardinality keys that turn one write into many tiny files.
 
-```python
-from pydala import ParquetDataset
-import polars as pl
-
-dataset = ParquetDataset("data/sales")
-
-# Good partitioning - low cardinality, frequently filtered
-dataset.write_to_dataset(
-    data,
-    partition_by=["year", "month", "region"],
-    max_rows_per_file=1_000_000
-)
-
-# Avoid high-cardinality partitioning
-# Bad: partition_by=["user_id", "timestamp"]
-```
-
-### Time-based Partitioning
-
-```python
-# Time-based partitioning (common pattern)
-dataset.write_to_dataset(
-    time_series_data,
-    partition_by=["year", "month", "day"],
-    timestamp_column="created_at",
-    max_rows_per_file=500_000
-)
-
-# Hierarchical partitioning
-dataset.write_to_dataset(
-    data,
-    partition_by=["region", "category"],
-    sort_by="date DESC"
-)
-```
-
-### Analyzing Partitions
-
-```python
-# Check partition information
-print(f"Partition columns: {dataset.partition_names}")
-print(f"Partition values: {dataset.partition_values}")
-
-# Access partitions data
-if dataset.partitions is not None:
-    print(f"Number of partitions: {len(dataset.partitions)}")
-```
+For new writes, set `max_rows_per_file`, `row_group_size`, and `compression`
+on `write_to_dataset()`. Test these settings on representative data instead
+of assuming a fixed number of rows fits every schema.
 
 ## Compaction Operations
 
 ### Compacting Small Files
 
+Use `dry_run=True` to see the compaction plan without publishing it. Even
+without sorting, the call loads the dataset first. If sidecars are missing,
+that load can repair physical Parquet files.
+
 ```python
-# Ordinary compaction only combines files; it does not impose a business order.
-dataset.compact_partitions(
+plan = dataset.compact_partitions(
     max_rows_per_file=1_000_000,
     compression="zstd",
     unique=False,
-)
-
-# Deduplication chooses its own winner order; it is not a business-ordering tool.
-dataset.compact_partitions(
-    max_rows_per_file=1_000_000,
-    compression="zstd",
-    unique=True,
-)
-
-# Ordered compaction applies the requested business order within each partition.
-dataset.compact_partitions(
-    max_rows_per_file=1_000_000,
-    sort_by="date DESC",
-    compression="zstd",
-    unique=False,
-)
-
-# Compact by time period (useful for time series)
-dataset.compact_by_timeperiod(
-    interval="1 month",  # Can be string or timedelta
-    timestamp_column="created_at",
-    max_rows_per_file=500_000,
-    sort_by="created_at"
-)
-
-# Compact based on row count
-dataset.compact_by_rows(
-    max_rows_per_file=2_000_000,
-    sort_by="id",
-    unique=False
+    dry_run=True,
 )
 ```
 
-Ordinary compaction is unordered. Supplying `sort_by` selects ordered
-compaction, which preserves the requested business order within a partition
-and across its output files. Deduplication (`unique=True`) chooses winners
-without a business-ordering guarantee and cannot be combined with ordered
-compaction; choose the deduplication result first, then run a separate ordered
-compaction when business ordering matters.
+Omit `dry_run=True` to apply the operation. Ordinary compaction considers
+small partitions with multiple files. Specify `unique=False` to preserve
+duplicate rows. Deduplication (`unique=True`) does not guarantee business
+order and cannot be combined with `sort_by`.
 
-For partitioned datasets, ordered compaction rewrites every physical partition,
-including single-file or oversized partitions, so it can establish a complete
-order across each partition's output files.
+Ordered compaction with `sort_by` and `unique=False` can rewrite every
+physical partition, including single-file or oversized partitions, so that
+order holds within each partition and across its output files. With `sort_by`,
+the call refreshes metadata before planning, which can repair physical files
+even during a dry run.
+
+Use `compact_partitions()` on date-based Hive partitions for time-series data.
+`compact_by_timeperiod()` without `sort_by` currently expects a
+`<dataset name>_metadata` DuckDB relation that normal dataset loading does not
+create. Supplying `sort_by` instead delegates to ordered partition compaction
+and ignores the time interval.
 
 ### Coordinated Rewrite Guarantees
 
-Compaction, repartitioning, and dtype publication delegate physical rewrites to
-fsspeckit's plan → stage → validate → publish lifecycle. A `dry_run=True` plan
-shows the selected `guarantee_level` before mutation.
-
-- Native local/POSIX filesystems use `atomic_local` publication. Cooperating
-  fsspeckit readers and writers observe a completed rewrite rather than a
-  partially swapped dataset; direct external file readers are outside that
-  coordination guarantee.
-- Other fsspec filesystems use `best_effort_object_store` publication. Staged
-  output is validated before copying, but there is no generic distributed lock,
-  atomic reader visibility, or automatic rollback. Failed results retain
-  recovery details for operator cleanup.
-
-`repartition()` and `optimize_dtypes()` return a plain representation of the
-fsspeckit maintenance result, including validation, publication, recovery, and
-actual metrics. The compatibility compaction methods retain their `None`
-success return; on failure they raise an error with recovery details and do not
-refresh Pydala metadata as successful.
+See [Coordinated maintenance guarantees](../api/core.md#coordinated-maintenance-guarantees)
+for local and object-store publication, recovery, and metadata refresh.
+A dry run shows which guarantee applies to the target filesystem.
 
 ### Repartitioning Data
 
-`repartition` delegates the physical rewrite to fsspeckit's coordinated
-maintenance operation. It preserves every row, including exact duplicates, and
-refreshes the same dataset instance only after a successful publication.
-
-```python
-# Review the immutable repartition plan without writing data.
-plan = dataset.repartition(
-    partitioning_columns=["year", "quarter", "region"],
-    max_rows_per_file=1_000_000,
-    compression="zstd",
-    dry_run=True,
-)
-
-# Apply the repartition after reviewing the plan.
-result = dataset.repartition(
-    partitioning_columns=["year", "quarter", "region"],
-    max_rows_per_file=1_000_000,
-    compression="zstd",
-)
-```
-
-Only Hive layouts are supported. `sort_by` is rejected rather than silently
-ignored; use ordered compaction after repartitioning. `unique=True` is a
-deprecated compatibility mode that performs explicit global deduplication
-before repartitioning—prefer a named deduplication step when that behavior is
-intended.
+Use [repartition](../api/core.md#repartition) to change the Hive layout. It
+preserves duplicates by default; `sort_by` is rejected. Use ordered
+compaction separately if physical sort order matters.
 
 ## Data Type Optimization
 
-### Automatic Type Optimization
-
-```python
-# Optimize data types to reduce storage size
-dataset.optimize_dtypes(
-    exclude=["id"],  # Don't optimize ID columns
-    strict=True,    # Use strict type inference
-    include=None,   # Or specify columns to include
-    ts_unit="ms",   # Convert timestamps to milliseconds
-    tz="UTC"        # Set timezone for timestamp columns
-)
-
-# This automatically:
-# - Converts int64 to int32/int16 where possible
-# - Converts float64 to float32 where precision allows
-# - Converts strings to categorical for low cardinality
-# - Optimizes timestamp precision
-```
-
-### Manual Type Optimization
-
-```python
-# Get current schema
-print(f"Current schema: {dataset.schema}")
-
-# Write with optimized types
-data = data.with_columns([
-    pl.col("price").cast(pl.Float32),
-    pl.col("quantity").cast(pl.Int32),
-    pl.col("category").cast(pl.Categorical),
-    pl.col("timestamp").dt.convert_time_zone("UTC")
-])
-
-dataset.write_to_dataset(
-    data,
-    partition_by=["category"],
-    max_rows_per_file=1_000_000,
-    compression="zstd"
-)
-```
-
-## Write Performance Optimization
-
-### Optimal Write Settings
-
-```python
-# Write with performance settings
-dataset.write_to_dataset(
-    data,
-    partition_by=["region", "category"],
-    max_rows_per_file=1_000_000,    # Target 1M rows per file
-    row_group_size=250_000,        # 250K rows per row group
-    compression="zstd",            # Best compression ratio
-    sort_by="date DESC",           # Pre-sort for query performance
-    unique=True                    # Remove duplicates
-)
-```
-
-### Compression Comparison
-
-```python
-import time
-import os
-
-# Test different compression settings
-compressions = ["snappy", "gzip", "zstd", "brotli"]
-
-for comp in compressions:
-    test_dataset = ParquetDataset(f"data/test_{comp}")
-
-    start = time.time()
-    test_dataset.write_to_dataset(
-        data,
-        compression=comp,
-        max_rows_per_file=100_000
-    )
-    write_time = time.time() - start
-
-    # Read performance
-    start = time.time()
-    df = test_dataset.table.pl.collect()
-    read_time = time.time() - start
-
-    # Calculate size
-    size = sum(
-        os.path.getsize(os.path.join(test_dataset.path, f))
-        for f in test_dataset.files
-    )
-
-    print(f"{comp:10} | Size: {size/1024/1024:6.1f} MB | "
-          f"Write: {write_time:4.2f}s | Read: {read_time:4.2f}s")
-
-    # Clean up
-    test_dataset.vacuum()
-```
-
-## Caching for Remote Storage
-
-### Enabling Caching
-
-```python
-# Enable caching for remote filesystems
-s3_dataset = ParquetDataset(
-    "s3://my-bucket/data",
-    bucket="my-bucket",
-    key="your-access-key",
-    secret="your-secret-key",
-    cached=True,  # Enable caching
-    cache_storage="/tmp/pydala_cache"  # Local cache directory
-)
-
-# Cache is automatically used for reads
-data = s3_dataset.table.pl.collect()  # First read - from S3
-data = s3_dataset.table.pl.collect()  # Subsequent reads - from cache
-```
-
-### Cache Management
-
-```python
-# Clear cache (useful when data changes)
-dataset.clear_cache()
-
-# Cache is automatically managed:
-# - Files are cached on first read
-# - Cache respects file modifications
-# - Cache size depends on available disk space
-```
+Use [optimize_dtypes](../api/core.md#optimize_dtypes) to preview a narrower
+schema. The default strict policy requires value-preserving casts. Review the
+proposed schema before publishing it.
 
 ## Query Optimization
 
-### Automatic Backend Selection
-
-PyDala2 automatically chooses the best backend for your queries:
-
-```python
-# Simple filters use PyArrow (fast scanning)
-simple_result = dataset.filter("region = 'US'")
-
-# Complex filters automatically use DuckDB
-complex_result = dataset.filter("""
-    region IN ('US', 'EU')
-    AND amount > 1000
-    AND customer_id IN (SELECT id FROM premium_customers)
-""")
-
-# Both return PydalaTable objects
-df = simple_result.collect()  # Polars DataFrame
-```
-
-### Filter Pushdown
-
-```python
-# Filters are automatically pushed down when possible
-# Only reads relevant partitions and rows
-result = dataset.filter("""
-    year = 2023
-    AND month IN (1, 2, 3)
-    AND amount > 100
-""")
-
-# For partitioned datasets, this automatically prunes partitions
-```
-
-### Column Pruning
-
-```python
-# Only select needed columns
-result = dataset.ddb_con.sql("""
-    SELECT id, name, email, amount
-    FROM dataset
-    WHERE date >= '2023-01-01'
-""").pl()  # Convert to Polars
-```
-
-### Using DuckDB for Complex Queries
-
-```python
-# Complex aggregations
-agg_result = dataset.ddb_con.sql("""
-    SELECT
-        region,
-        category,
-        COUNT(*) as order_count,
-        SUM(amount) as total_revenue,
-        AVG(amount) as avg_order,
-        MIN(amount) as min_order,
-        MAX(amount) as max_order
-    FROM dataset
-    WHERE date >= '2023-01-01'
-    GROUP BY region, category
-    HAVING COUNT(*) > 100
-    ORDER BY total_revenue DESC
-""").pl()
-
-# Window functions
-window_result = dataset.ddb_con.sql("""
-    SELECT
-        order_id,
-        customer_id,
-        order_date,
-        amount,
-        ROW_NUMBER() OVER (
-            PARTITION BY customer_id
-            ORDER BY order_date
-        ) as order_number,
-        LAG(amount, 1) OVER (
-            PARTITION BY customer_id
-            ORDER BY order_date
-        ) as prev_amount
-    FROM dataset
-""").pl()
-```
-
-## Performance Monitoring
-
-### Using EXPLAIN
-
-```python
-# Get query execution plan
-plan = dataset.ddb_con.sql("""
-    EXPLAIN SELECT category, AVG(amount)
-    FROM dataset
-    WHERE date >= '2023-01-01'
-    GROUP BY category
-""").fetchall()
-
-print("Execution plan:")
-for row in plan:
-    print(row[0])
-```
-
-### Dataset Statistics
-
-```python
-# Basic statistics
-print(f"Total rows: {dataset.count_rows()}")
-print(f"Number of files: {len(dataset.files)}")
-print(f"Schema: {dataset.schema}")
-
-# For partitioned datasets
-if dataset.partitions is not None:
-    print(f"Partitions: {dataset.partitions}")
-```
-
-### Memory Management
-
-```python
-# Process large datasets in chunks using DuckDB
-batch_size = 100000
-offset = 0
-
-while True:
-    batch = dataset.ddb_con.sql(f"""
-        SELECT * FROM dataset
-        ORDER BY id
-        LIMIT {batch_size} OFFSET {offset}
-    """).pl()
-
-    if len(batch) == 0:
-        break
-
-    process_batch(batch)
-    offset += batch_size
-
-# Clear memory
-del batch
-```
-
-## Common Performance Patterns
-
-### Time Series Optimization
-
-```python
-# Optimal time series layout
-time_dataset = ParquetDataset("data/metrics")
-time_dataset.write_to_dataset(
-    metrics_data,
-    partition_by=["metric_name", "year", "month", "day"],
-    timestamp_column="timestamp",
-    max_rows_per_file=86400,  # One day of minute data
-    sort_by="timestamp"
-)
-
-# Fast time range queries with automatic partition pruning
-result = time_dataset.filter("""
-    metric_name = 'cpu_usage'
-    AND timestamp BETWEEN '2023-01-01' AND '2023-01-31'
-""")
-
-# Compact old time series data
-time_dataset.compact_by_timeperiod(
-    interval="1 month",
-    timestamp_column="timestamp",
-    max_rows_per_file=5_000_000
-)
-```
-
-### Large Dataset Processing
-
-```python
-# Write in batches for very large datasets
-def write_large_dataset(dataset, large_df, batch_size=1_000_000):
-    """Write large DataFrame in batches"""
-    total_rows = len(large_df)
-
-    for i in range(0, total_rows, batch_size):
-        batch = large_df.slice(i, batch_size)
-
-        dataset.write_to_dataset(
-            batch,
-            mode="append",
-            partition_by=["batch_id", "date"],
-            update_metadata=(i + batch_size >= total_rows)
-        )
-
-        print(f"Written batch {i//batch_size + 1}")
-
-# Usage
-write_large_dataset(dataset, very_large_dataframe)
-```
-
-### Schema Evolution Performance
-
-```python
-# Add new columns efficiently
-new_data = existing_data.with_columns([
-    (pl.col("amount") * 0.1).alias("tax"),
-    (pl.col("amount") * 1.1).alias("total_with_tax")
-])
-
-# Use alter_schema for schema evolution
-dataset.write_to_dataset(
-    new_data,
-    mode="append",
-    alter_schema=True,
-    partition_by=["category"]
-)
-```
-
-## Performance Checklist
-
-- [ ] Partition on low-to-medium cardinality columns (100-1000 values)
-- [ ] Use appropriate compression (zstd recommended for best ratio)
-- [ ] Set optimal file sizes (1M rows per file typical)
-- [ ] Configure row group size (250K rows per group typical)
-- [ ] Enable caching for remote filesystems
-- [ ] Use `compact_partitions()` for many small files
-- [ ] Run `optimize_dtypes()` to reduce storage
-- [ ] Pre-sort data on frequently queried columns
-- [ ] Let PyDala2 automatically select backends
-- [ ] Use partition pruning in filters
-- [ ] Monitor file sizes and compact regularly
-- [ ] Use time-based compaction for time series data
+- Filter and project before exporting. For large outputs, consume
+  [batches](../api/table.md) instead of collecting the full result.
+- In DuckDB, use `EXPLAIN` with the registered dataset name to inspect the
+  query plan. Use `dataset.count_rows()` and `dataset.files` to check the
+  size and layout of the input.
+- Measure before enabling filesystem caching for repeated remote reads. See
+  [Deployment](../advanced/deployment.md) for configuration and connection
+  memory limits, and [Performance Tuning](../advanced/performance-tuning.md)
+  for a tuning workflow.

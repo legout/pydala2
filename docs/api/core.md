@@ -1,667 +1,77 @@
 # Core Classes
 
-This document describes the core classes that form the foundation of PyDala2.
-
 ## BaseDataset
 
-```python
-class BaseDataset
-```
-
-The `BaseDataset` class provides the foundation for all dataset operations in PyDala2. It implements common functionality for working with datasets across different file formats using a dual-engine architecture (PyArrow + DuckDB).
-
-### Constructor
-
-```python
-BaseDataset(
-    path: str,
-    name: str | None = None,
-    schema: pa.Schema | None = None,
-    filesystem: AbstractFileSystem | None = None,
-    bucket: str | None = None,
-    partitioning: str | list[str] | None = None,
-    format: str | None = "parquet",
-    cached: bool = False,
-    timestamp_column: str | None = None,
-    ddb_con: duckdb.DuckDBPyConnection | None = None,
-    **fs_kwargs
-) -> None
-```
-
-**Parameters:**
-- `path` (str): The path to the dataset
-- `name` (str, optional): The name of the dataset. If None, uses basename of path
-- `schema` (pa.Schema, optional): The schema for the dataset. If None, inferred from data
-- `filesystem` (AbstractFileSystem, optional): The filesystem to use for data access
-- `bucket` (str, optional): The bucket name for cloud storage
-- `partitioning` (str | list[str], optional): The partitioning scheme ('hive', 'ignore', or list of columns)
-- `format` (str, optional): The file format ('parquet', 'csv', 'json')
-- `cached` (bool): Whether to use caching for filesystem operations
-- `timestamp_column` (str, optional): The column to use as timestamp for time operations
-- `ddb_con` (duckdb.DuckDBPyConnection, optional): Existing DuckDB connection
-- `**fs_kwargs`: Additional arguments for filesystem configuration
-
-**Example:**
-```python
-from pydala import BaseDataset
-import pyarrow as pa
-
-# Define schema
-schema = pa.schema([
-    ('id', pa.int64()),
-    ('name', pa.string()),
-    ('value', pa.float64())
-])
-
-# Create dataset
-dataset = BaseDataset(
-    path="data/my_dataset",
-    schema=schema,
-    partitioning=['year', 'month'],
-    cached=True
-)
-```
-
-### Properties
-
-#### path
-```python
-@property
-def path(self) -> str
-```
-Get the path of the dataset.
-
-**Returns:**
-- `str`: The path to the dataset
-
-#### name
-```python
-@property
-def name(self) -> str
-```
-Get the name of the dataset.
-
-**Returns:**
-- `str`: The dataset name
-
-#### table
-```python
-@property
-def table(self) -> PydalaTable
-```
-Get the PydalaTable for data operations.
-
-**Returns:**
-- `PydalaTable`: The table interface for data export and operations
-
-**Example:**
-```python
-# Access the table interface
-table = dataset.table
-
-# Export to Polars
-df = table.to_polars()
-
-# Use shortcut notation
-df = dataset.t.to_polars()  # Same as above
-```
-
-#### t
-```python
-@property
-def t(self) -> PydalaTable
-```
-Shortcut property for accessing the table interface.
-
-**Returns:**
-- `PydalaTable`: The table interface
-
-#### ddb_con
-```python
-@property
-def ddb_con(self) -> duckdb.DuckDBPyConnection
-```
-Get the DuckDB connection for SQL operations.
-
-**Returns:**
-- `duckdb.DuckDBPyConnection`: The DuckDB connection
-
-#### schema
-```python
-@property
-def schema(self) -> pa.Schema
-```
-Get the schema of the dataset.
-
-**Returns:**
-- `pa.Schema`: The schema of the dataset
-
-#### files
-```python
-@property
-def files(self) -> list[str]
-```
-Get a list of files in the dataset.
-
-**Returns:**
-- `list[str]`: List of file paths
-
-#### columns
-```python
-@property
-def columns(self) -> list[str]
-```
-Get a list of column names.
-
-**Returns:**
-- `list[str]`: List of column names
-
-#### partitions
-```python
-@property
-def partitions(self) -> list[str]
-```
-Get partition information for the dataset.
-
-**Returns:**
-- `list[str]`: List of partition values
-
-#### metadata_file
-```python
-@property
-def metadata_file(self) -> str | None
-```
-Get the path to the metadata file if it exists.
-
-**Returns:**
-- `str | None`: Path to the _metadata file or None
-
-### Methods
-
-#### load
-```python
-def load(self) -> None
-```
-Load the dataset from the specified path and initialize the PydalaTable.
-
-This method creates a PyArrow dataset from the files at the specified path, initializes a PydalaTable for data operations, and registers the dataset with DuckDB for SQL queries.
-
-**Example:**
-```python
-dataset = BaseDataset("data/existing_dataset")
-dataset.load()
-```
-
-#### exists
-```python
-def exists(self) -> bool
-```
-Check if the dataset exists.
-
-**Returns:**
-- `bool`: True if the dataset exists, False otherwise
-
-**Example:**
-```python
-if dataset.exists():
-    print(f"Dataset found with {dataset.count_rows()} rows")
-```
-
-#### count_rows
-```python
-def count_rows(self) -> int
-```
-Returns the number of rows in the dataset.
-
-**Returns:**
-- `int`: The number of rows in the dataset
-
-#### filter
-```python
-def filter(self, filters: str) -> BaseDataset
-```
-Filter the dataset using the specified filters.
-
-**Parameters:**
-- `filters` (str): Filter expression
-
-**Returns:**
-- `BaseDataset`: A new dataset instance with the filters applied
-
-**Example:**
-```python
-# Filter dataset
-filtered = dataset.filter("date > '2023-01-01' AND category IN ('A', 'B')")
-
-# Export filtered data
-result = filtered.table.to_polars()
-```
-
-#### scan
-```python
-def scan(self, filters: str | None = None) -> pa.dataset.Scanner
-```
-Create a scanner for efficient data access.
-
-**Parameters:**
-- `filters` (str, optional): Filter expression
-
-**Returns:**
-- `pa.dataset.Scanner`: A PyArrow dataset scanner
-
-**Example:**
-```python
-# Create scanner
-scanner = dataset.scan("value > 100")
-
-# Read data in batches
-for batch in scanner.to_batches():
-    process_batch(batch)
-```
-
-#### clear_cache
-```python
-def clear_cache(self) -> None
-```
-Clear the cache for the dataset.
-
-This method clears the cache for both the filesystem and base filesystem.
-
-#### delete_files
-```python
-def delete_files(self, files: str | list[str]) -> None
-```
-Delete specified files from the dataset.
-
-**Parameters:**
-- `files` (str | list[str]): The file(s) to be deleted
-
-**Example:**
-```python
-# Delete specific files
-dataset.delete_files(["data/file1.parquet", "data/file2.parquet"])
-
-# Delete all files
-dataset.delete_files(dataset.files)
-```
-
-#### vacuum
-```python
-def vacuum(self) -> None
-```
-Delete all files in the dataset.
-
-This method removes all files from the dataset directory but keeps the directory structure intact.
-
-## Optimize
-
-```python
-class Optimize
-```
-
-The `Optimize` class provides dataset optimization and compaction operations.
-
-### Methods
-
-#### compact_partitions
-```python
-def compact_partitions(self, target_file_size: int | None = None) -> None
-```
-Compact partitions within the dataset.
-
-**Parameters:**
-- `target_file_size` (int, optional): Target size for compacted files in bytes
-
-**Example:**
-```python
-# Compact partitions with default size
-dataset.optimize.compact_partitions()
-
-# Compact with specific target size
-dataset.optimize.compact_partitions(target_file_size=100 * 1024 * 1024)  # 100MB
-```
-
-#### compact_by_timeperiod
-```python
-def compact_by_timeperiod(
-    self,
-    timestamp_column: str,
-    timeperiod: str = "day",
-    target_file_size: int | None = None
-) -> None
-```
-Compact data by time period.
-
-**Parameters:**
-- `timestamp_column` (str): Column containing timestamps
-- `timeperiod` (str): Time period for compaction ('day', 'week', 'month', 'year')
-- `target_file_size` (int, optional): Target size for compacted files
-
-**Example:**
-```python
-# Compact by month
-dataset.optimize.compact_by_timeperiod(
-    timestamp_column="date",
-    timeperiod="month"
-)
-```
-
-#### compact_by_rows
-```python
-def compact_by_rows(self, target_rows: int) -> None
-```
-Compact data to achieve target row count per file.
-
-**Parameters:**
-- `target_rows` (int): Target number of rows per file
-
-**Example:**
-```python
-# Compact to 1M rows per file
-dataset.optimize.compact_by_rows(target_rows=1000000)
-```
-
-#### Coordinated maintenance guarantees
-
-Physical Parquet rewrites use fsspeckit's plan → stage → validate → publish
-lifecycle. `dry_run=True` exposes a plain immutable plan with its
-`guarantee_level`. Native local/POSIX filesystems report `atomic_local` for
+`BaseDataset` implements storage and table access for the
+[dataset classes](datasets.md). For most workflows, use the class for your
+type of input.
+
+| Member | Meaning |
+| --- | --- |
+| `path`, `name` | Dataset path and name. The name defaults to the last component of the path. |
+| `table`, `t` | The loaded `PydalaTable`, or `None` before loading. |
+| `ddb_con` | The DuckDB connection; the dataset registers its table by name. |
+| `schema`, `columns` | The loaded schema and column names. |
+| `files`, `has_files` | The cached input file list and whether it is nonempty. Call `load_files()` to rescan. |
+| `partition_names`, `partitions` | Hive partition column names and an Arrow table of partition values, when available. |
+| `count_rows()` | Row count, or zero if not loaded. |
+| `filter(expr, use="auto")` | A `PydalaTable` with matching rows. |
+| `clear_cache()` | Invalidate the dataset's filesystem caches. |
+
+`ParquetDataset.vacuum()` deletes the Parquet files in `dataset.files` and the
+metadata sidecars, not just obsolete files. Stop other writers and call
+`dataset.load_files()` before vacuuming to empty the dataset; a cached listing
+can omit files added by another writer.
+
+## Parquet maintenance
+
+Call maintenance methods directly on `ParquetDataset`. The `Optimize`
+subclass remains available through `pydala.dataset` for compatibility.
+
+| Method | Purpose |
+| --- | --- |
+| `compact_partitions(max_rows_per_file=...)` | Compact eligible Hive partitions. |
+| `compact_by_rows(max_rows_per_file=...)` | Compact files to a row limit; delegates to partition compaction for partitioned data. |
+
+See [Performance Optimization](../user-guide/performance.md#compacting-small-files)
+for deduplication, ordering, and time-period compaction limitations.
+
+### Coordinated maintenance guarantees
+
+Compaction, repartitioning, and `optimize_dtypes()` use fsspeckit's
+plan → stage → validate → publish lifecycle for their rewrites.
+Use `dry_run=True` to inspect the upstream plan, including its `guarantee_level`. Native local/POSIX filesystems report `atomic_local` for
 cooperating fsspeckit access; other fsspec filesystems report
 `best_effort_object_store`, which has no portable distributed lock, atomic
 reader visibility, or automatic rollback. Failed rewrites do not refresh
-Pydala metadata as successful and include upstream recovery details.
+PyDala2 metadata as successful and include upstream recovery details.
 
-#### repartition
-```python
-def repartition(
-    self,
-    partitioning_columns: str | list[str],
-    max_rows_per_file: int | None = 10_000_000,
-    compression: str = "zstd",
-    dry_run: bool = False,
-    derived_partition_columns: dict[str, tuple[str, ...]] | None = None,
-    partition_timezone: str = "UTC",
-    target_mb_per_file: int | None = None,
-    memory_budget_mb: int | None = None,
-) -> dict[str, Any]
-```
-Repartition through fsspeckit's coordinated Hive maintenance operation. The
-default operation preserves every row, including exact duplicates. A real run
-returns a plain representation of the typed maintenance result; `dry_run=True`
-returns the immutable plan without mutating the dataset.
+These guarantees do not cover individual file replacements during
+[schema repair](../user-guide/schema-management.md#repair-existing-files) or
+[metadata refresh](../user-guide/metadata.md#refresh-after-external-changes).
+Partition compaction loads the dataset before planning, even with
+`dry_run=True`. It may repair files if sidecars are missing; ordered
+compaction also refreshes existing metadata.
 
-**Parameters:**
-- `partitioning_columns`: New Hive partition columns.
-- `max_rows_per_file`: Hard output row bound per destination partition file.
-- `compression`: Destination Parquet codec.
-- `derived_partition_columns` / `partition_timezone`: Optional fsspeckit
-  derived partition definitions.
-- `target_mb_per_file` / `memory_budget_mb`: Optional upstream planning hints.
+### repartition
 
-`sort_by` is not supported and raises `ValueError`; use ordered compaction
-after repartitioning. `unique=True` is deprecated and selects explicit global
-deduplication before repartitioning.
+`repartition(partitioning_columns, dry_run=True)` plans a new Hive layout.
+Omit `dry_run` to publish it and receive the maintenance result as a plain
+dictionary. It retains exact duplicate rows by default. The deprecated
+`unique=True` selects global deduplication. `sort_by` is not supported; use
+ordered compaction separately. Supply `max_rows_per_file` and `compression`
+to adjust the output files.
 
-**Example:**
-```python
-# Review before mutation
-plan = dataset.repartition(["year", "month", "day"], dry_run=True)
+### optimize_dtypes
 
-# Apply the approved plan
-result = dataset.repartition(["year", "month", "day"])
-```
+`optimize_dtypes(dry_run=True)` proposes a target schema with Polars and
+returns the target schema and rewrite plan. If the dataset is not loaded,
+it loads it first; when sidecars are missing, that load can repair files.
+Use `include` or `exclude` to limit which columns are considered. The default `strict=True` uses
+value-preserving casts across the full physical dataset; `strict=False`
+uses fsspeckit's validated loose policy. Hive partition columns remain path
+metadata rather than physical file columns.
 
-#### optimize_dtypes
-```python
-def optimize_dtypes(
-    self,
-    exclude: str | list[str] | None = None,
-    strict: bool = True,
-    include: str | list[str] | None = None,
-    dry_run: bool = False,
-    compression: str | None = None,
-    target_rows_per_file: int | None = None,
-) -> dict[str, Any] | None
-```
-Propose a target schema with Polars, then delegate its full-dataset validation
-and publication to fsspeckit's coordinated schema-rewrite operation.
-
-`dry_run=True` returns the target schema and immutable rewrite plan without
-mutation. The default `strict=True` uses value-preserving casts across the full
-dataset; `strict=False` uses fsspeckit's validated loose policy. Hive partition
-columns remain path metadata rather than physical file columns.
-
-Successful execution returns a plain maintenance result. Failed validation
-leaves the live dataset and managed metadata unrefreshed while exposing
+On success, the applied operation returns a plain maintenance result.
+Failed validation does not publish the dtype rewrite. The error exposes
 recovery details.
-
-**Example:**
-```python
-# Optimize data types
-dataset.optimize.optimize_dtypes()
-```
-
-## Writer
-
-```python
-class Writer
-```
-
-The `Writer` class provides data writing and transformation utilities.
-
-### Methods
-
-#### write_to_dataset
-```python
-@staticmethod
-def write_to_dataset(
-    data: pa.Table | pd.DataFrame | pl.DataFrame,
-    dataset: BaseDataset,
-    partition_cols: list[str] | None = None,
-    basename_template: str | None = None,
-    **kwargs
-) -> None
-```
-Write data to a dataset.
-
-**Parameters:**
-- `data` (pa.Table | pd.DataFrame | pl.DataFrame): Data to write
-- `dataset` (BaseDataset): Target dataset
-- `partition_cols` (list[str], optional): Columns to partition by
-- `basename_template` (str, optional): Template for file names
-- `**kwargs`: Additional arguments for writing
-
-**Example:**
-```python
-# Write data to dataset
-Writer.write_to_dataset(
-    data=dataframe,
-    dataset=dataset,
-    partition_cols=['category'],
-    basename_template="data-{i}.parquet"
-)
-```
-
-## Config
-
-```python
-class Config
-```
-
-The `Config` class manages configuration settings for PyDala2 operations.
-
-### Class Attributes
-
-#### default_config
-```python
-default_config: dict = {
-    'default_backend': 'polars',
-    'cache_enabled': True,
-    'cache_max_size': 1024 * 1024 * 1024,  # 1GB
-    'cache_ttl': 3600,  # 1 hour
-    'log_level': 'INFO',
-    'max_memory': 4 * 1024 * 1024 * 1024,  # 4GB
-    'n_workers': 4,
-    'compression': 'zstd',
-    'compression_level': 3,
-    'row_group_size': 1000000,
-    'auto_discover_partitions': True,
-    'validate_schema': True,
-    'enable_profiling': False
-}
-```
-
-Default configuration values for PyDala2.
-
-### Methods
-
-#### get
-```python
-@classmethod
-def get(cls, key: str, default=None)
-```
-Get a configuration value.
-
-**Parameters:**
-- `key` (str): The configuration key
-- `default`: Default value if key not found
-
-**Returns:**
-- The configuration value
-
-**Example:**
-```python
-# Get default backend
-backend = Config.get('default_backend')
-
-# Get with default
-cache_size = Config.get('cache_max_size', 512 * 1024 * 1024)
-```
-
-#### set
-```python
-@classmethod
-def set(cls, key: str, value) -> None
-```
-Set a configuration value.
-
-**Parameters:**
-- `key` (str): The configuration key
-- `value`: The value to set
-
-**Example:**
-```python
-# Set default backend
-Config.set('default_backend', 'duckdb')
-
-# Enable caching
-Config.set('cache_enabled', True)
-```
-
-#### update
-```python
-@classmethod
-def update(cls, config: dict) -> None
-```
-Update multiple configuration values.
-
-**Parameters:**
-- `config` (dict): Dictionary of configuration values
-
-**Example:**
-```python
-Config.update({
-    'default_backend': 'polars',
-    'cache_enabled': True,
-    'cache_max_size': 2 * 1024 * 1024 * 1024,
-    'log_level': 'DEBUG'
-})
-```
-
-#### reset
-```python
-@classmethod
-def reset(cls) -> None
-```
-Reset all configuration values to defaults.
-
-**Example:**
-```python
-# Reset to defaults
-Config.reset()
-```
-
-## Configuration Management
-
-PyDala2 provides several ways to manage configuration:
-
-### Environment Variables
-
-Configuration can be set via environment variables:
-
-```bash
-export PYDALA2_DEFAULT_BACKEND=polars
-export PYDALA2_CACHE_ENABLED=true
-export PYDALA2_CACHE_MAX_SIZE=1073741824
-export PYDALA2_LOG_LEVEL=INFO
-```
-
-### Configuration File
-
-Configuration can be loaded from a YAML file:
-
-```python
-from pydala import load_config
-
-# Load from file
-config = load_config("config.yaml")
-Config.update(config)
-```
-
-### Programmatic Configuration
-
-```python
-from pydala import Config, set_config
-
-# Set individual values
-Config.set('default_backend', 'polars')
-
-# Update multiple values
-set_config({
-    'cache_enabled': True,
-    'cache_max_size': 1024 * 1024 * 1024,
-    'log_level': 'INFO'
-})
-```
-
-### Context Manager
-
-Configuration can be temporarily changed using a context manager:
-
-```python
-from pydala import config_context
-
-with config_context({'default_backend': 'duckdb'}):
-    # Use DuckDB for operations in this block
-    result = dataset.read(backend=None)  # Uses DuckDB
-
-# Back to previous configuration
-```
-
-## Configuration Reference
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `default_backend` | str | 'polars' | Default backend for operations |
-| `cache_enabled` | bool | True | Enable filesystem caching |
-| `cache_max_size` | int | 1073741824 | Maximum cache size in bytes |
-| `cache_ttl` | int | 3600 | Cache time-to-live in seconds |
-| `log_level` | str | 'INFO' | Logging level |
-| `max_memory` | int | 4294967296 | Maximum memory usage in bytes |
-| `n_workers` | int | 4 | Number of worker threads |
-| `compression` | str | 'zstd' | Default compression codec |
-| `compression_level` | int | 3 | Default compression level |
-| `row_group_size` | int | 1000000 | Default row group size |
-| `auto_discover_partitions` | bool | True | Auto-discover partitioning |
-| `validate_schema` | bool | True | Validate schema on operations |
-| `enable_profiling` | bool | False | Enable performance profiling |

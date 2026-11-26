@@ -36,24 +36,21 @@ PyDala2 is a high-performance Python library for managing Parquet datasets with 
 ### Installation
 
 ```bash
-# Install PyDala2
 pip install pydala2
-
-# Install with all optional dependencies
-pip install pydala2[all]
-
-# Install with specific backends
-pip install pydala2[polars,duckdb]
 ```
+
+For remote storage, install `pydala2[s3]` for S3-compatible storage or
+`pydala2[sftp]` for SSH/SFTP.
 
 ### Basic Usage
 
 ```python
-from pydala import ParquetDataset
-import pandas as pd
+from pathlib import Path
 
-# Create a dataset
-dataset = ParquetDataset("data/my_dataset")
+import pandas as pd
+from pydala import ParquetDataset
+
+dataset = ParquetDataset(str(Path("data/my_dataset").resolve()), partitioning="hive")
 
 # Write data
 data = pd.DataFrame({
@@ -61,27 +58,21 @@ data = pd.DataFrame({
     'category': ['A', 'B', 'C'] * 33 + ['A'],
     'value': [i * 2 for i in range(100)]
 })
-dataset.write_to_dataset(
-    data=data,
-    partition_cols=['category']
-)
+dataset.write_to_dataset(data, partition_by=["category"])
+dataset.load()
 
-# Read with filtering - automatic backend selection
 result = dataset.filter("category IN ('A', 'B') AND value > 50")
-
-# Export to different formats
-df_polars = result.table.to_polars()  # or use shortcut: result.t.pl
-df_pandas = result.table.df           # or result.t.df
-duckdb_rel = result.table.ddb         # or result.t.ddb
+df_polars = result.to_polars(lazy=False)
+df_pandas = result.to_pandas()
+duckdb_rel = result.to_duckdb()
 ```
 
 ### Using Different Backends
 
 ```python
-# PyDala2 provides automatic backend selection
-# Just access data in your preferred format:
+import polars as pl
 
-# Polars LazyFrame (recommended for performance)
+# Polars LazyFrame
 lazy_df = dataset.table.pl  # or dataset.t.pl
 result = (
     lazy_df
@@ -94,9 +85,9 @@ result = (
 # DuckDB (for SQL queries)
 result = dataset.ddb_con.sql("""
     SELECT category, AVG(value) as avg_value
-    FROM dataset
+    FROM my_dataset
     GROUP BY category
-""").to_arrow()
+""").to_arrow_table()
 
 # PyArrow Table (for columnar operations)
 table = dataset.table.arrow  # or dataset.t.arrow
@@ -112,35 +103,26 @@ df_pandas = dataset.table.to_pandas()
 
 ### Catalog Management
 
+Save this as `catalog.yaml` alongside the `data/` directory from the example above:
+
+```yaml
+filesystem:
+  local:
+    protocol: file
+    bucket: .
+tables:
+  default:
+    my_dataset:
+      filesystem: local
+      path: data/my_dataset
+      format: parquet
+```
+
 ```python
 from pydala import Catalog
 
-# Create catalog from YAML configuration
-catalog = Catalog("catalog.yaml")
-
-# YAML configuration example:
-# tables:
-#   sales_2023:
-#     path: "/data/sales/2023"
-#     filesystem: "local"
-#   customers:
-#     path: "/data/customers"
-#     filesystem: "local"
-
-# Query across datasets using automatic table loading
-result = catalog.query("""
-    SELECT
-        s.*,
-        c.customer_name,
-        c.segment
-    FROM sales_2023 s
-    JOIN customers c ON s.customer_id = c.id
-    WHERE s.date >= '2023-01-01'
-""")
-
-# Or access datasets directly
-sales_dataset = catalog.get_dataset("sales_2023")
-filtered_sales = sales_dataset.filter("amount > 1000")
+catalog = Catalog("catalog.yaml", namespace="default")
+result = catalog.sql("SELECT COUNT(*) FROM my_dataset").fetchone()
 ```
 
 ## 📚 Documentation
@@ -148,10 +130,12 @@ filtered_sales = sales_dataset.filter("amount > 1000")
 Comprehensive documentation is available at [pydala2.readthedocs.io](https://pydala2.readthedocs.io):
 
 ### Getting Started
+
 - [Installation Guide](https://pydala2.readthedocs.io/getting-started)
 - [Quick Start Tutorial](https://pydala2.readthedocs.io/quick-start)
 
 ### User Guide
+
 - [Basic Usage](https://pydala2.readthedocs.io/user-guide/basic-usage)
 - [Data Operations](https://pydala2.readthedocs.io/user-guide/data-operations)
 - [Performance Optimization](https://pydala2.readthedocs.io/user-guide/performance)
@@ -159,6 +143,7 @@ Comprehensive documentation is available at [pydala2.readthedocs.io](https://pyd
 - [Schema Management](https://pydala2.readthedocs.io/user-guide/schema-management)
 
 ### API Reference
+
 - [Core Classes](https://pydala2.readthedocs.io/api/core)
 - [Dataset Classes](https://pydala2.readthedocs.io/api/datasets)
 - [Table Operations](https://pydala2.readthedocs.io/api/table)
@@ -168,6 +153,7 @@ Comprehensive documentation is available at [pydala2.readthedocs.io](https://pyd
 - [Utilities](https://pydala2.readthedocs.io/api/utilities)
 
 ### Advanced Topics
+
 - [Performance Tuning](https://pydala2.readthedocs.io/advanced/performance-tuning)
 - [Integration Patterns](https://pydala2.readthedocs.io/advanced/integration)
 - [Deployment Guide](https://pydala2.readthedocs.io/advanced/deployment)
@@ -175,9 +161,8 @@ Comprehensive documentation is available at [pydala2.readthedocs.io](https://pyd
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please see our [Contributing Guide](https://pydala2.readthedocs.io/contributing) for details.
+Report bugs and discuss changes in [GitHub Issues](https://github.com/legout/pydala2/issues).
 
 ## 📝 License
 
 [MIT License](LICENSE)
-

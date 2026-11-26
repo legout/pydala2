@@ -1,9 +1,5 @@
 # PyDala2
 
-<p align="center">
-  <img src="logo.jpeg" width="400" alt="PyDala2">
-</p>
-
 [![PyPI version](https://badge.fury.io/py/pydala2.svg)](https://badge.fury.io/py/pydala2)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Documentation](https://img.shields.io/badge/docs-latest-blue.svg)](https://pydala2.readthedocs.io)
@@ -63,47 +59,25 @@ result = dataset.filter("""
 ```
 
 ### Data Lake Management
-```python
-# Catalog-based dataset organization
-catalog = Catalog("datalake.yaml")
-sales = catalog.get_table("sales")
-customers = catalog.get_table("customers")
-```
+
+Use a [YAML catalog](user-guide/catalog-management.md) to organize datasets and query them with DuckDB.
 
 ## 🚀 Quick Example
 
 ```python
-from pydala import ParquetDataset
+from pathlib import Path
+
 import polars as pl
+from pydala import ParquetDataset
 
-# Create a dataset (directory auto-created)
-dataset = ParquetDataset("data/sales")
+dataset = ParquetDataset(str(Path("data/sales").resolve()), partitioning="hive")
 
-# Write data with automatic optimization
-data = pl.DataFrame({
-    'id': range(1000),
-    'date': pl.date_range(start=2023-01-01, end=2023-12-31, interval='1d', eager=True).head(1000),
-    'region': ['US', 'EU', 'APAC'] * 333 + ['US'],
-    'amount': [i * 10.5 for i in range(1000)]
-})
+data = pl.DataFrame({"region": ["US", "EU"], "amount": [750, 250]})
+dataset.write_to_dataset(data, partition_by=["region"])
+dataset.load()
 
-dataset.write_to_dataset(
-    data,
-    partition_by=["date", "region"],
-    max_rows_per_file=100000,
-    compression="zstd"
-)
-
-# Read and filter - automatic backend selection
 result = dataset.filter("amount > 500 AND region = 'US'")
-print(result.collect())
-
-# Use SQL directly
-sql_result = dataset.ddb_con.sql("""
-    SELECT region, COUNT(*) as count, AVG(amount) as avg_amount
-    FROM dataset
-    GROUP BY region
-""").pl()
+print(result.to_polars(lazy=False))
 ```
 
 ## 🏗️ Architecture
@@ -143,7 +117,7 @@ Our comprehensive documentation covers:
 - [Schema Management](user-guide/schema-management.md) - Schema evolution and validation
 
 ### API Reference
-- [Core Classes](api/core.md) - BaseDataset, Config
+- [Core Classes](api/core.md) - datasets and maintenance
 - [Dataset Classes](api/datasets.md) - ParquetDataset and variants
 - [Table Operations](api/table.md) - PydalaTable interface
 - [Catalog System](api/catalog.md) - Catalog and namespace management
@@ -156,10 +130,6 @@ Our comprehensive documentation covers:
 - [Troubleshooting](advanced/troubleshooting.md) - Common issues and solutions
 - [Integration Patterns](advanced/integration.md) - Using PyDala2 with other tools
 
-## 🤝 Contributing
-
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
-
 ## 📝 License
 
-[MIT License](LICENSE)
+[MIT License](https://github.com/legout/pydala2/blob/main/LICENSE)

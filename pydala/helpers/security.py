@@ -1,23 +1,15 @@
 """Security utilities for PyDala2."""
 
 import os
-import posixpath
 import re
-import string
 from typing import Any
+
 from fsspec.core import split_protocol
 
 
 def strip_protocol(path: str) -> str:
-    """Strips the protocol from a given path.
-
-    Args:
-        path (str): The input path which may contain a protocol.
-    Returns:
-        str: The path without the protocol.
-    """
-    protocol, path = split_protocol(path)
-    return path
+    """Remove the fsspec protocol without normalizing the remaining path."""
+    return split_protocol(path)[1]
 
 
 def escape_sql_identifier(identifier: str) -> str:

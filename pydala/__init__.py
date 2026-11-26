@@ -1,20 +1,13 @@
-"""
-PyDala2 - High-performance Python library for managing Parquet datasets with advanced metadata capabilities.
+"""Manage and query Parquet datasets with PyArrow and DuckDB.
 
-PyDala2 provides efficient management of Parquet datasets with features including:
-- Smart dataset management with metadata optimization
-- Multi-format support (Parquet, CSV, JSON)
-- Multi-backend integration (Polars, PyArrow, DuckDB, Pandas)
-- Advanced querying with predicate pushdown
-- Schema management with automatic validation
-- Performance optimization with caching and partitioning
-- Catalog system for centralized dataset management
-
-Example usage:
+    >>> from tempfile import TemporaryDirectory
+    >>> import pyarrow as pa
     >>> from pydala import ParquetDataset
-    >>> dataset = ParquetDataset("data/my_dataset")
-    >>> dataset.write(dataframe)
-    >>> result = dataset.filter("date > '2023-01-01'").to_pandas()
+    >>> with TemporaryDirectory() as tmp:
+    ...     path = f"{tmp}/sales"
+    ...     ParquetDataset(path).write_to_dataset(pa.table({"amount": [10, 20]}))
+    ...     ParquetDataset(path).filter("amount >= 20").arrow.to_pylist()
+    [{'amount': 20}]
 """
 
 import importlib.metadata

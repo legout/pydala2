@@ -13,7 +13,6 @@ import pyarrow as pa
 import pyarrow.fs as pfs
 import pyarrow.parquet as pq
 from fsspec import AbstractFileSystem
-from fsspec.core import split_protocol
 from loguru import logger
 
 from .filesystem import FileSystem, clear_cache
@@ -23,28 +22,16 @@ from .helpers.metadata import (
     _prune_metadata_files,
 )
 
-# from .helpers.metadata import collect_parquet_metadata  # , remove_from_metadata
 from .helpers.misc import get_partitions_from_path, run_parallel, unify_schemas_pl
+from .helpers.security import strip_protocol as strip_protocol  # noqa: PLC0414
 import brotli
 from .schema import (
     SchemaRepairPlan,
     _execute_schema_repair,
     _plan_schema_repair,
     collect_file_schemas,
-    convert_large_types_to_normal,  # unify_schemas
+    convert_large_types_to_normal,
 )
-
-
-def strip_protocol(path: str) -> str:
-    """Strips the protocol from a given path.
-
-    Args:
-        path (str): The input path which may contain a protocol.
-    Returns:
-        str: The path without the protocol.
-    """
-    protocol, path = split_protocol(path)
-    return path
 
 
 def serialize_metadata(metadata: dict[str, pq.FileMetaData]) -> dict[str, Any]:
@@ -242,7 +229,6 @@ class ParquetDatasetMetadata:
             cache_storage = fs_kwargs.pop(
                 "cache_storage", tempfile.mkdtemp(prefix="pydala2_")
             )
-            # cache_storage = posixpath.join(cache_storage, path)
         else:
             cache_storage = None
         self._filesystem = FileSystem(
@@ -254,16 +240,13 @@ class ParquetDatasetMetadata:
         )
 
         self._makedirs()
-        # self.load_files()
 
         self._fs_kwargs = fs_kwargs
 
         self._metadata_file = posixpath.join(path, "_metadata")
         self._file_metadata_file = posixpath.join(path, "_file_metadata")
         self._metadata: pq.FileMetaData | None = self._read_metadata()
-        self._file_metadata: dict[str, pq.FileMetaData] | None = (
-            None  # self._read_file_metadata()
-        )
+        self._file_metadata: dict[str, pq.FileMetaData] | None = None
         if update_metadata:
             self.update()
 
@@ -309,9 +292,7 @@ class ParquetDatasetMetadata:
     def load_files(self) -> None:
         """Discover physical Parquet files on the filesystem.
 
-        Physical discovery is canonical per ADR 0001: ``files`` always
-        reflects what exists on disk, while ``files_in_metadata`` and
-        ``files_in_file_metadata`` remain explicit sidecar views.
+        Refresh the cached ``files`` listing without updating either sidecar.
         """
         self.clear_cache()
         self._files = [
@@ -813,7 +794,6 @@ class ParquetDatasetMetadata:
         ts_unit: str | None = None,
         tz: str | None = None,
         format_version: str | None = None,
-        # sort: bool | list[str] = False,
         alter_schema: bool = True,
         verbose: bool = False,
         **kwargs,
@@ -854,7 +834,6 @@ class ParquetDatasetMetadata:
             ts_unit=ts_unit,
             alter_schema=alter_schema,
             verbose=verbose,
-            # sort=sort,
         )
 
         # update metadata file
@@ -1079,7 +1058,6 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
         filesystem: AbstractFileSystem | pfs.FileSystem | None = None,
         bucket: str | None = None,
         cached: bool = False,
-        # metadata: pq.FileMetaData,
         partitioning: None | str | list[str] = None,
         ddb_con: duckdb.DuckDBPyConnection | None = None,
         **fs_kwargs,
@@ -1097,8 +1075,6 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
         Returns:
             None
         """
-
-        # self._parquet_dataset_metadata = parquet_dataset_metadata
 
         super().__init__(
             path=path,
@@ -1214,7 +1190,6 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
                 metadata=self.metadata,
                 partitioning=self._partitioning,
             )
-            # self._metadata_table = pa.Table.from_pydict(metadata_table)
             self._metadata_table = self.ddb_con.from_arrow(
                 pa.Table.from_pydict(metadata_table)
             )
@@ -1256,19 +1231,6 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
             file_filter = f"({metadata_filter}) AND ({file_filter})"
         self._metadata_table_scanned = self._metadata_table.filter(file_filter)
 
-    # def filter(self, filter_expr: str | None = None):
-    #     """
-    #     Filters the dataset for files that match the given filter expression.
-
-    #     Args:
-    #         filter_expr (str | None): A filter expression to apply to the dataset. Defaults to None.
-    #         lazy (bool): Whether to perform the scan lazily or eagerly. Defaults to True.
-
-    #     Returns:
-    #         None
-    #     """
-    #     self.scan(filter_expr=filter_expr)
-
     @property
     def latest_filter_expr(self):
         """
@@ -1293,12 +1255,6 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
         else:
             return self.files
 
-    # @property
-    # def files(self):
-    #    return sorted(
-    #        set(map(lambda x: x[0], self.metadata_table.select("file_path").fetchall()))
-    #    )
-
     @property
     def is_scanned(self):
         """
@@ -1308,4 +1264,3 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
             bool: True if all files have been scanned, False otherwise.
         """
         return self._metadata_table_scanned is not None
-        # @staticmethod
