@@ -522,6 +522,12 @@ class PydalaTable:
 
         return ddb
 
+    def _filtered_table(self, filter: pds.Expression) -> "PydalaTable":
+        """Materialize rows matching a PyArrow expression as a new table."""
+        arrow = self.to_arrow_table() if self._type == "duckdb" else None
+        dataset = pds.dataset(arrow) if arrow is not None else self._dataset
+        return PydalaTable(dataset.to_table(filter=filter), ddb_con=self.ddb_con)
+
     def to_batch_reader(
         self,
         columns: str | list[str] | None = None,
@@ -558,6 +564,26 @@ class PydalaTable:
             pa.RecordBatchReader: The batch reader object.
         """
 
+        if filter is not None and self._type == "duckdb" and sort_by is None and not distinct:
+            # Stream: filter the DuckDB reader batch by batch.
+            reader = self.to_duckdb(lazy=lazy).fetch_arrow_reader(batch_size=batch_size)
+            return pds.Scanner.from_batches(
+                reader,
+                columns=[columns] if isinstance(columns, str) else columns,
+                filter=filter,
+                batch_size=batch_size,
+            ).to_reader()
+        if filter is not None and (
+            self._type != "pyarrow" or sort_by is not None or distinct
+        ):
+            # Apply the filter to the Arrow data first; the DuckDB route cannot.
+            return self._filtered_table(filter).to_batch_reader(
+                columns=columns,
+                lazy=lazy,
+                batch_size=batch_size,
+                sort_by=sort_by,
+                distinct=distinct,
+            )
         if self._type == "pyarrow" and sort_by is None and not distinct:
             return self.to_arrow_scanner(
                 columns=columns,
@@ -685,7 +711,8 @@ class PydalaTable:
             return t
 
         else:
-            return self.to_duckdb(
+            source = self._filtered_table(filter) if filter is not None else self
+            return source.to_duckdb(
                 columns=columns, sort_by=sort_by, distinct=distinct
             ).to_arrow_table()
 

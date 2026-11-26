@@ -1,7 +1,6 @@
 import concurrent.futures
 import copy
 import json
-import pickle  # Only for backward compatibility
 import posixpath
 import tempfile
 import base64
@@ -226,8 +225,10 @@ class ParquetDatasetMetadata:
         self._cached = cached
         self._base_filesystem = filesystem
         if cached:
-            cache_storage = fs_kwargs.pop(
-                "cache_storage", tempfile.mkdtemp(prefix="pydala2_")
+            cache_storage = (
+                fs_kwargs.pop("cache_storage")
+                if "cache_storage" in fs_kwargs
+                else tempfile.mkdtemp(prefix="pydala2_")
             )
         else:
             cache_storage = None
@@ -256,28 +257,23 @@ class ParquetDatasetMetadata:
 
     def _read_file_metadata(self) -> dict[str : pq.FileMetaData] | None:
         if self.has_file_metadata_file:
-            # First try to open as text (JSON)
             try:
                 with self._filesystem.open(self._file_metadata_file, "rb") as f:
                     compressed_data = f.read()
-                    try:
-                        # Try to decompress with brotli first
-                        decompressed_data = brotli.decompress(compressed_data)
-                        data = json.loads(decompressed_data.decode("utf-8"))
-                    except (brotli.error, UnicodeDecodeError):
-                        # Fall back to uncompressed JSON
-                        f.seek(0)
-                        data = json.loads(compressed_data.decode("utf-8"))
-                    return deserialize_metadata(data)
+                try:
+                    decompressed_data = brotli.decompress(compressed_data)
+                    data = json.loads(decompressed_data.decode("utf-8"))
+                except (brotli.error, UnicodeDecodeError):
+                    data = json.loads(compressed_data.decode("utf-8"))
+                return deserialize_metadata(data)
             except (json.JSONDecodeError, UnicodeDecodeError):
-                # Fall back to binary pickle format for backward compatibility
-                with self._filesystem.open(self._file_metadata_file, "rb") as f:
-                    logger.warning(
-                        f"Using deprecated pickle format for {self._file_metadata_file}. "
-                        "Please consider migrating to JSON format."
-                    )
-                    # Security note: pickle is insecure, but maintained for backward compatibility
-                    return pickle.load(f)
+                # Never unpickle: legacy pickle sidecars are untrusted input.
+                # Returning None makes callers rebuild the sidecar from Parquet.
+                logger.warning(
+                    f"Ignoring unreadable (legacy pickle?) {self._file_metadata_file}; "
+                    "file metadata will be rebuilt from the Parquet files."
+                )
+                return None
 
     def _makedirs(self):
         if self._filesystem.exists(self._path):
@@ -296,7 +292,7 @@ class ParquetDatasetMetadata:
         """
         self.clear_cache()
         self._files = [
-            fn.replace(self._path, "").lstrip("/")
+            fn.removeprefix(self._path).lstrip("/")
             for fn in sorted(
                 self._filesystem.glob(posixpath.join(self._path, "**/*.parquet"))
             )
@@ -313,7 +309,7 @@ class ParquetDatasetMetadata:
         """
         self.clear_cache()
         return [
-            fn.replace(self._path.split("://")[-1], "").lstrip("/")
+            fn.removeprefix(self._path.split("://")[-1]).lstrip("/")
             for fn in sorted(
                 self._filesystem.glob(posixpath.join(self._path, "**/*.parquet"))
             )
@@ -434,8 +430,8 @@ class ParquetDatasetMetadata:
             del self._file_schema
         if hasattr(self, "_schema"):
             del self._schema
-        if self.has_file_metadata:
-            del self._file_metadata
+        # Check the file, not has_file_metadata, so reset never parses the sidecar.
+        if self.has_file_metadata_file:
             self._file_metadata = None
             self._filesystem.rm(self._file_metadata_file)
 
@@ -1118,6 +1114,7 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
         metadata_table = defaultdict(list)
 
         def process_row_group(metadata_, rg_num):
+            columns = []
             row_group = metadata_.row_group(rg_num)
             file_path = row_group.column(0).file_path
             result = {
@@ -1161,9 +1158,9 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
                                 "physical_type": "UNKNOWN",
                             }
                         )
-                metadata_table[col_name].append(rgc)
+                columns.append((col_name, rgc))
 
-            return result
+            return result, columns
 
         with concurrent.futures.ThreadPoolExecutor() as executor:
             futures = []
@@ -1173,10 +1170,13 @@ class PydalaDatasetMetadata(ParquetDatasetMetadata):
                         executor.submit(process_row_group, metadata_, rg_num)
                     )
 
-            for future in concurrent.futures.as_completed(futures):
-                result = future.result()
+            # Submission order keeps each row group's file path and statistics together.
+            for future in futures:
+                result, columns = future.result()
                 for key, value in result.items():
                     metadata_table[key].append(value)
+                for col_name, rgc in columns:
+                    metadata_table[col_name].append(rgc)
 
         return metadata_table
 

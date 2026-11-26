@@ -15,7 +15,6 @@ from typing import Literal
 import duckdb as _duckdb
 import pandas as pd
 import polars.selectors as cs
-import psutil
 import pyarrow as pa
 import pyarrow.dataset as pds
 import tqdm
@@ -256,8 +255,10 @@ class _DatasetStorage:
         self._cached = cached
         self._base_filesystem = filesystem
         if cached:
-            cache_storage = fs_kwargs.pop(
-                "cache_storage", tempfile.mkdtemp(prefix="pydala2_")
+            cache_storage = (
+                fs_kwargs.pop("cache_storage")
+                if "cache_storage" in fs_kwargs
+                else tempfile.mkdtemp(prefix="pydala2_")
             )
         else:
             cache_storage = None
@@ -370,10 +371,7 @@ class BaseDataset(_DatasetStorage):
 
         self.ddb_con = ddb_con
         # enable object caching for e.g. parquet metadata
-        self.ddb_con.execute(
-            f"""PRAGMA enable_object_cache;
-            SET THREADS={psutil.cpu_count() * 2};"""
-        )
+        self.ddb_con.execute("PRAGMA enable_object_cache;")
         self._timestamp_column = timestamp_column
 
         if partitioning is None:
@@ -417,7 +415,7 @@ class BaseDataset(_DatasetStorage):
         # Safely construct glob pattern
         glob_pattern = safe_join(self._path, f"**/*.{self._format}")
         self._files = [
-            fn.replace(self._path, "").lstrip("/")
+            fn.removeprefix(self._path).lstrip("/")
             for fn in sorted(self._filesystem.glob(glob_pattern))
         ]
 
@@ -630,6 +628,8 @@ class BaseDataset(_DatasetStorage):
                 self._partition_names = self._arrow_dataset.partitioning.schema.names
 
             return self._partition_names
+        # Not loaded (e.g. emptied by overwrite): keep the known layout for write defaults.
+        return self.__dict__.get("_partition_names")
 
     @property
     def partition_values(self) -> dict:
@@ -915,6 +915,12 @@ class BaseDataset(_DatasetStorage):
         ):
             data = [data]
         metadata = []
+        # Snapshot existing files first: the cached listing may be stale or lazily
+        # built after the new files exist, which would delete the replacement.
+        old_files: list[str] = []
+        if mode == "overwrite":
+            self.load_files()
+            old_files = list(self.files)
         if not partition_by:
             schema = self.metadata.schema.to_arrow_schema() if self.metadata else None
         else:
@@ -927,28 +933,40 @@ class BaseDataset(_DatasetStorage):
                 filesystem=self._filesystem,
                 schema=schema if not alter_schema else None,
             )
-            metadata.extend(
-                writer.execute(
-                    sort_by=sort_by,
-                    unique=unique,
-                    ts_unit=ts_unit,
-                    tz=tz,
-                    remove_tz=remove_tz,
-                    alter_schema=alter_schema,
-                    partition_by=partition_by,
-                    timestamp_column=self._timestamp_column,
-                    row_group_size=row_group_size,
-                    compression=compression,
-                    max_rows_per_file=max_rows_per_file,
-                    basename=basename,
-                    verbose=verbose,
-                    **kwargs,
+            try:
+                metadata.extend(
+                    writer.execute(
+                        sort_by=sort_by,
+                        unique=unique,
+                        ts_unit=ts_unit,
+                        tz=tz,
+                        remove_tz=remove_tz,
+                        alter_schema=alter_schema,
+                        partition_by=partition_by,
+                        timestamp_column=self._timestamp_column,
+                        row_group_size=row_group_size,
+                        compression=compression,
+                        max_rows_per_file=max_rows_per_file,
+                        basename=basename,
+                        verbose=verbose,
+                        **kwargs,
+                    )
                 )
-            )
+            except PartialWriteError:
+                raise
+            except Exception as exc:
+                if not metadata:
+                    raise
+                raise PartialWriteError(
+                    "A later batch failed after earlier batches were written; "
+                    "do not retry the whole list.",
+                    metadata,
+                ) from exc
 
         if mode == "overwrite":
             try:
-                self.delete_files([posixpath.join(self._path, fn) for fn in self.files])
+                if old_files:
+                    self.delete_files([posixpath.join(self._path, fn) for fn in old_files])
             except Exception as exc:
                 raise PartialWriteError(
                     "Parquet files were written, but overwrite completion failed.",
@@ -1017,6 +1035,10 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             None
         """
 
+        if cached and "cache_storage" not in fs_kwargs:
+            # Both base initializers must share one cache directory.
+            fs_kwargs["cache_storage"] = tempfile.mkdtemp(prefix="pydala2_")
+
         PydalaDatasetMetadata.__init__(
             self,
             path=path,
@@ -1047,9 +1069,12 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
 
         try:
             self.load()
-        except Exception as e:
-            _ = e
-            pass
+        except FileNotFoundError:
+            logger.debug(f"Dataset path does not exist yet: {self._path}")
+        except Exception as exc:
+            # Existing contract: construction must not raise (e.g. malformed
+            # sidecars surface on access). Warn so it is not silent.
+            logger.warning(f"Failed to load dataset {self._path}: {exc}")
 
     def load(
         self,
@@ -1112,6 +1137,11 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
 
         self.table = PydalaTable(result=self._arrow_dataset, ddb_con=self.ddb_con)
 
+        if (
+            self._timestamp_column is not None
+            and self._timestamp_column not in self.schema.names
+        ):
+            self._timestamp_column = None  # stale after a schema change; re-infer
         if self._timestamp_column is None:
             self._timestamp_columns = get_timestamp_column(self.table.pl.head(10))
             if len(self._timestamp_columns) > 0:
@@ -1266,6 +1296,16 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
             )
             target_columns = set(target.schema.names)
             key_columns = [column for column in key_columns if column in target_columns]
+            partition_key_columns = [
+                column for column in key_columns if column in (partition_by or [])
+            ]
+            if partition_key_columns:
+                raise ValueError(
+                    "Cannot infer delta keys: hive partition columns "
+                    f"{partition_key_columns!r} are stored in directory names, not "
+                    "in the files, so they cannot be matched. Pass delta_subset "
+                    "explicitly or use merge(key_columns=...)."
+                )
         if not key_columns:
             raise ValueError(
                 "Cannot infer common source/target columns for "
@@ -1434,21 +1474,50 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
 
         if update_metadata:
             try:
+                needs_rebuild = mode == "overwrite"
                 for md in metadata:
                     metadata_ = list(md.values())[0]
                     if (
                         self.metadata is not None
                         and metadata_.schema != self.metadata.schema
                     ):
+                        # Schema changed: unify and rebuild so the file is visible.
+                        needs_rebuild = True
                         continue
 
-                    file_path = list(md.keys())[0].replace(self._path, "").lstrip("/")
+                    file_path = (
+                        list(md.keys())[0].removeprefix(self._path).lstrip("/")
+                    )
                     metadata_.set_file_path(file_path)
                     if self._file_metadata is None:
                         self._file_metadata = {file_path: metadata_}
                     else:
                         self._file_metadata[file_path] = metadata_
-                self._update_metadata(verbose=verbose)
+                if needs_rebuild:
+                    self.update(reload=True, verbose=verbose)
+                    # Refresh live read state, including the zero-file case.
+                    self.load_files()
+                    self._metadata_table = None
+                    self.reset_scan()
+                    if self.is_loaded and self.files:
+                        if (
+                            self._timestamp_column is not None
+                            and self._timestamp_column not in self.metadata.schema.to_arrow_schema().names
+                        ):
+                            # Overwrite dropped the column; let load() re-infer it.
+                            self._timestamp_column = None
+                        self.load()
+                    elif self.is_loaded:
+                        # Nothing left on disk: drop state pointing at deleted files,
+                        # but remember the Hive layout and forget the timestamp column.
+                        self.partition_names
+                        self._timestamp_column = None
+                        for attr in ("_arrow_dataset", "_schema", "_file_schema"):
+                            self.__dict__.pop(attr, None)
+                        self.table = None
+                        self.ddb_con.unregister(self.name)
+                else:
+                    self._update_metadata(verbose=verbose)
             except Exception as exc:
                 raise PartialWriteError(
                     "Parquet files were written, but metadata completion failed.",
@@ -2152,9 +2221,9 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         )
         filter_ = sanitize_filter_expression(filter_)
 
-        self.scan(filter_)
-        files = list(self.scan_files)
-        self.reset_scan()
+        # Prune directly: scan() stores no state for zero matches, which
+        # scan_files would read back as "all files".
+        files = self.table.prune_files(self.metadata_table, filter_, self.files)
 
         if not files:
             return {"planned_groups": []}
@@ -2224,8 +2293,12 @@ class ParquetDataset(PydalaDatasetMetadata, BaseDataset):
         _validate_compaction_options(row_group_size, kwargs)
         timestamp_column = timestamp_column or self._timestamp_column
 
-        min_max_ts = self.t.sql(
-            f"SELECT MIN({timestamp_column}.min) AS min, MAX({timestamp_column}.max) AS max FROM {self.name}_metadata"
+        if not timestamp_column or not re.match(
+            r"^[a-zA-Z_][a-zA-Z0-9_]*$", timestamp_column
+        ):
+            raise ValueError(f"Invalid timestamp column name: {timestamp_column!r}")
+        min_max_ts = self.metadata_table.aggregate(
+            f"MIN({timestamp_column}.min) AS min, MAX({timestamp_column}.max) AS max"
         ).pl()
         min_ts = min_max_ts["min"][0]
         max_ts = min_max_ts["max"][0]

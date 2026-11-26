@@ -42,9 +42,7 @@ the call refreshes metadata before planning, which can repair physical files
 even during a dry run.
 
 Use `compact_partitions()` on date-based Hive partitions for time-series data.
-`compact_by_timeperiod()` without `sort_by` currently expects a
-`<dataset name>_metadata` DuckDB relation that normal dataset loading does not
-create. Supplying `sort_by` instead delegates to ordered partition compaction
+`compact_by_timeperiod()` with `sort_by` delegates to ordered partition compaction
 and ignores the time interval.
 
 ### Coordinated Rewrite Guarantees

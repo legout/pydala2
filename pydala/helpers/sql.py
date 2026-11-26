@@ -64,7 +64,9 @@ def _sql2polars_filter(string: str, schema: pl.Schema) -> pl.Expr:
             pl.UInt64,
         ):
             try:
-                return int(float(val.replace(",", ".")))
+                normalized = val.replace(",", ".")
+                # Exact for plain integers; float() would round beyond 2**53.
+                return int(normalized) if normalized.lstrip("+-").isdigit() else int(float(normalized))
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"Invalid integer literal: {val}") from exc
         if dtype in (pl.Float32, pl.Float64):

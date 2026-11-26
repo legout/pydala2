@@ -589,7 +589,8 @@ class Writer:
                 "data-"
                 f"{dt.datetime.now().strftime('%Y%m%d_%H%M%S%f')[:-3]}-{uuid.uuid4().hex[:16]}-{{i}}.parquet"
             )
-        return f"{basename}-{{i}}.parquet"
+        # A unique token keeps repeated appends with one basename from overwriting.
+        return f"{basename}-{uuid.uuid4().hex[:16]}-{{i}}.parquet"
 
     def _should_create_dir(self, create_dir: bool) -> bool:
         """Determine if directories should be created based on filesystem type."""

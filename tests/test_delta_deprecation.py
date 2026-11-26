@@ -133,9 +133,10 @@ def test_delta_without_subset_uses_null_safe_whole_row_identity(
     ]
 
 
-def test_delta_without_subset_discovers_existing_hive_partition_keys(
+def test_delta_without_subset_rejects_hive_partition_key_inference(
     tmp_path: pathlib.Path,
 ) -> None:
+    """Partition columns live in directory names and cannot be matched as keys."""
     dataset = _dataset(tmp_path)
     dataset.write_to_dataset(
         pa.table({"id": [1], "value": ["same"], "region": ["A"]}),
@@ -143,17 +144,14 @@ def test_delta_without_subset_discovers_existing_hive_partition_keys(
         partition_by=["region"],
     )
 
-    with pytest.warns(DeprecationWarning):
+    with pytest.raises(ValueError, match="delta_subset"):
         dataset.write_to_dataset(
             pa.table({"id": [1], "value": ["same"], "region": ["B"]}),
             mode="delta",
             delta_subset=None,
         )
 
-    assert sorted(_rows(tmp_path), key=lambda row: row["region"]) == [
-        {"id": 1, "value": "same", "region": "A"},
-        {"id": 1, "value": "same", "region": "B"},
-    ]
+    assert _rows(tmp_path) == [{"id": 1, "value": "same", "region": "A"}]
 
 
 def test_keyed_delta_empty_list_returns_typed_noop_result(

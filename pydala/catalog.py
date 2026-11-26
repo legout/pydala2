@@ -104,12 +104,17 @@ class Catalog:
             catalog = munchify(yaml.full_load(f))
 
         if delete_table is not None:
-            delattr_rec(catalog, delete_table)
+            delattr_rec(catalog.tables, delete_table)
 
-        # Update the catalog with current parameters.
-        # This ensures any runtime changes to table configurations are persisted.
-        # Note: self.params may contain modifications made during the session.
-        catalog.update(self.params)
+        # Persist runtime changes. A scoped catalog holds only its namespace in
+        # params.tables, so merge it back instead of replacing every namespace.
+        params = dict(self.params)
+        tables = params.pop("tables")
+        catalog.update(params)
+        if self._namespace is not None:
+            catalog.tables[self._namespace] = tables
+        else:
+            catalog.tables = tables
 
         with self._catalog_filesystem.open(self._catalog_path, "w") as f:
             yaml.dump(unmunchify(catalog), f)
@@ -451,7 +456,7 @@ class Catalog:
         params = self._get_table_params(table_name=table_name)
 
         if params.format.lower() == "parquet":
-            if table_name not in self.table and not reload:
+            if table_name not in self.table or reload:
                 self.table[table_name] = self.load_parquet(
                     table_name,
                     as_dataset=as_dataset,
@@ -461,15 +466,17 @@ class Catalog:
             return self.table[table_name]
 
         elif params.format.lower() == "csv":
-            if table_name not in self.table and not reload:
+            if table_name not in self.table or reload:
                 self.table[table_name] = self.load_csv(
                     table_name, as_dataset=as_dataset, **kwargs
                 )
             return self.table[table_name]
 
         elif params.format.lower() == "json":
-            if table_name not in self.table and not reload:
-                self.table[table_name] = self.load_json(table_name, **kwargs)
+            if table_name not in self.table or reload:
+                self.table[table_name] = self.load_json(
+                    table_name, as_dataset=as_dataset, **kwargs
+                )
             return self.table[table_name]
 
     @property
@@ -633,17 +640,19 @@ class Catalog:
                     table_name = f"{namespace}.{table_name}"
 
         if table_name in self.all_tables:
+            # Validate before changing anything so a failure leaves data and YAML intact.
+            dataset = None
             if vacuum:
-                self.load(table_name).vacuum()
-
+                if str(self._get_table_params(table_name).format).lower() != "parquet":
+                    raise TypeError(f"Table {table_name!r} cannot be vacuumed")
+                dataset = self.load(table_name, as_dataset=True, reload=True)
             delattr_rec(self.params.tables, table_name)
-            if self._namespace is not None:
-                delattr_rec(self.params[self._namespace].tables, table_name)
-            else:
-                delattr_rec(self.params.tables, table_name)
+            self.table.pop(table_name, None)
 
             if write_catalog:
-                self._write_catalog(delete_table=table_name)
+                self._write_catalog()
+            if dataset is not None:
+                dataset.vacuum()
 
     def update(
         self,
@@ -666,7 +675,7 @@ class Catalog:
         Returns:
             None
         """
-        self.load_catalog()
+        self.load_catalog(namespace=self._namespace)
         if write_args is not None:
             fields["write_args"] = write_args
         self._set_table_params(table_name=table_name, **fields)
@@ -724,7 +733,9 @@ class Catalog:
             if table_name not in self.table:
                 self.load(table_name=table_name, with_metadata=with_metadata)
 
-            self.table[table_name].write_to_dataset(data, **params.write_args)
+            self.table[table_name].write_to_dataset(
+                data, **params.get("write_args", {})
+            )
         else:
             # raise("Not implemented yet. You can use ")
             if params.format.lower() == "parquet":
